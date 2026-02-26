@@ -83,21 +83,21 @@ TEXTS = {
         'logic_explain_text': """Tento analytický model detailně simuluje fyzickou zátěž skladníka podle následujícího postupu:
 
 **1. Vstupní soubory:**
-* **Pick report:** Hlavní soubor se seznamem vychystaných položek (obsahuje Delivery, Material, Qty, atd.).
-* **MARM report:** Kmenová data o materiálech ze SAPu (váhy, rozměry a velikosti balení/krabic).
-* **TO details (Queue):** Dodává informace o frontě (Queue) a datu vytvoření/potvrzení pro jednotlivé úkoly.
-* **VEKP:** Dodává informace o zabalených jednotkách (HU) pro korelaci fyzické zátěže s účtováním zákazníkovi.
+* **Pick report:** Hlavní soubor se seznamem vychystaných položek.
+* **MARM report:** Kmenová data o materiálech ze SAPu.
+* **TO details (Queue):** Dodává informace o frontě a datu vytvoření úkolů.
+* **VEKP:** Dodává informace o zabalených jednotkách (HU) pro korelaci s účtováním zákazníkovi.
 * **Deliveries:** Externí soubor mapující zakázky do kategorií (N Sortenrein, N Misch atd.).
 * **Ruční ověření (volitelně):** Externí Excel pro ruční přepis velikosti balení.
 
 **2. Dekompozice na celá balení (Krabice)**
-Systém se automaticky dotazuje do kmenových dat (MARM) nebo do ručního ceníku. Vychystávané množství matematicky rozdělí na plné krabice. Co krabice, to **1 fyzický pohyb**.
+Systém matematicky rozdělí množství na plné krabice. Co krabice, to **1 fyzický pohyb**.
 
 **3. Analýza volných kusů (Limity)**
 Zbylé rozbalené kusy podléhají kontrole ergonomických limitů. Každý volný kus se bere samostatně a počítá se jako **1 fyzický pohyb**.
 
 **4. Bezpečnostní odhady (Chybějící data)**
-Pokud v SAPu chybí u materiálu jakákoliv data o balení a není nahráno ani ruční ověření, systém aplikuje bezpečnostní odhad.""",
+Pokud v SAPu chybí u materiálu data o balení a není ruční ověření, systém aplikuje bezpečnostní odhad na základě váhy a rozměru.""",
         'ratio_moves': "Podíl z celkového počtu POHYBŮ:",
         'ratio_exact': "Přesně (Krabice / Palety / Volné)",
         'ratio_miss': "Odhady (Chybí balení)",
@@ -146,18 +146,21 @@ Pokud v SAPu chybí u materiálu jakákoliv data o balení a není nahráno ani 
         'tab_billing': "💰 Účtování a balení (VEKP)",
         'tab_audit': "🔍 Nástroje & Audit",
         'b_title': "💰 Korelace mezi Pickováním a Účtováním",
-        'b_desc': "Zákazník platí podle počtu výsledných balících jednotek (HU - palet/balíků). Zde vidíte, kolik reálné pickovací námahy bylo potřeba na vytvoření těchto zpoplatněných jednotek.",
+        'b_desc': "Zákazník platí podle počtu výsledných balících jednotek (HU). Zde vidíte náročnost vytvoření těchto zpoplatněných jednotek napříč fakturačními kategoriemi.",
         'b_del_count': "Počet Deliveries",
         'b_to_count': "Pickovacích TO celkem",
         'b_hu_count': "Celkem balících HU (VEKP)",
         'b_mov_per_hu': "Pohybů na 1 zabalenou HU celkem",
-        'b_cat_title': "📊 Souhrn nákladnosti podle Kategorií",
-        'b_table_cat': "Kategorie (Art)",
+        'b_cat_title': "📊 Souhrn nákladnosti podle Kategorií (Type of HU)",
+        'b_col_type': "Kategorie (Typ HU)",
+        'b_col_hu': "Počet HU",
+        'b_col_loc_hu': "Prům. lokací na HU",
+        'b_col_mov_loc': "Prům. pohybů / lok.",
+        'b_col_pct_ex': "% Přesně",
+        'b_col_pct_ms': "% Odhad",
         'b_table_del': "Delivery",
         'b_table_to': "Počet TO",
         'b_table_mov': "Pohyby celkem",
-        'b_table_hu': "Počet HU",
-        'b_table_mph': "Pohybů na 1 HU",
         'b_missing_vekp': "⚠️ Pro zobrazení těchto dat nahrajte soubor VEKP.",
         'col_lines': "Řádky",
         'btn_download': "📥 Stáhnout kompletní report (Excel)",
@@ -172,7 +175,8 @@ Pokud v SAPu chybí u materiálu jakákoliv data o balení a není nahráno ani 
         'ovr_not_found': "ℹ️ Žádné ruční ověření.",
         'marm_weight': "Váha (MARM)",
         'marm_dim': "Rozměr (MARM)",
-        'box_missing': "Chybí"
+        'box_missing': "Chybí",
+        'uncategorized': "Bez kategorie"
     },
     'en': {
         'switch_lang': "🇨🇿 Přepnout do češtiny",
@@ -208,7 +212,7 @@ Quantities are mathematically broken down into full boxes. Each box equals **1 p
 Remaining unpacked pieces are checked against ergonomic limits. Every loose piece is handled individually, meaning each piece equals **1 physical move**.
 
 **4. Safety Estimates (Missing Data)**
-If SAP lacks packaging data for a material, the system applies a safety estimate directly based on the weight and dimensions of each individual piece.""",
+If SAP lacks packaging data for a material, the system applies a safety estimate based on weight and dimensions.""",
         'ratio_moves': "Share of total MOVEMENTS:",
         'ratio_exact': "Exact (Boxes / Pallets / Loose)",
         'ratio_miss': "Estimates (Missing packaging)",
@@ -257,18 +261,21 @@ If SAP lacks packaging data for a material, the system applies a safety estimate
         'tab_billing': "💰 Billing & Packing (VEKP)",
         'tab_audit': "🔍 Tools & Audit",
         'b_title': "💰 Correlation Between Picking and Billing",
-        'b_desc': "The customer pays based on the number of packed Handling Units (HUs). Here you can see how much real picking effort was required to create these billed units.",
+        'b_desc': "The customer pays based on the number of packed Handling Units (HUs). Here you can see the effort required to create these billed units across categories.",
         'b_del_count': "Delivery Count",
         'b_to_count': "Total TOs Picked",
         'b_hu_count': "Total Packed HUs (VEKP)",
         'b_mov_per_hu': "Avg Moves per Packed HU",
-        'b_cat_title': "📊 Workload Summary by Categories",
-        'b_table_cat': "Category (Type)",
+        'b_cat_title': "📊 Workload Summary by Categories (Type of HU)",
+        'b_col_type': "Type of HU",
+        'b_col_hu': "Total HUs",
+        'b_col_loc_hu': "Avg Locs per HU",
+        'b_col_mov_loc': "Avg Moves / Loc",
+        'b_col_pct_ex': "% Exact",
+        'b_col_pct_ms': "% Estimate",
         'b_table_del': "Delivery",
         'b_table_to': "TO Count",
         'b_table_mov': "Total Moves",
-        'b_table_hu': "HU Count",
-        'b_table_mph': "Moves per HU",
         'b_missing_vekp': "⚠️ Please upload the VEKP file to display billing data.",
         'col_lines': "Lines",
         'btn_download': "📥 Download Comprehensive Report (Excel)",
@@ -283,7 +290,8 @@ If SAP lacks packaging data for a material, the system applies a safety estimate
         'ovr_not_found': "ℹ️ No override found.",
         'marm_weight': "Weight (MARM)",
         'marm_dim': "Max Dim (MARM)",
-        'box_missing': "Missing"
+        'box_missing': "Missing",
+        'uncategorized': "Uncategorized"
     }
 }
 
@@ -298,7 +306,6 @@ def get_match_key(val):
     return v
 
 def fast_compute_moves(qty_list, queue_list, su_list, box_list, w_list, d_list, v_lim, d_lim, h_lim):
-    """Blesková vektorizovaná kalkulace pro okamžitý chod po pohybu posuvníků."""
     res_total, res_exact, res_miss = [], [], []
     for qty, q, su, boxes, w, d in zip(qty_list, queue_list, su_list, box_list, w_list, d_list):
         if qty <= 0:
@@ -744,10 +751,13 @@ def main():
                 c3.metric(t('b_hu_count'), f"{total_hus:,}".replace(',', ' '))
                 c4.metric(t('b_mov_per_hu'), f"{moves_per_hu:.1f}")
                 
-                # Propojení s kategoriemi (deliveries.xlsx)
+                # Propojení pickovacích dat
                 pick_agg = df_pick.groupby('Delivery').agg(
                     pocet_to=(queue_count_col, 'nunique'),
-                    pohyby_celkem=('Pohyby_Rukou', 'sum')
+                    pohyby_celkem=('Pohyby_Rukou', 'sum'),
+                    pohyby_exact=('Pohyby_Exact', 'sum'),
+                    pohyby_miss=('Pohyby_Loose_Miss', 'sum'),
+                    pocet_lokaci=('Source Storage Bin', 'nunique')
                 ).reset_index()
                 
                 hu_agg = vekp_filtered.groupby('Generated delivery').agg(
@@ -757,45 +767,54 @@ def main():
                 billing_df = pd.merge(pick_agg, hu_agg, left_on='Delivery', right_on='Generated delivery', how='left')
                 billing_df['pocet_hu'] = billing_df['pocet_hu'].fillna(0).astype(int)
                 
+                # Oštítkování z deliveries.xlsx
                 if df_cats is not None:
                     billing_df = pd.merge(billing_df, df_cats[['Lieferung', 'Category_Full']], left_on='Delivery', right_on='Lieferung', how='left')
-                    billing_df['Category_Full'] = billing_df['Category_Full'].fillna('Bez kategorie' if st.session_state.lang == 'cs' else 'Uncategorized')
+                    billing_df['Category_Full'] = billing_df['Category_Full'].fillna(t('uncategorized'))
                 else:
                     billing_df['Category_Full'] = 'N/A'
                 
                 billing_df['pohybu_na_hu'] = np.where(billing_df['pocet_hu'] > 0, billing_df['pohyby_celkem'] / billing_df['pocet_hu'], 0)
                 
-                # --- NOVÁ SOUHRNNÁ TABULKA DLE KATEGORIÍ ---
+                # --- NOVÁ SOUHRNNÁ TABULKA DLE KATEGORIÍ S METRIKAMI ---
                 st.divider()
                 st.subheader(t('b_cat_title'))
                 
                 cat_summary = billing_df.groupby('Category_Full').agg(
                     pocet_deliveries=('Delivery', 'nunique'),
-                    pocet_to=('pocet_to', 'sum'),
                     pohyby_celkem=('pohyby_celkem', 'sum'),
+                    pohyby_exact=('pohyby_exact', 'sum'),
+                    pohyby_miss=('pohyby_miss', 'sum'),
+                    pocet_lokaci=('pocet_lokaci', 'sum'),
                     pocet_hu=('pocet_hu', 'sum')
                 ).reset_index()
-                cat_summary['pohybu_na_hu'] = np.where(cat_summary['pocet_hu'] > 0, cat_summary['pohyby_celkem'] / cat_summary['pocet_hu'], 0)
-                cat_summary = cat_summary.sort_values('pohybu_na_hu', ascending=False)
                 
-                cat_disp = cat_summary.copy()
-                cat_disp.columns = [t('b_table_cat'), t('b_del_count'), t('b_table_to'), t('b_table_mov'), t('b_table_hu'), t('b_table_mph')]
+                cat_summary['avg_loc_per_hu'] = np.where(cat_summary['pocet_hu'] > 0, cat_summary['pocet_lokaci'] / cat_summary['pocet_hu'], 0)
+                cat_summary['avg_mov_per_loc'] = np.where(cat_summary['pocet_lokaci'] > 0, cat_summary['pohyby_celkem'] / cat_summary['pocet_lokaci'], 0)
+                cat_summary['pct_exact'] = np.where(cat_summary['pohyby_celkem'] > 0, cat_summary['pohyby_exact'] / cat_summary['pohyby_celkem'] * 100, 0)
+                cat_summary['pct_miss'] = np.where(cat_summary['pohyby_celkem'] > 0, cat_summary['pohyby_miss'] / cat_summary['pohyby_celkem'] * 100, 0)
                 
-                styled_cat = cat_disp.style.format({t('b_table_mph'): "{:.1f}"})\
-                    .set_properties(subset=[t('b_table_cat'), t('b_table_mph')], **{'font-weight': 'bold', 'color': '#d62728', 'background-color': 'rgba(214, 39, 40, 0.05)'})
+                cat_summary = cat_summary.sort_values('avg_mov_per_loc', ascending=False)
                 
-                col_bc1, col_bc2 = st.columns([2, 1])
+                cat_disp = cat_summary[['Category_Full', 'pocet_hu', 'avg_loc_per_hu', 'avg_mov_per_loc', 'pct_exact', 'pct_miss']].copy()
+                cat_disp.columns = [t('b_col_type'), t('b_col_hu'), t('b_col_loc_hu'), t('b_col_mov_loc'), t('b_col_pct_ex'), t('b_col_pct_ms')]
+                
+                # Formátování tabulky
+                styled_cat = cat_disp.style.format({c: "{:.1f}" for c in cat_disp.columns if 'Prům' in c or 'Avg' in c} | {c: "{:.1f} %" for c in cat_disp.columns if '%' in c})\
+                    .set_properties(subset=[t('b_col_type'), t('b_col_mov_loc')], **{'font-weight': 'bold', 'color': '#d62728', 'background-color': 'rgba(214, 39, 40, 0.05)'})
+                
+                col_bc1, col_bc2 = st.columns([2.5, 1])
                 with col_bc1:
                     st.dataframe(styled_cat, use_container_width=True, hide_index=True)
                 with col_bc2:
-                    st.bar_chart(cat_summary.set_index('Category_Full')['pohybu_na_hu'])
+                    st.bar_chart(cat_summary.set_index('Category_Full')['avg_mov_per_loc'])
 
                 # --- DETAILNÍ TABULKA ---
                 st.divider()
                 st.markdown("**Detailní rozpad podle Delivery:**" if st.session_state.lang == 'cs' else "**Detailed breakdown by Delivery:**")
                 
                 det_df = billing_df[['Delivery', 'Category_Full', 'pocet_to', 'pohyby_celkem', 'pocet_hu', 'pohybu_na_hu']].sort_values('pohyby_celkem', ascending=False)
-                det_df.columns = [t('b_table_del'), t('b_table_cat'), t('b_table_to'), t('b_table_mov'), t('b_table_hu'), t('b_table_mph')]
+                det_df.columns = [t('b_table_del'), t('b_col_type'), t('b_table_to'), t('b_table_mov'), t('b_col_hu'), t('b_table_mph')]
                 st.dataframe(det_df.style.format({t('b_table_mph'): "{:.1f}"}), use_container_width=True, hide_index=True)
             else:
                 st.warning(t('b_missing_vekp'))
