@@ -171,6 +171,25 @@ Pokud v SAPu ani ručním ověření chybí data o balení, systém aplikuje bez
         'b_table_hu': "Počet HU",
         'b_table_mph': "Pohybů na 1 HU",
         'b_missing_vekp': "⚠️ Pro zobrazení těchto dat nahrajte soubor VEKP.",
+        'b_imbalance_orders': "Zakázky s nerovnováhou",
+        'b_of_all': "ze všech",
+        'b_unpaid_to': "Nepokrytá TO",
+        'b_unpaid_to_help': "TO bez odpovídající HU",
+        'b_imbalance_title': "⚠️ Zakázky kde pickujete víc, než dostanete zaplaceno (TO > HU)",
+        'b_imbalance_desc': "Toto jsou zakázky, kde počet pickovacích úkolů (TO) převyšuje počet fakturovaných zásilek (HU). Zákazník za tuto extra práci neplatí.",
+        'b_col_mov_hu': "Pohybů / HU",
+        'b_col_wgt_hu': "Kg / HU",
+        'b_col_wgt_total': "Celk. hmotnost (kg)",
+        'b_col_carton': "Typ krabice",
+        'b_col_locs': "Lokací",
+        'b_col_deliveries': "Deliveries",
+        'b_col_unpaid_to': "Nepokr. TO",
+        'b_imb_avg_mov_hu': "Prům. pohybů / HU",
+        'b_imb_overall_avg': "celkový průměr",
+        'b_imb_total_moves': "Pohybů celkem",
+        'b_imb_total_weight': "Celk. hmotnost",
+        'b_imb_avg_loc': "Prům. lokací / HU",
+        'b_no_imbalance': "Žádné zakázky s nerovnováhou TO > HU!",
         'col_lines': "Řádky",
         'btn_download': "📥 Stáhnout kompletní report (Excel)",
         'err_pick': "❌ Chyba: Pick report nebyl nalezen. Zkontrolujte, zda soubor obsahuje sloupce 'Delivery' a 'Act.qty (dest)'.",
@@ -304,6 +323,25 @@ If SAP and manual override both lack packaging data, a safety estimate is applie
         'b_table_hu': "HU Count",
         'b_table_mph': "Moves per HU",
         'b_missing_vekp': "⚠️ Please upload the VEKP file to display billing data.",
+        'b_imbalance_orders': "Imbalanced Orders",
+        'b_of_all': "of all",
+        'b_unpaid_to': "Unpaid TOs",
+        'b_unpaid_to_help': "TOs without matching HU",
+        'b_imbalance_title': "⚠️ Orders where you pick more than you get paid for (TO > HU)",
+        'b_imbalance_desc': "These are orders where the number of picking tasks (TOs) exceeds the number of billed shipments (HUs). The customer does not pay for this extra work.",
+        'b_col_mov_hu': "Moves / HU",
+        'b_col_wgt_hu': "Kg / HU",
+        'b_col_wgt_total': "Total Weight (kg)",
+        'b_col_carton': "Carton Type",
+        'b_col_locs': "Locations",
+        'b_col_deliveries': "Deliveries",
+        'b_col_unpaid_to': "Unpaid TOs",
+        'b_imb_avg_mov_hu': "Avg Moves / HU",
+        'b_imb_overall_avg': "overall avg",
+        'b_imb_total_moves': "Total Moves",
+        'b_imb_total_weight': "Total Weight",
+        'b_imb_avg_loc': "Avg Locs / HU",
+        'b_no_imbalance': "No orders with TO > HU imbalance found!",
         'col_lines': "Lines",
         'btn_download': "📥 Download Comprehensive Report (Excel)",
         'err_pick': "❌ Error: Pick report not found. Make sure the file contains 'Delivery' and 'Act.qty (dest)' columns.",
@@ -1127,27 +1165,32 @@ def main():
             total_tos = df_pick[queue_count_col].nunique()
             moves_per_hu = total_pick_moves / total_hus if total_hus > 0 else 0
 
-            c1, c2, c3, c4 = st.columns(4)
-            c1.metric(t('b_del_count'), f"{total_deliveries:,}".replace(',', ' '))
-            c2.metric(t('b_to_count'), f"{total_tos:,}".replace(',', ' '))
-            c3.metric(t('b_hu_count'), f"{total_hus:,}".replace(',', ' '))
-            c4.metric(t('b_mov_per_hu'), f"{moves_per_hu:.1f}")
-
+            # --- AGREGACE PICK PER DELIVERY (s hmotností) ---
             pick_agg = df_pick.groupby('Delivery').agg(
                 pocet_to=(queue_count_col, 'nunique'),
                 pohyby_celkem=('Pohyby_Rukou', 'sum'),
                 pohyby_exact=('Pohyby_Exact', 'sum'),
                 pohyby_miss=('Pohyby_Loose_Miss', 'sum'),
-                pocet_lokaci=('Source Storage Bin', 'nunique')
+                pocet_lokaci=('Source Storage Bin', 'nunique'),
+                celkova_vaha=('Celkova_Vaha_KG', 'sum'),
+                celkem_qty=('Qty', 'sum'),
+                pocet_materialu=('Material', 'nunique'),
             ).reset_index()
 
+            # --- AGREGACE VEKP PER DELIVERY (HU počet + typ krabice) ---
             hu_agg = vekp_filtered.groupby('Generated delivery').agg(
-                pocet_hu=('Handling Unit', 'nunique')
+                pocet_hu=('Handling Unit', 'nunique'),
+                typ_krabice=('Packaging materials', lambda x: ', '.join(
+                    sorted(x.dropna().astype(str).unique())
+                ))
             ).reset_index()
 
-            billing_df = pd.merge(pick_agg, hu_agg,
-                                  left_on='Delivery', right_on='Generated delivery', how='left')
+            billing_df = pd.merge(
+                pick_agg, hu_agg,
+                left_on='Delivery', right_on='Generated delivery', how='left'
+            )
             billing_df['pocet_hu'] = billing_df['pocet_hu'].fillna(0).astype(int)
+            billing_df['typ_krabice'] = billing_df['typ_krabice'].fillna('—')
 
             if df_cats is not None:
                 billing_df = pd.merge(
@@ -1158,11 +1201,44 @@ def main():
             else:
                 billing_df['Category_Full'] = 'N/A'
 
+            # --- KLÍČOVÉ VÝPOČTY ---
             billing_df['pohybu_na_hu'] = np.where(
                 billing_df['pocet_hu'] > 0,
                 billing_df['pohyby_celkem'] / billing_df['pocet_hu'], 0
             )
+            billing_df['lok_na_hu'] = np.where(
+                billing_df['pocet_hu'] > 0,
+                billing_df['pocet_lokaci'] / billing_df['pocet_hu'], 0
+            )
+            # Nepokryté TO = práce navíc, za kterou zákazník neplatí
+            billing_df['nepokryte_to'] = (
+                billing_df['pocet_to'] - billing_df['pocet_hu']
+            ).clip(lower=0).astype(int)
+            billing_df['ma_nerovnovahu'] = billing_df['nepokryte_to'] > 0
 
+            # --- HLAVNÍ METRIKY (6 karet) ---
+            c1, c2, c3, c4, c5, c6 = st.columns(6)
+            c1.metric(t('b_del_count'), f"{total_deliveries:,}".replace(',', ' '))
+            c2.metric(t('b_to_count'), f"{total_tos:,}".replace(',', ' '))
+            c3.metric(t('b_hu_count'), f"{total_hus:,}".replace(',', ' '))
+            c4.metric(t('b_mov_per_hu'), f"{moves_per_hu:.1f}")
+            # NOVÉ METRIKY
+            nerov_count = billing_df['ma_nerovnovahu'].sum()
+            nepokr_to_sum = billing_df['nepokryte_to'].sum()
+            c5.metric(
+                t('b_imbalance_orders'),
+                f"{nerov_count:,}".replace(',', ' '),
+                f"{nerov_count / len(billing_df) * 100:.1f} % {t('b_of_all')}",
+                delta_color="inverse"
+            )
+            c6.metric(
+                t('b_unpaid_to'),
+                f"{nepokr_to_sum:,}".replace(',', ' '),
+                t('b_unpaid_to_help'),
+                delta_color="inverse"
+            )
+
+            # --- SOUHRN DLE KATEGORIE ---
             st.divider()
             st.subheader(t('b_cat_title'))
 
@@ -1172,7 +1248,10 @@ def main():
                 pohyby_exact=('pohyby_exact', 'sum'),
                 pohyby_miss=('pohyby_miss', 'sum'),
                 pocet_lokaci=('pocet_lokaci', 'sum'),
-                pocet_hu=('pocet_hu', 'sum')
+                pocet_hu=('pocet_hu', 'sum'),
+                pocet_to_sum=('pocet_to', 'sum'),
+                celkova_vaha=('celkova_vaha', 'sum'),
+                nepokryte_to_sum=('nepokryte_to', 'sum'),
             ).reset_index()
 
             cat_summary['avg_loc_per_hu'] = np.where(
@@ -1183,6 +1262,10 @@ def main():
                 cat_summary['pocet_lokaci'] > 0,
                 cat_summary['pohyby_celkem'] / cat_summary['pocet_lokaci'], 0
             )
+            cat_summary['avg_pohybu_na_hu'] = np.where(
+                cat_summary['pocet_hu'] > 0,
+                cat_summary['pohyby_celkem'] / cat_summary['pocet_hu'], 0
+            )
             cat_summary['pct_exact'] = np.where(
                 cat_summary['pohyby_celkem'] > 0,
                 cat_summary['pohyby_exact'] / cat_summary['pohyby_celkem'] * 100, 0
@@ -1191,29 +1274,44 @@ def main():
                 cat_summary['pohyby_celkem'] > 0,
                 cat_summary['pohyby_miss'] / cat_summary['pohyby_celkem'] * 100, 0
             )
-            cat_summary = cat_summary.sort_values('avg_mov_per_loc', ascending=False)
+            cat_summary['avg_vaha_na_hu'] = np.where(
+                cat_summary['pocet_hu'] > 0,
+                cat_summary['celkova_vaha'] / cat_summary['pocet_hu'], 0
+            )
+            cat_summary = cat_summary.sort_values('avg_pohybu_na_hu', ascending=False)
 
             cat_disp = cat_summary[[
-                'Category_Full', 'pocet_hu', 'avg_loc_per_hu', 'avg_mov_per_loc', 'pct_exact', 'pct_miss'
+                'Category_Full', 'pocet_deliveries', 'pocet_hu',
+                'avg_loc_per_hu', 'avg_pohybu_na_hu', 'avg_vaha_na_hu',
+                'nepokryte_to_sum', 'pct_exact', 'pct_miss'
             ]].copy()
             cat_disp.columns = [
-                t('b_col_type'), t('b_col_hu'), t('b_col_loc_hu'),
-                t('b_col_mov_loc'), t('b_col_pct_ex'), t('b_col_pct_ms')
+                t('b_col_type'), t('b_col_deliveries'), t('b_col_hu'),
+                t('b_col_loc_hu'), t('b_col_mov_hu'), t('b_col_wgt_hu'),
+                t('b_col_unpaid_to'), t('b_col_pct_ex'), t('b_col_pct_ms')
             ]
 
             fmt_cat = {}
             for c in cat_disp.columns:
                 if '%' in c:
                     fmt_cat[c] = "{:.1f} %"
-                elif c not in [t('b_col_type'), t('b_col_hu')]:
+                elif c in [t('b_col_wgt_hu')]:
+                    fmt_cat[c] = "{:.1f}"
+                elif c not in [t('b_col_type')]:
                     fmt_cat[c] = "{:.1f}"
 
+            def highlight_imbalance(row):
+                # Červené pozadí pro řádky s nepokrytými TO
+                color = 'rgba(214,39,40,0.08)' if row[t('b_col_unpaid_to')] > 0 else ''
+                return [f'background-color: {color}'] * len(row)
+
             styled_cat = (
-                cat_disp.style.format(fmt_cat)
+                cat_disp.style
+                .format(fmt_cat)
+                .apply(highlight_imbalance, axis=1)
                 .set_properties(
-                    subset=[t('b_col_type'), t('b_col_mov_loc')],
-                    **{'font-weight': 'bold', 'color': '#d62728',
-                       'background-color': 'rgba(214,39,40,0.05)'}
+                    subset=[t('b_col_type'), t('b_col_mov_hu')],
+                    **{'font-weight': 'bold'}
                 )
             )
 
@@ -1223,22 +1321,92 @@ def main():
             with col_bc2:
                 st.bar_chart(
                     cat_summary.drop_duplicates('Category_Full')
-                    .set_index('Category_Full')['avg_mov_per_loc']
+                    .set_index('Category_Full')['avg_pohybu_na_hu']
                 )
 
+            # --- SEKCE NEROVNOVÁHY (klíčové pro jednání) ---
+            st.divider()
+            st.subheader(t('b_imbalance_title'))
+            st.markdown(t('b_imbalance_desc'))
+
+            imbalance_df = billing_df[billing_df['ma_nerovnovahu']].copy()
+            imbalance_df = imbalance_df.sort_values('pohybu_na_hu', ascending=False)
+
+            if not imbalance_df.empty:
+                # Metriky sekce nerovnováhy
+                ci1, ci2, ci3, ci4 = st.columns(4)
+                ci1.metric(
+                    t('b_imb_avg_mov_hu'),
+                    f"{imbalance_df['pohybu_na_hu'].mean():.1f}",
+                    f"vs {billing_df['pohybu_na_hu'].mean():.1f} {t('b_imb_overall_avg')}",
+                    delta_color="inverse"
+                )
+                ci2.metric(
+                    t('b_imb_total_moves'),
+                    f"{imbalance_df['pohyby_celkem'].sum():,}".replace(',', ' ')
+                )
+                ci3.metric(
+                    t('b_imb_total_weight'),
+                    f"{imbalance_df['celkova_vaha'].sum():,.0f} kg".replace(',', ' ')
+                )
+                ci4.metric(
+                    t('b_imb_avg_loc'),
+                    f"{imbalance_df['lok_na_hu'].mean():.1f}"
+                )
+
+                # Tabulka nejhorších zakázek
+                worst_disp = imbalance_df[[
+                    'Delivery', 'Category_Full', 'pocet_lokaci', 'pocet_to',
+                    'pocet_hu', 'nepokryte_to', 'pohybu_na_hu',
+                    'celkova_vaha', 'typ_krabice'
+                ]].head(50).copy()
+                worst_disp.columns = [
+                    t('b_table_del'), t('b_table_cat'),
+                    t('b_col_locs'), t('b_table_to'),
+                    t('b_table_hu'), t('b_col_unpaid_to'),
+                    t('b_table_mph'), t('b_col_wgt_total'), t('b_col_carton')
+                ]
+
+                def highlight_worst(row):
+                    mph = row[t('b_table_mph')]
+                    if mph > 50:
+                        return ['background-color: rgba(214,39,40,0.15)'] * len(row)
+                    elif mph > 20:
+                        return ['background-color: rgba(255,165,0,0.10)'] * len(row)
+                    return [''] * len(row)
+
+                styled_worst = (
+                    worst_disp.style
+                    .format({
+                        t('b_table_mph'): "{:.1f}",
+                        t('b_col_wgt_total'): "{:.1f}",
+                    })
+                    .apply(highlight_worst, axis=1)
+                )
+                st.dataframe(styled_worst, use_container_width=True, hide_index=True)
+            else:
+                st.success("✅ " + t('b_no_imbalance'))
+
+            # --- DETAILNÍ TABULKA VŠECH ZAKÁZEK ---
             st.divider()
             st.markdown(t('detail_breakdown'))
 
             det_df = billing_df[[
-                'Delivery', 'Category_Full', 'pocet_to',
-                'pohyby_celkem', 'pocet_hu', 'pohybu_na_hu'
+                'Delivery', 'Category_Full', 'pocet_to', 'pocet_lokaci',
+                'pohyby_celkem', 'pocet_hu', 'nepokryte_to',
+                'pohybu_na_hu', 'celkova_vaha', 'typ_krabice'
             ]].sort_values('pohyby_celkem', ascending=False).copy()
             det_df.columns = [
                 t('b_table_del'), t('b_table_cat'), t('b_table_to'),
-                t('b_table_mov'), t('b_table_hu'), t('b_table_mph')
+                t('b_col_locs'), t('b_table_mov'), t('b_table_hu'),
+                t('b_col_unpaid_to'), t('b_table_mph'),
+                t('b_col_wgt_total'), t('b_col_carton')
             ]
             st.dataframe(
-                det_df.style.format({t('b_table_mph'): "{:.1f}"}),
+                det_df.style.format({
+                    t('b_table_mph'): "{:.1f}",
+                    t('b_col_wgt_total'): "{:.1f}",
+                }),
                 use_container_width=True, hide_index=True
             )
         else:
