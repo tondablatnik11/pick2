@@ -371,6 +371,11 @@ def fast_compute_moves(qty_list, queue_list, su_list, box_list, w_list, d_list,
     Vektorizovaná funkce pomocí zip pro výpočet pohybů.
     Nepouží iterrows() ani apply().
     Vrací trojici listů: (total_moves, exact_moves, estimate_moves).
+
+    Klíčová logika pro 'data_known' flag:
+      boxes=[]   → data CHYBÍ → zbytek jde do pmiss (ODHAD)
+      boxes=[1]  → 'po kusech' z ručního ověření → data JSOU → pok (PŘESNĚ)
+      boxes=[6]  → krabice → krabice přesně + zbytek přesně
     """
     res_total, res_exact, res_miss = [], [], []
 
@@ -389,8 +394,12 @@ def fast_compute_moves(qty_list, queue_list, su_list, box_list, w_list, d_list,
         if not isinstance(boxes, list):
             boxes = []
 
-        # Filtrovat 'po kusech' (box=1) — nejedná se o krabici
-        real_boxes = [b for b in boxes if b > 1]
+        # FIX: rozlišit "data chybí" vs "po kusech"
+        #   boxes=[]  → žádná data → odhad
+        #   boxes=[1] → ruční ověření říká "po kusech" → PŘESNĚ (víme to)
+        #   boxes=[6, ...] → krabice → přesně
+        data_known = len(boxes) > 0          # True pokud máme JAKÁKOLI data (včetně [1])
+        real_boxes = [b for b in boxes if b > 1]  # krabice s více než 1 ks
 
         pb = pok = pmiss = 0
         zbytek = qty
@@ -410,12 +419,12 @@ def fast_compute_moves(qty_list, queue_list, su_list, box_list, w_list, d_list,
             else:
                 p = int(np.ceil(zbytek / h_lim))
 
-            if not real_boxes:
-                # Žádná data o balení -> odhad
-                pmiss += p
-            else:
-                # Data existují, ale zbytek je rozbalený -> přesně
+            if data_known:
+                # Data existují (krabice nebo "po kusech") → přesně
                 pok += p
+            else:
+                # Žádná data o balení → odhad
+                pmiss += p
 
         res_total.append(pb + pok + pmiss)
         res_exact.append(pb + pok)
