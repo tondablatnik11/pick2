@@ -68,7 +68,7 @@ TEXTS = {
         'title': "📦 Analýza pickování",
         'desc': "Nástroj pro modelování fyzické zátěže pickování",
         'upload_title': "📁 Nahrání vstupních dat (Klikněte pro sbalení/rozbalení)",
-        'upload_help': "Nahrajte Pick report, MARM report, TO details (Queue), VEKP (Balení) a volitelně i ruční ověření balení.",
+        'upload_help': "Nahrajte Pick report, MARM report, TO details (Queue), VEKP (Balení), Kategorie zakázek (Deliveries) a volitelně ruční ověření.",
         'info_users': "💡 Vyloučeno **{} systémových řádků** (UIDJ5089, UIH25501).",
         'info_clean': "💡 Započítán 1 pohyb pro **{} řádků** 'X' (Platí POUZE pro Queue: PI_PL_FU, PI_PL_FUOE).",
         'info_manual': "✅ Načteno ruční ověření pro **{} unikátních materiálů**.",
@@ -87,7 +87,8 @@ TEXTS = {
 * **MARM report:** Kmenová data o materiálech ze SAPu (váhy, rozměry a velikosti balení/krabic).
 * **TO details (Queue):** Dodává informace o frontě (Queue) a datu vytvoření/potvrzení pro jednotlivé úkoly.
 * **VEKP:** Dodává informace o zabalených jednotkách (HU) pro korelaci fyzické zátěže s účtováním zákazníkovi.
-* **Ruční ověření (volitelně):** Externí Excel pro ruční přepis velikosti balení, pokud data v SAPu zcela chybí nebo jsou chybná.
+* **Deliveries:** Externí soubor mapující zakázky do kategorií (N Sortenrein, N Misch atd.).
+* **Ruční ověření (volitelně):** Externí Excel pro ruční přepis velikosti balení.
 
 **2. Dekompozice na celá balení (Krabice)**
 Systém se automaticky dotazuje do kmenových dat (MARM) nebo do ručního ceníku. Vychystávané množství matematicky rozdělí na plné krabice. Co krabice, to **1 fyzický pohyb**.
@@ -96,7 +97,7 @@ Systém se automaticky dotazuje do kmenových dat (MARM) nebo do ručního cení
 Zbylé rozbalené kusy podléhají kontrole ergonomických limitů. Každý volný kus se bere samostatně a počítá se jako **1 fyzický pohyb**.
 
 **4. Bezpečnostní odhady (Chybějící data)**
-Pokud v SAPu chybí u materiálu jakákoliv data o balení a není nahráno ani ruční ověření, systém aplikuje bezpečnostní odhad přímo na základě váhy a rozměru každého kusu. Tím je zajištěno, že nedojde k neoprávněnému podhodnocení námahy pracovníka.""",
+Pokud v SAPu chybí u materiálu jakákoliv data o balení a není nahráno ani ruční ověření, systém aplikuje bezpečnostní odhad.""",
         'ratio_moves': "Podíl z celkového počtu POHYBŮ:",
         'ratio_exact': "Přesně (Krabice / Palety / Volné)",
         'ratio_miss': "Odhady (Chybí balení)",
@@ -149,7 +150,9 @@ Pokud v SAPu chybí u materiálu jakákoliv data o balení a není nahráno ani 
         'b_del_count': "Počet Deliveries",
         'b_to_count': "Pickovacích TO celkem",
         'b_hu_count': "Celkem balících HU (VEKP)",
-        'b_mov_per_hu': "Pohybů na 1 zabalenou HU",
+        'b_mov_per_hu': "Pohybů na 1 zabalenou HU celkem",
+        'b_cat_title': "📊 Souhrn nákladnosti podle Kategorií",
+        'b_table_cat': "Kategorie (Art)",
         'b_table_del': "Delivery",
         'b_table_to': "Počet TO",
         'b_table_mov': "Pohyby celkem",
@@ -176,7 +179,7 @@ Pokud v SAPu chybí u materiálu jakákoliv data o balení a není nahráno ani 
         'title': "📦 Picking Analysis",
         'desc': "Tool for modeling physical picking workload.",
         'upload_title': "📁 Upload Input Data (Click to expand/collapse)",
-        'upload_help': "Upload Pick report, MARM report, TO details (Queue), VEKP (Packing), and optional Manual Override.",
+        'upload_help': "Upload Pick report, MARM report, TO details (Queue), VEKP (Packing), Deliveries Categories, and optional Manual Override.",
         'info_users': "💡 Excluded **{} system lines** (UIDJ5089, UIH25501).",
         'info_clean': "💡 1 move counted for **{} lines** of 'X' (Applies ONLY to PI_PL_FU, PI_PL_FUOE).",
         'info_manual': "✅ Loaded manual packaging for **{} unique materials**.",
@@ -191,20 +194,21 @@ Pokud v SAPu chybí u materiálu jakákoliv data o balení a není nahráno ani 
         'logic_explain_text': """This analytical model meticulously simulates the picker's physical workload using the following procedure:
 
 **1. Input Files:**
-* **Pick report:** Main file with the list of picked items (Delivery, Material, Qty, etc.).
-* **MARM report:** Master data for materials from SAP (weights, dimensions, and packaging/box sizes).
+* **Pick report:** Main file with the list of picked items.
+* **MARM report:** Master data for materials from SAP.
 * **TO details (Queue):** Provides Queue information and task confirmation dates.
-* **VEKP:** Provides data about packed Handling Units (HUs) to correlate physical picking effort with customer billing.
-* **Manual Override (optional):** An external Excel file to manually set packaging sizes if SAP data is completely missing or incorrect.
+* **VEKP:** Provides data about packed Handling Units (HUs) to correlate physical effort with customer billing.
+* **Deliveries:** External file mapping deliveries to specific billing categories (e.g. N Sortenrein).
+* **Manual Override (optional):** An external Excel file to manually set packaging sizes.
 
 **2. Decomposition into Full Boxes (Packaging)**
-The system automatically queries the Master Data (MARM) or manual override list. Quantities are mathematically broken down into full boxes. Each box equals **1 physical move**.
+Quantities are mathematically broken down into full boxes. Each box equals **1 physical move**.
 
 **3. Loose Pieces Analysis (Limits)**
 Remaining unpacked pieces are checked against ergonomic limits. Every loose piece is handled individually, meaning each piece equals **1 physical move**.
 
 **4. Safety Estimates (Missing Data)**
-If SAP lacks packaging data for a material and no manual override is uploaded, the system applies a safety estimate directly based on the weight and dimensions of each individual piece. This ensures the worker's effort is never unfairly underestimated.""",
+If SAP lacks packaging data for a material, the system applies a safety estimate directly based on the weight and dimensions of each individual piece.""",
         'ratio_moves': "Share of total MOVEMENTS:",
         'ratio_exact': "Exact (Boxes / Pallets / Loose)",
         'ratio_miss': "Estimates (Missing packaging)",
@@ -253,11 +257,13 @@ If SAP lacks packaging data for a material and no manual override is uploaded, t
         'tab_billing': "💰 Billing & Packing (VEKP)",
         'tab_audit': "🔍 Tools & Audit",
         'b_title': "💰 Correlation Between Picking and Billing",
-        'b_desc': "The customer pays based on the number of packed Handling Units (HUs - pallets/parcels). Here you can see how much real picking effort was required to create these billed units.",
+        'b_desc': "The customer pays based on the number of packed Handling Units (HUs). Here you can see how much real picking effort was required to create these billed units.",
         'b_del_count': "Delivery Count",
         'b_to_count': "Total TOs Picked",
         'b_hu_count': "Total Packed HUs (VEKP)",
-        'b_mov_per_hu': "Moves per 1 Packed HU",
+        'b_mov_per_hu': "Avg Moves per Packed HU",
+        'b_cat_title': "📊 Workload Summary by Categories",
+        'b_table_cat': "Category (Type)",
         'b_table_del': "Delivery",
         'b_table_to': "TO Count",
         'b_table_mov': "Total Moves",
@@ -360,7 +366,7 @@ def main():
             progress_bar = st.progress(0)
             status_text = st.empty()
             
-            df_pick_raw, df_marm_raw, df_manual_raw, df_queue_raw, df_vekp_raw = None, None, None, None, None
+            df_pick_raw, df_marm_raw, df_manual_raw, df_queue_raw, df_vekp_raw, df_cats_raw = None, None, None, None, None, None
 
             status_text.markdown("**🔄 Načítání a čtení vstupních souborů...**" if st.session_state.lang == 'cs' else "**🔄 Loading files...**")
             progress_bar.progress(20)
@@ -375,6 +381,8 @@ def main():
                     df_marm_raw = temp_df
                 elif 'Handling Unit' in temp_df.columns and 'Generated delivery' in temp_df.columns:
                     df_vekp_raw = temp_df
+                elif 'Lieferung' in temp_df.columns and 'Kategorie' in temp_df.columns:
+                    df_cats_raw = temp_df
                 elif 'Queue' in temp_df.columns and ('Transfer Order Number' in temp_df.columns or 'SD Document' in temp_df.columns):
                     df_queue_raw = temp_df
                 elif len(temp_df.columns) >= 2:
@@ -475,6 +483,11 @@ def main():
 
             if df_vekp_raw is not None:
                 df_vekp_raw['Generated delivery'] = df_vekp_raw['Generated delivery'].astype(str).str.strip()
+                
+            if df_cats_raw is not None:
+                df_cats_raw['Lieferung'] = df_cats_raw['Lieferung'].astype(str).str.strip()
+                df_cats_raw['Category_Full'] = df_cats_raw['Kategorie'].astype(str).str.strip() + " " + df_cats_raw['Art'].astype(str).str.strip()
+                df_cats_raw = df_cats_raw.drop_duplicates('Lieferung')
 
             st.session_state['last_files_hash'] = current_files_hash
             st.session_state['df_pick_prep'] = df_pick
@@ -485,6 +498,7 @@ def main():
             st.session_state['dim_dict'] = dim_dict
             st.session_state['box_dict'] = box_dict
             st.session_state['df_vekp'] = df_vekp_raw
+            st.session_state['df_cats'] = df_cats_raw
             
             progress_bar.progress(100)
             time.sleep(0.3)
@@ -495,6 +509,7 @@ def main():
         if 'last_files_hash' in st.session_state: del st.session_state['last_files_hash']
         if 'df_pick_prep' in st.session_state: del st.session_state['df_pick_prep']
         if 'df_vekp' in st.session_state: del st.session_state['df_vekp']
+        if 'df_cats' in st.session_state: del st.session_state['df_cats']
 
     # ==========================================
     # --- VÝPOČTY (PROVÁDÍ SE VŽDY PRO ÚPRAVU POSUVNÍKŮ) ---
@@ -509,6 +524,7 @@ def main():
         dim_dict = st.session_state['dim_dict']
         box_dict = st.session_state['box_dict']
         df_vekp = st.session_state.get('df_vekp', None)
+        df_cats = st.session_state.get('df_cats', None)
 
         df_pick['Month'] = pd.to_datetime(df_pick.get('Date', np.nan), errors='coerce').dt.to_period('M').astype(str).replace('NaT', t('unknown'))
 
@@ -705,7 +721,7 @@ def main():
             else:
                 st.success("Všechna data o baleních jsou k dispozici, žádné odhady!" if st.session_state.lang == 'cs' else "All packaging data is available, no estimates!")
 
-        # --- TAB 4: ÚČTOVÁNÍ A BALENÍ (VEKP) ---
+        # --- TAB 4: ÚČTOVÁNÍ A BALENÍ (VEKP + KATEGORIE ZAKÁZEK) ---
         with tab_billing:
             st.subheader(t('b_title'))
             st.markdown(t('b_desc'))
@@ -728,9 +744,7 @@ def main():
                 c3.metric(t('b_hu_count'), f"{total_hus:,}".replace(',', ' '))
                 c4.metric(t('b_mov_per_hu'), f"{moves_per_hu:.1f}")
                 
-                st.divider()
-                st.markdown("**Detailní rozpad podle Delivery:**" if st.session_state.lang == 'cs' else "**Detailed breakdown by Delivery:**")
-                
+                # Propojení s kategoriemi (deliveries.xlsx)
                 pick_agg = df_pick.groupby('Delivery').agg(
                     pocet_to=(queue_count_col, 'nunique'),
                     pohyby_celkem=('Pohyby_Rukou', 'sum')
@@ -742,12 +756,47 @@ def main():
                 
                 billing_df = pd.merge(pick_agg, hu_agg, left_on='Delivery', right_on='Generated delivery', how='left')
                 billing_df['pocet_hu'] = billing_df['pocet_hu'].fillna(0).astype(int)
+                
+                if df_cats is not None:
+                    billing_df = pd.merge(billing_df, df_cats[['Lieferung', 'Category_Full']], left_on='Delivery', right_on='Lieferung', how='left')
+                    billing_df['Category_Full'] = billing_df['Category_Full'].fillna('Bez kategorie' if st.session_state.lang == 'cs' else 'Uncategorized')
+                else:
+                    billing_df['Category_Full'] = 'N/A'
+                
                 billing_df['pohybu_na_hu'] = np.where(billing_df['pocet_hu'] > 0, billing_df['pohyby_celkem'] / billing_df['pocet_hu'], 0)
                 
-                billing_df = billing_df[['Delivery', 'pocet_to', 'pohyby_celkem', 'pocet_hu', 'pohybu_na_hu']].sort_values('pohyby_celkem', ascending=False)
-                billing_df.columns = [t('b_table_del'), t('b_table_to'), t('b_table_mov'), t('b_table_hu'), t('b_table_mph')]
+                # --- NOVÁ SOUHRNNÁ TABULKA DLE KATEGORIÍ ---
+                st.divider()
+                st.subheader(t('b_cat_title'))
                 
-                st.dataframe(billing_df.style.format({t('b_table_mph'): "{:.1f}"}), use_container_width=True, hide_index=True)
+                cat_summary = billing_df.groupby('Category_Full').agg(
+                    pocet_deliveries=('Delivery', 'nunique'),
+                    pocet_to=('pocet_to', 'sum'),
+                    pohyby_celkem=('pohyby_celkem', 'sum'),
+                    pocet_hu=('pocet_hu', 'sum')
+                ).reset_index()
+                cat_summary['pohybu_na_hu'] = np.where(cat_summary['pocet_hu'] > 0, cat_summary['pohyby_celkem'] / cat_summary['pocet_hu'], 0)
+                cat_summary = cat_summary.sort_values('pohybu_na_hu', ascending=False)
+                
+                cat_disp = cat_summary.copy()
+                cat_disp.columns = [t('b_table_cat'), t('b_del_count'), t('b_table_to'), t('b_table_mov'), t('b_table_hu'), t('b_table_mph')]
+                
+                styled_cat = cat_disp.style.format({t('b_table_mph'): "{:.1f}"})\
+                    .set_properties(subset=[t('b_table_cat'), t('b_table_mph')], **{'font-weight': 'bold', 'color': '#d62728', 'background-color': 'rgba(214, 39, 40, 0.05)'})
+                
+                col_bc1, col_bc2 = st.columns([2, 1])
+                with col_bc1:
+                    st.dataframe(styled_cat, use_container_width=True, hide_index=True)
+                with col_bc2:
+                    st.bar_chart(cat_summary.set_index('Category_Full')['pohybu_na_hu'])
+
+                # --- DETAILNÍ TABULKA ---
+                st.divider()
+                st.markdown("**Detailní rozpad podle Delivery:**" if st.session_state.lang == 'cs' else "**Detailed breakdown by Delivery:**")
+                
+                det_df = billing_df[['Delivery', 'Category_Full', 'pocet_to', 'pohyby_celkem', 'pocet_hu', 'pohybu_na_hu']].sort_values('pohyby_celkem', ascending=False)
+                det_df.columns = [t('b_table_del'), t('b_table_cat'), t('b_table_to'), t('b_table_mov'), t('b_table_hu'), t('b_table_mph')]
+                st.dataframe(det_df.style.format({t('b_table_mph'): "{:.1f}"}), use_container_width=True, hide_index=True)
             else:
                 st.warning(t('b_missing_vekp'))
 
