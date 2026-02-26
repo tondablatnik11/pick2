@@ -161,6 +161,8 @@ Pokud v SAPu chybí u materiálu data o balení a není ruční ověření, syst
         'b_table_del': "Delivery",
         'b_table_to': "Počet TO",
         'b_table_mov': "Pohyby celkem",
+        'b_table_hu': "Počet HU",
+        'b_table_mph': "Pohybů na 1 HU",
         'b_missing_vekp': "⚠️ Pro zobrazení těchto dat nahrajte soubor VEKP.",
         'col_lines': "Řádky",
         'btn_download': "📥 Stáhnout kompletní report (Excel)",
@@ -276,6 +278,8 @@ If SAP lacks packaging data for a material, the system applies a safety estimate
         'b_table_del': "Delivery",
         'b_table_to': "TO Count",
         'b_table_mov': "Total Moves",
+        'b_table_hu': "HU Count",
+        'b_table_mph': "Moves per HU",
         'b_missing_vekp': "⚠️ Please upload the VEKP file to display billing data.",
         'col_lines': "Lines",
         'btn_download': "📥 Download Comprehensive Report (Excel)",
@@ -814,7 +818,8 @@ def main():
                 st.markdown("**Detailní rozpad podle Delivery:**" if st.session_state.lang == 'cs' else "**Detailed breakdown by Delivery:**")
                 
                 det_df = billing_df[['Delivery', 'Category_Full', 'pocet_to', 'pohyby_celkem', 'pocet_hu', 'pohybu_na_hu']].sort_values('pohyby_celkem', ascending=False)
-                det_df.columns = [t('b_table_del'), t('b_col_type'), t('b_table_to'), t('b_table_mov'), t('b_col_hu'), t('b_table_mph')]
+                # POZOR ZDE - opraveno pořadí a názvy proměnných, už nebude chybět b_table_hu ani b_table_mph
+                det_df.columns = [t('b_table_del'), t('b_col_type'), t('b_table_to'), t('b_table_mov'), t('b_table_hu'), t('b_table_mph')]
                 st.dataframe(det_df.style.format({t('b_table_mph'): "{:.1f}"}), use_container_width=True, hide_index=True)
             else:
                 st.warning(t('b_missing_vekp'))
