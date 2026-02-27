@@ -213,7 +213,85 @@ Pokud v SAPu ani ručním ověření chybí data o balení, systém aplikuje bez
         'source_to_date': "Datum (z TO)",
         'loading': "🔄 Načítám soubory...",
         'processing': "⚙️ Zpracovávám master data...",
+        'b_aus_title': "Analýza zásilkových dat (Auswertung)",
+        'b_aus_desc': "Data ze zákazníkova souboru — kategorizace, typy HU a váhy počítány stejnou logikou jako v Excelu.",
+        'b_aus_upload_hint': "Pro tuto sekci nahrajte zákazníkův soubor Auswertung_Outbound_HWL.xlsx (nebo soubor s auswertung v názvu).",
+        'b_aus_no_vekp': "Soubor neobsahuje list VEKP/VEPO — nelze vypočítat typy HU.",
+        'b_aus_kat_title': "Kategorie zásilek (E / N / O / OE)",
+        'b_aus_kat_desc': "Kategorie = kombinace Order Type (Versandstelle + T031) + KEP příznak dopravce (SDSHP_AM2).",
+        'b_aus_kat': "Kategorie",
+        'b_aus_popis': "Popis",
+        'b_aus_lief': "Lieferungen",
+        'b_aus_hu': "HU celkem",
+        'b_aus_packst': "Prům. HU / zásilka",
+        'b_aus_avg_vaha': "Prům. váha HU (kg)",
+        'b_aus_avg_ladung': "Prům. obsah HU (kg)",
+        'b_aus_vaha_total': "Váha celkem (kg)",
+        'b_aus_total_lief': "Zásilky celkem",
+        'b_aus_total_hu': "HU celkem",
+        'b_aus_avg_hu_lief': "Prům. HU / zásilka",
+        'b_aus_total_vaha': "Celk. hmotnost (kg)",
+        'b_aus_pct_kep': "Zásilek přes KEP",
+        'b_aus_art_title': "Typy HU (Sortenrein / Misch / Vollpalette)",
+        'b_aus_art_desc': "Vollpalette = HU v T023 nebo 1 mat. na paletě. Sortenrein = 1 materiál / 1 zakázka. Misch = víc materiálů nebo zakázek.",
+        'b_aus_carton_title': "Typy kartonů (Packmittel) — rozměry a váhy",
+        'b_aus_carton': "Typ krabice",
+        'b_aus_pocet': "Počet HU",
+        'b_aus_delka': "Délka (cm)",
+        'b_aus_sirka': "Šířka (cm)",
+        'b_aus_vyska': "Výška (cm)",
+        'b_aus_detail_exp': "Detailní tabulka zásilek (rozbalit)",
+        'b_aus_sped_title': "Dopravci (Spediteur) — KEP / non-KEP",
+        'b_aus_kep_count': "KEP dopravci",
+        'b_aus_nonkep_count': "Non-KEP dopravci",
+        'b_aus_sped': "Spediteur",
+        'b_aus_kep_flag': "KEP",
+        'b_aus_max_gew': "Max. hmotnost (kg)",
+        'b_aus_ladezeit': "Čas nakládky",
+        'b_aus_zone': "Zóna přípravy",
+        'b_aus_voll_title': "Vollpalette — přímé pohyby (T023)",
+        'b_aus_voll_count': "Pohybů celých palet",
+        # Auswertung / zákazníkův soubor
+        'b_aus_title': "Analýza zásilkových dat (Auswertung)",
+        'b_aus_desc': "Data ze zákazníkova souboru — kategorizace, typy HU a váhy počítány stejnou logikou jako v Excelu.",
+        'b_aus_upload_hint': "💡 Pro tuto sekci nahrajte zákazníkův soubor **Auswertung_Outbound_HWL.xlsx** (nebo jiný soubor s 'auswertung' v názvu).",
+        'b_aus_no_vekp': "⚠️ Soubor neobsahuje list VEKP/VEPO — nelze vypočítat typy HU.",
+        'b_aus_kat_title': "📦 Kategorie zásilek (E / N / O / OE)",
+        'b_aus_kat_desc': "Kategorie = kombinace Order Type (z Versandstelle → T031) + KEP příznak dopravce (z SDSHP_AM2). Počítáno shodně s logikou zákazníkova Excelu.",
+        'b_aus_kat': "Kategorie",
+        'b_aus_popis': "Popis",
+        'b_aus_lief': "Lieferungen",
+        'b_aus_hu': "HU celkem",
+        'b_aus_packst': "Průměr HU / zásilka",
+        'b_aus_avg_vaha': "Prům. váha HU (kg)",
+        'b_aus_avg_ladung': "Prům. obsah HU (kg)",
+        'b_aus_vaha_total': "Váha celkem (kg)",
+        'b_aus_total_lief': "Zásilky celkem",
+        'b_aus_total_hu': "HU celkem",
+        'b_aus_avg_hu_lief': "Prům. HU / zásilka",
+        'b_aus_total_vaha': "Celk. hmotnost (kg)",
+        'b_aus_pct_kep': "Zásilek přes KEP",
+        'b_aus_art_title': "🔀 Typy HU (Sortenrein / Misch / Vollpalette)",
+        'b_aus_art_desc': "**Vollpalette** = HU s přímým TO pohybem (T023) nebo 1 materiál na paletě (Packmittelart=1000). **Sortenrein** = 1 materiál / 1 zakázka. **Misch** = více materiálů nebo zakázek.",
+        'b_aus_carton_title': "📏 Typy kartonů (Packmittel) — rozměry a váhy",
+        'b_aus_carton': "Typ krabice",
+        'b_aus_pocet': "Počet HU",
+        'b_aus_delka': "Délka (cm)",
+        'b_aus_sirka': "Šířka (cm)",
+        'b_aus_vyska': "Výška (cm)",
+        'b_aus_detail_exp': "📋 Detailní tabulka zásilek (rozbalit)",
+        'b_aus_sped_title': "🚚 Dopravci (Spediteur) — KEP / non-KEP",
+        'b_aus_kep_count': "KEP dopravci",
+        'b_aus_nonkep_count': "Non-KEP dopravci",
+        'b_aus_sped': "Spediteur",
+        'b_aus_kep_flag': "KEP",
+        'b_aus_max_gew': "Max. hmotnost (kg)",
+        'b_aus_ladezeit': "Čas nakládky",
+        'b_aus_zone': "Zóna přípravy",
+        'b_aus_voll_title': "🏭 Vollpalette — přímé pohyby (T023)",
+        'b_aus_voll_count': "Pohybů celých palet",
     },
+
     'en': {
         'switch_lang': "🇨🇿 Přepnout do češtiny",
         'title': "📦 Picking Analysis",
@@ -365,6 +443,83 @@ If SAP and manual override both lack packaging data, a safety estimate is applie
         'source_to_date': "Date (from TO)",
         'loading': "🔄 Loading files...",
         'processing': "⚙️ Processing master data...",
+        'b_aus_title': "Shipment Data Analysis (Auswertung)",
+        'b_aus_desc': "Data from customer file — categorization, HU types and weights calculated using the same logic as the Excel file.",
+        'b_aus_upload_hint': "For this section upload the customer file Auswertung_Outbound_HWL.xlsx (or any file with auswertung in the name).",
+        'b_aus_no_vekp': "File does not contain VEKP/VEPO sheet — cannot calculate HU types.",
+        'b_aus_kat_title': "Shipment Categories (E / N / O / OE)",
+        'b_aus_kat_desc': "Category = Order Type (Versandstelle + T031) + KEP carrier flag (SDSHP_AM2).",
+        'b_aus_kat': "Category",
+        'b_aus_popis': "Description",
+        'b_aus_lief': "Deliveries",
+        'b_aus_hu': "Total HUs",
+        'b_aus_packst': "Avg HU / delivery",
+        'b_aus_avg_vaha': "Avg HU weight (kg)",
+        'b_aus_avg_ladung': "Avg HU content (kg)",
+        'b_aus_vaha_total': "Total weight (kg)",
+        'b_aus_total_lief': "Total deliveries",
+        'b_aus_total_hu': "Total HUs",
+        'b_aus_avg_hu_lief': "Avg HU / delivery",
+        'b_aus_total_vaha': "Total weight (kg)",
+        'b_aus_pct_kep': "Via KEP carrier",
+        'b_aus_art_title': "HU Types (Sortenrein / Misch / Vollpalette)",
+        'b_aus_art_desc': "Vollpalette = HU in T023 or single mat. on pallet. Sortenrein = 1 material / 1 order. Misch = multiple materials or orders.",
+        'b_aus_carton_title': "Carton Types (Packmittel) — dimensions and weights",
+        'b_aus_carton': "Carton type",
+        'b_aus_pocet': "HU count",
+        'b_aus_delka': "Length (cm)",
+        'b_aus_sirka': "Width (cm)",
+        'b_aus_vyska': "Height (cm)",
+        'b_aus_detail_exp': "Detailed delivery table (expand)",
+        'b_aus_sped_title': "Carriers (Spediteur) — KEP / non-KEP",
+        'b_aus_kep_count': "KEP carriers",
+        'b_aus_nonkep_count': "Non-KEP carriers",
+        'b_aus_sped': "Spediteur",
+        'b_aus_kep_flag': "KEP",
+        'b_aus_max_gew': "Max weight (kg)",
+        'b_aus_ladezeit': "Loading time",
+        'b_aus_zone': "Staging zone",
+        'b_aus_voll_title': "Vollpalette — direct movements (T023)",
+        'b_aus_voll_count': "Full pallet movements",
+        # Auswertung / customer file
+        'b_aus_title': "Shipment Data Analysis (Auswertung)",
+        'b_aus_desc': "Data from customer file — categorization, HU types and weights calculated using the same logic as the Excel file.",
+        'b_aus_upload_hint': "💡 For this section upload the customer file **Auswertung_Outbound_HWL.xlsx** (or any file with 'auswertung' in the name).",
+        'b_aus_no_vekp': "⚠️ File does not contain VEKP/VEPO sheet — cannot calculate HU types.",
+        'b_aus_kat_title': "📦 Shipment Categories (E / N / O / OE)",
+        'b_aus_kat_desc': "Category = combination of Order Type (from Versandstelle → T031) + KEP carrier flag (from SDSHP_AM2). Calculated identically to customer Excel logic.",
+        'b_aus_kat': "Category",
+        'b_aus_popis': "Description",
+        'b_aus_lief': "Deliveries",
+        'b_aus_hu': "Total HUs",
+        'b_aus_packst': "Avg HU / delivery",
+        'b_aus_avg_vaha': "Avg HU weight (kg)",
+        'b_aus_avg_ladung': "Avg HU content (kg)",
+        'b_aus_vaha_total': "Total weight (kg)",
+        'b_aus_total_lief': "Total deliveries",
+        'b_aus_total_hu': "Total HUs",
+        'b_aus_avg_hu_lief': "Avg HU / delivery",
+        'b_aus_total_vaha': "Total weight (kg)",
+        'b_aus_pct_kep': "Via KEP carrier",
+        'b_aus_art_title': "🔀 HU Types (Sortenrein / Misch / Vollpalette)",
+        'b_aus_art_desc': "**Vollpalette** = HU with direct TO movement (T023) or single material on pallet (Packmittelart=1000). **Sortenrein** = 1 material / 1 order. **Misch** = multiple materials or orders.",
+        'b_aus_carton_title': "📏 Carton Types (Packmittel) — dimensions and weights",
+        'b_aus_carton': "Carton type",
+        'b_aus_pocet': "HU count",
+        'b_aus_delka': "Length (cm)",
+        'b_aus_sirka': "Width (cm)",
+        'b_aus_vyska': "Height (cm)",
+        'b_aus_detail_exp': "📋 Detailed delivery table (expand)",
+        'b_aus_sped_title': "🚚 Carriers (Spediteur) — KEP / non-KEP",
+        'b_aus_kep_count': "KEP carriers",
+        'b_aus_nonkep_count': "Non-KEP carriers",
+        'b_aus_sped': "Spediteur",
+        'b_aus_kep_flag': "KEP",
+        'b_aus_max_gew': "Max weight (kg)",
+        'b_aus_ladezeit': "Loading time",
+        'b_aus_zone': "Staging zone",
+        'b_aus_voll_title': "🏭 Vollpalette — direct movements (T023)",
+        'b_aus_voll_count': "Full pallet movements",
     }
 }
 
@@ -522,6 +677,22 @@ def main():
 
             for file in uploaded_files:
                 fname = file.name.lower()
+
+                # --- Zákazníkův Auswertung soubor (multi-sheet, detekce podle názvu) ---
+                if fname.endswith('.xlsx') and 'auswertung' in fname.lower():
+                    try:
+                        aus_xl = pd.ExcelFile(file)
+                        aus_data = {}
+                        for sn in aus_xl.sheet_names:
+                            try:
+                                aus_data[sn] = aus_xl.parse(sn, dtype=str)
+                            except Exception:
+                                pass
+                        st.session_state['auswertung_raw'] = aus_data
+                    except Exception as e:
+                        st.warning(f"Nelze číst Auswertung soubor: {e}")
+                    continue
+
                 try:
                     temp_df = (pd.read_csv(file, dtype=str)
                                if fname.endswith('.csv')
@@ -1148,164 +1319,693 @@ def main():
             st.success(t('all_data_exact'))
 
     # ==========================================
+    # ==========================================
+    # ==========================================
     # TAB 4: ÚČTOVÁNÍ A BALENÍ (VEKP)
     # ==========================================
     with tab_billing:
-        st.subheader(t('b_title'))
-        st.markdown(t('b_desc'))
+
+        # ═══════════════════════════════════════════════════════
+        # SEKCE A: PICK ↔ HU KORELACE  (data z pick reportu + VEKP)
+        # ═══════════════════════════════════════════════════════
+        st.subheader(t("b_title"))
+        st.markdown(t("b_desc"))
 
         if df_vekp is not None and not df_vekp.empty:
-            vekp_clean = df_vekp.dropna(subset=['Handling Unit', 'Generated delivery']).copy()
-            valid_deliveries = df_pick['Delivery'].dropna().unique()
-            vekp_filtered = vekp_clean[vekp_clean['Generated delivery'].isin(valid_deliveries)]
+            vekp_clean = df_vekp.dropna(subset=["Handling Unit", "Generated delivery"]).copy()
+            valid_deliveries = df_pick["Delivery"].dropna().unique()
+            vekp_filtered = vekp_clean[vekp_clean["Generated delivery"].isin(valid_deliveries)]
 
             total_deliveries = len(valid_deliveries)
-            total_hus = vekp_filtered['Handling Unit'].nunique()
-            total_pick_moves = int(df_pick['Pohyby_Rukou'].sum())
+            total_hus = vekp_filtered["Handling Unit"].nunique()
+            total_pick_moves = int(df_pick["Pohyby_Rukou"].sum())
             total_tos = df_pick[queue_count_col].nunique()
             moves_per_hu = total_pick_moves / total_hus if total_hus > 0 else 0
 
-            pick_agg = df_pick.groupby('Delivery').agg(
-                pocet_to=(queue_count_col, 'nunique'),
-                pohyby_celkem=('Pohyby_Rukou', 'sum'),
-                pohyby_exact=('Pohyby_Exact', 'sum'),
-                pohyby_miss=('Pohyby_Loose_Miss', 'sum'),
-                pocet_lokaci=('Source Storage Bin', 'nunique')
+            pick_agg = df_pick.groupby("Delivery").agg(
+                pocet_to=(queue_count_col, "nunique"),
+                pohyby_celkem=("Pohyby_Rukou", "sum"),
+                pohyby_exact=("Pohyby_Exact", "sum"),
+                pohyby_miss=("Pohyby_Loose_Miss", "sum"),
+                pocet_lokaci=("Source Storage Bin", "nunique"),
             ).reset_index()
 
-            hu_agg = vekp_filtered.groupby('Generated delivery').agg(
-                pocet_hu=('Handling Unit', 'nunique')
+            hu_agg = vekp_filtered.groupby("Generated delivery").agg(
+                pocet_hu=("Handling Unit", "nunique")
             ).reset_index()
 
-            billing_df = pd.merge(pick_agg, hu_agg,
-                                  left_on='Delivery', right_on='Generated delivery', how='left')
-            billing_df['pocet_hu'] = billing_df['pocet_hu'].fillna(0).astype(int)
+            billing_df = pd.merge(
+                pick_agg, hu_agg,
+                left_on="Delivery", right_on="Generated delivery", how="left"
+            )
+            billing_df["pocet_hu"] = billing_df["pocet_hu"].fillna(0).astype(int)
 
             if df_cats is not None:
                 billing_df = pd.merge(
-                    billing_df, df_cats[['Lieferung', 'Category_Full']],
-                    left_on='Delivery', right_on='Lieferung', how='left'
+                    billing_df, df_cats[["Lieferung", "Category_Full"]],
+                    left_on="Delivery", right_on="Lieferung", how="left"
                 )
-                billing_df['Category_Full'] = billing_df['Category_Full'].fillna(t('uncategorized'))
+                billing_df["Category_Full"] = billing_df["Category_Full"].fillna(t("uncategorized"))
             else:
-                billing_df['Category_Full'] = 'N/A'
+                billing_df["Category_Full"] = "N/A"
 
-            billing_df['pohybu_na_hu'] = np.where(
-                billing_df['pocet_hu'] > 0,
-                billing_df['pohyby_celkem'] / billing_df['pocet_hu'], 0
+            billing_df["pohybu_na_hu"] = np.where(
+                billing_df["pocet_hu"] > 0,
+                billing_df["pohyby_celkem"] / billing_df["pocet_hu"], 0
             )
-            # Nepokryté TO: počet TO bez odpovídající HU (zákazník za ně neplatí)
-            billing_df['nepokryte_to'] = (
-                billing_df['pocet_to'] - billing_df['pocet_hu']
+            billing_df["nepokryte_to"] = (
+                billing_df["pocet_to"] - billing_df["pocet_hu"]
             ).clip(lower=0).astype(int)
 
-            # --- 6 METRIK: původní 4 + 2 nové pro nepokrytá TO ---
+            # 6 metrik
             c1, c2, c3, c4, c5, c6 = st.columns(6)
-            c1.metric(t('b_del_count'), f"{total_deliveries:,}".replace(',', ' '))
-            c2.metric(t('b_to_count'), f"{total_tos:,}".replace(',', ' '))
-            c3.metric(t('b_hu_count'), f"{total_hus:,}".replace(',', ' '))
-            c4.metric(t('b_mov_per_hu'), f"{moves_per_hu:.1f}")
-            nerov_count = int((billing_df['nepokryte_to'] > 0).sum())
-            nepokr_to_sum = int(billing_df['nepokryte_to'].sum())
+            c1.metric(t("b_del_count"), f"{total_deliveries:,}".replace(",", " "))
+            c2.metric(t("b_to_count"), f"{total_tos:,}".replace(",", " "))
+            c3.metric(t("b_hu_count"), f"{total_hus:,}".replace(",", " "))
+            c4.metric(t("b_mov_per_hu"), f"{moves_per_hu:.1f}")
+            nerov_count = int((billing_df["nepokryte_to"] > 0).sum())
+            nepokr_to_sum = int(billing_df["nepokryte_to"].sum())
             c5.metric(
-                t('b_imbalance_orders'),
-                f"{nerov_count:,}".replace(',', ' '),
+                t("b_imbalance_orders"),
+                f"{nerov_count:,}".replace(",", " "),
                 f"{nerov_count / len(billing_df) * 100:.1f} % {t('b_of_all')}",
-                delta_color="inverse"
+                delta_color="inverse",
             )
             c6.metric(
-                t('b_unpaid_to'),
-                f"{nepokr_to_sum:,}".replace(',', ' '),
-                t('b_unpaid_to_help'),
-                delta_color="inverse"
+                t("b_unpaid_to"),
+                f"{nepokr_to_sum:,}".replace(",", " "),
+                t("b_unpaid_to_help"),
+                delta_color="inverse",
             )
 
-            # --- SOUHRN DLE KATEGORIE (původní + sloupec Nepokr. TO) ---
+            # Souhrn dle kategorie
             st.divider()
-            st.subheader(t('b_cat_title'))
-
-            cat_summary = billing_df.groupby('Category_Full').agg(
-                pocet_deliveries=('Delivery', 'nunique'),
-                pohyby_celkem=('pohyby_celkem', 'sum'),
-                pohyby_exact=('pohyby_exact', 'sum'),
-                pohyby_miss=('pohyby_miss', 'sum'),
-                pocet_lokaci=('pocet_lokaci', 'sum'),
-                pocet_hu=('pocet_hu', 'sum'),
-                nepokryte_to_sum=('nepokryte_to', 'sum'),
+            st.subheader(t("b_cat_title"))
+            cat_summary = billing_df.groupby("Category_Full").agg(
+                pocet_hu=("pocet_hu", "sum"),
+                pocet_lokaci=("pocet_lokaci", "sum"),
+                pohyby_celkem=("pohyby_celkem", "sum"),
+                pohyby_exact=("pohyby_exact", "sum"),
+                pohyby_miss=("pohyby_miss", "sum"),
+                nepokryte_to_sum=("nepokryte_to", "sum"),
             ).reset_index()
-
-            cat_summary['avg_loc_per_hu'] = np.where(
-                cat_summary['pocet_hu'] > 0,
-                cat_summary['pocet_lokaci'] / cat_summary['pocet_hu'], 0
+            cat_summary["avg_loc_per_hu"] = np.where(
+                cat_summary["pocet_hu"] > 0,
+                cat_summary["pocet_lokaci"] / cat_summary["pocet_hu"], 0
             )
-            cat_summary['avg_mov_per_loc'] = np.where(
-                cat_summary['pocet_lokaci'] > 0,
-                cat_summary['pohyby_celkem'] / cat_summary['pocet_lokaci'], 0
+            cat_summary["avg_mov_per_loc"] = np.where(
+                cat_summary["pocet_lokaci"] > 0,
+                cat_summary["pohyby_celkem"] / cat_summary["pocet_lokaci"], 0
             )
-            cat_summary['pct_exact'] = np.where(
-                cat_summary['pohyby_celkem'] > 0,
-                cat_summary['pohyby_exact'] / cat_summary['pohyby_celkem'] * 100, 0
+            cat_summary["pct_exact"] = np.where(
+                cat_summary["pohyby_celkem"] > 0,
+                cat_summary["pohyby_exact"] / cat_summary["pohyby_celkem"] * 100, 0
             )
-            cat_summary['pct_miss'] = np.where(
-                cat_summary['pohyby_celkem'] > 0,
-                cat_summary['pohyby_miss'] / cat_summary['pohyby_celkem'] * 100, 0
+            cat_summary["pct_miss"] = np.where(
+                cat_summary["pohyby_celkem"] > 0,
+                cat_summary["pohyby_miss"] / cat_summary["pohyby_celkem"] * 100, 0
             )
-            cat_summary = cat_summary.sort_values('avg_mov_per_loc', ascending=False)
-
+            cat_summary = cat_summary.sort_values("avg_mov_per_loc", ascending=False)
             cat_disp = cat_summary[[
-                'Category_Full', 'pocet_hu', 'avg_loc_per_hu',
-                'avg_mov_per_loc', 'nepokryte_to_sum', 'pct_exact', 'pct_miss'
+                "Category_Full", "pocet_hu", "avg_loc_per_hu",
+                "avg_mov_per_loc", "nepokryte_to_sum", "pct_exact", "pct_miss"
             ]].copy()
             cat_disp.columns = [
-                t('b_col_type'), t('b_col_hu'), t('b_col_loc_hu'),
-                t('b_col_mov_loc'), t('b_col_unpaid_to'), t('b_col_pct_ex'), t('b_col_pct_ms')
+                t("b_col_type"), t("b_col_hu"), t("b_col_loc_hu"),
+                t("b_col_mov_loc"), t("b_col_unpaid_to"), t("b_col_pct_ex"), t("b_col_pct_ms")
             ]
-
-            fmt_cat = {}
-            for c in cat_disp.columns:
-                if '%' in c:
-                    fmt_cat[c] = "{:.1f} %"
-                elif c not in [t('b_col_type'), t('b_col_hu'), t('b_col_unpaid_to')]:
-                    fmt_cat[c] = "{:.1f}"
-
-            styled_cat = (
-                cat_disp.style.format(fmt_cat)
-                .set_properties(
-                    subset=[t('b_col_type'), t('b_col_mov_loc')],
-                    **{'font-weight': 'bold', 'color': '#d62728',
-                       'background-color': 'rgba(214,39,40,0.05)'}
+            fmt_cat = {c: "{:.1f} %" for c in cat_disp.columns if "%" in c}
+            fmt_cat.update({c: "{:.1f}" for c in [t("b_col_loc_hu"), t("b_col_mov_loc")]})
+            cb1, cb2 = st.columns([2.5, 1])
+            with cb1:
+                st.dataframe(
+                    cat_disp.style.format(fmt_cat)
+                    .set_properties(
+                        subset=[t("b_col_type"), t("b_col_mov_loc")],
+                        **{"font-weight": "bold"},
+                    ),
+                    use_container_width=True, hide_index=True,
                 )
-            )
+            with cb2:
+                st.bar_chart(cat_summary.set_index("Category_Full")["avg_mov_per_loc"])
 
-            col_bc1, col_bc2 = st.columns([2.5, 1])
-            with col_bc1:
-                st.dataframe(styled_cat, use_container_width=True, hide_index=True)
-            with col_bc2:
-                st.bar_chart(
-                    cat_summary.drop_duplicates('Category_Full')
-                    .set_index('Category_Full')['avg_mov_per_loc']
-                )
-
-            # --- DETAILNÍ TABULKA (původní + sloupec Nepokr. TO) ---
+            # Detailní tabulka
             st.divider()
-            st.markdown(t('detail_breakdown'))
-
+            st.markdown(t("detail_breakdown"))
             det_df = billing_df[[
-                'Delivery', 'Category_Full', 'pocet_to',
-                'pohyby_celkem', 'pocet_hu', 'nepokryte_to', 'pohybu_na_hu'
-            ]].sort_values('pohyby_celkem', ascending=False).copy()
+                "Delivery", "Category_Full", "pocet_to",
+                "pohyby_celkem", "pocet_hu", "nepokryte_to", "pohybu_na_hu"
+            ]].sort_values("pohyby_celkem", ascending=False).copy()
             det_df.columns = [
-                t('b_table_del'), t('b_table_cat'), t('b_table_to'),
-                t('b_table_mov'), t('b_table_hu'), t('b_col_unpaid_to'), t('b_table_mph')
+                t("b_table_del"), t("b_table_cat"), t("b_table_to"),
+                t("b_table_mov"), t("b_table_hu"), t("b_col_unpaid_to"), t("b_table_mph")
             ]
             st.dataframe(
-                det_df.style.format({t('b_table_mph'): "{:.1f}"}),
-                use_container_width=True, hide_index=True
+                det_df.style.format({t("b_table_mph"): "{:.1f}"}),
+                use_container_width=True, hide_index=True,
             )
         else:
-            st.warning(t('b_missing_vekp'))
+            st.warning(t("b_missing_vekp"))
 
-    # ==========================================
+        # ═══════════════════════════════════════════════════════════
+        # SEKCE B: AUSWERTUNG — logiky ze zákazníkova souboru
+        # Implementováno shodně s Excel logikami:
+        #   L1: Kategorie = Order Type (T031) + KEP příznak (SDSHP_AM2)
+        #   L2: Art HU = T023 (Vollpalette) / počet materiálů (Sortenrein/Misch)
+        #   L3: Anzahl Packstücke = count distinct HU per Lieferung (z VEKP)
+        #   L4: Gesamtgewicht HU = Eigengewicht + Ladungsgewicht
+        #   L5: Gesamtgewicht Lieferung = SUM(LIPS.Bruttogewicht) [gramy → /1000]
+        #   L6: Carton typy — pevné rozměry z VEKP
+        #   L7: Versandstelle → Bestelltyp (T031)
+        #   L8: KEP Spediteur seznam (SDSHP_AM2)
+        #   L9: Vollpalette T023 pohyby
+        # ═══════════════════════════════════════════════════════════
+        st.divider()
+        st.subheader("📊 " + t("b_aus_title"))
+        st.markdown(t("b_aus_desc"))
+
+        aus_data = st.session_state.get("auswertung_raw", {})
+        if not aus_data:
+            st.info(t("b_aus_upload_hint"))
+        else:
+            try:
+                # ── Pomocná funkce: bezpečné načtení listu ──
+                def get_sheet(name):
+                    df = aus_data.get(name, pd.DataFrame())
+                    if not df.empty:
+                        # Reset číslování sloupců u listů kde řádek 0 je header
+                        header_row = df.iloc[0]
+                        if not all(str(h).startswith("Unnamed") or str(h).isdigit() for h in df.columns):
+                            return df  # Sloupce jsou správně pojmenované
+                        # Jinak použij první řádek jako header
+                        df.columns = [str(c).strip() for c in header_row]
+                        df = df.iloc[1:].reset_index(drop=True)
+                    return df
+
+                # ── Načtení listů ──
+                df_likp  = aus_data.get("LIKP",  pd.DataFrame())
+                df_vekp2 = aus_data.get("VEKP",  pd.DataFrame())
+                df_vepo  = aus_data.get("VEPO",  pd.DataFrame())
+                df_lips2 = aus_data.get("LIPS",  pd.DataFrame())
+                df_sdshp = aus_data.get("SDSHP_AM2", pd.DataFrame())
+                df_t031  = aus_data.get("T031",  pd.DataFrame())
+                df_t023  = aus_data.get("T023",  pd.DataFrame())
+
+                # Ověř dostupnost dat
+                missing = [n for n, d in [("LIKP", df_likp), ("VEKP", df_vekp2),
+                                          ("VEPO", df_vepo), ("SDSHP_AM2", df_sdshp),
+                                          ("T031", df_t031)] if d.empty]
+                if missing:
+                    st.warning(f"Chybějící listy v souboru: {', '.join(missing)}")
+
+                # ════════════════════════════════════════
+                # LOGIKA 8: KEP Spediteur seznam (SDSHP_AM2)
+                # ════════════════════════════════════════
+                kep_set = set()
+                sdshp_display = pd.DataFrame()
+                if not df_sdshp.empty:
+                    # Sloupce: Spediteur, Lade-Uhrzeit, Bereitstellungszone, KEP-fähig, KZVS, Max.Bruttogewicht
+                    col_s = df_sdshp.columns[0]
+                    col_k = next((c for c in df_sdshp.columns if "KEP" in str(c) and ("f" in str(c).lower() or "hig" in str(c).lower())), None)
+                    col_mw = next((c for c in df_sdshp.columns if "Brutto" in str(c) or "gewicht" in str(c).lower()), None)
+                    col_zt = next((c for c in df_sdshp.columns if "Uhrzeit" in str(c) or "Zeit" in str(c)), None)
+                    col_bz = next((c for c in df_sdshp.columns if "Bereit" in str(c) or "Zone" in str(c).lower()), None)
+                    if col_k:
+                        mask_kep = df_sdshp[col_k].astype(str).str.strip() == "X"
+                        kep_set = set(df_sdshp.loc[mask_kep, col_s].astype(str).str.strip())
+                    # Tabulka pro zobrazení
+                    show_cols = [c for c in [col_s, col_k, col_mw, col_zt, col_bz] if c]
+                    sdshp_display = df_sdshp[show_cols].copy() if show_cols else pd.DataFrame()
+
+                # ════════════════════════════════════════
+                # LOGIKA 7: T031 — Versandstelle → Order Type
+                # ════════════════════════════════════════
+                order_type_map = {}  # FM20 → N, FM21 → E, FM24 → O
+                if not df_t031.empty:
+                    order_type_map = dict(zip(
+                        df_t031.iloc[:, 0].astype(str).str.strip(),
+                        df_t031.iloc[:, 1].astype(str).str.strip()
+                    ))
+
+                # ════════════════════════════════════════
+                # LOGIKA 1: KATEGORIE zásilek (LIKP + T031 + SDSHP)
+                # E = Paket (KEP), N = Paleta, O = OE Paleta, OE = OE Paket
+                # ════════════════════════════════════════
+                df_lf = pd.DataFrame()
+                if not df_likp.empty:
+                    c_lief  = df_likp.columns[0]
+                    c_vs    = next((c for c in df_likp.columns if "Versandstelle" in str(c)), None)
+                    c_sped  = next((c for c in df_likp.columns if "pediteur" in str(c)), None)
+                    c_la    = next((c for c in df_likp.columns if "Lieferart" in str(c)), None)
+                    c_ps    = next((c for c in df_likp.columns if "Packst" in str(c)), None)
+                    c_gw    = next((c for c in df_likp.columns if "Gesamtgewicht" in str(c) and "netto" not in str(c).lower()), None)
+                    c_vol   = next((c for c in df_likp.columns if str(c).strip() == "Volumen"), None)
+
+                    keep = {c_lief: "Lieferung"}
+                    if c_vs:   keep[c_vs]   = "Versandstelle"
+                    if c_sped: keep[c_sped] = "Spediteur"
+                    if c_la:   keep[c_la]   = "Lieferart"
+                    if c_ps:   keep[c_ps]   = "Packstucke"
+                    if c_gw:   keep[c_gw]   = "Gew_kg"
+                    if c_vol:  keep[c_vol]  = "Volumen"
+
+                    df_lf = df_likp[list(keep.keys())].copy().rename(columns=keep)
+                    df_lf["Lieferung"] = df_lf["Lieferung"].astype(str).str.strip()
+                    df_lf = df_lf.drop_duplicates("Lieferung")
+
+                    # Order Type z T031 přes Versandstelle
+                    if "Versandstelle" in df_lf.columns:
+                        df_lf["Order_Type"] = (
+                            df_lf["Versandstelle"].astype(str).str.strip()
+                            .map(order_type_map).fillna("N")
+                        )
+                    else:
+                        df_lf["Order_Type"] = "N"
+
+                    # KEP příznak ze Spediteur čísla
+                    if "Spediteur" in df_lf.columns:
+                        df_lf["is_KEP"] = df_lf["Spediteur"].astype(str).str.strip().isin(kep_set)
+                    else:
+                        df_lf["is_KEP"] = False
+
+                    # Kategorie výpočet
+                    # IF KEP AND Order_Type=O → OE; IF KEP AND other → E
+                    # IF not KEP AND Order_Type=O → O; IF not KEP AND other → N
+                    df_lf["Kategorie"] = np.where(
+                        df_lf["is_KEP"],
+                        np.where(df_lf["Order_Type"] == "O", "OE", "E"),
+                        np.where(df_lf["Order_Type"] == "O", "O", "N")
+                    )
+
+                    for nc in ["Packstucke", "Gew_kg", "Volumen"]:
+                        if nc in df_lf.columns:
+                            df_lf[nc] = pd.to_numeric(df_lf[nc], errors="coerce").fillna(0)
+
+                # ════════════════════════════════════════
+                # LOGIKA 9: Vollpalette — T023 (přímé pohyby)
+                # ════════════════════════════════════════
+                vollpalette_lager = set()
+                if not df_t023.empty:
+                    vollpalette_lager = set(df_t023.iloc[:, 0].astype(str).str.strip())
+
+                # ════════════════════════════════════════
+                # LOGIKA 2: Art HU (Sortenrein / Misch / Vollpalette)
+                # ════════════════════════════════════════
+                hu_mat_agg = pd.DataFrame()
+                if not df_vepo.empty:
+                    c_hu_v  = df_vepo.columns[0]
+                    c_del_v = next((c for c in df_vepo.columns if "Lieferung" in str(c)), None)
+                    c_mat_v = next((c for c in df_vepo.columns if "Material" in str(c)), None)
+                    c_mng_v = next((c for c in df_vepo.columns if "verpackte Menge" in str(c) or ("Menge" in str(c) and "ME" not in str(c))), None)
+                    if c_del_v and c_mat_v:
+                        hu_mat_agg = df_vepo.groupby(c_hu_v).agg(
+                            pocet_mat=(c_mat_v, "nunique"),
+                            pocet_lief=(c_del_v, "nunique"),
+                        ).reset_index()
+                        hu_mat_agg.columns = ["HU_intern", "pocet_mat", "pocet_lief"]
+                        hu_mat_agg["HU_intern"] = hu_mat_agg["HU_intern"].astype(str).str.strip()
+
+                # ════════════════════════════════════════
+                # LOGIKA 3+4+6: VEKP — HU hlavičky, váhy, rozměry, carton typy
+                # Gesamtgewicht = Eigengewicht + Ladungsgewicht (ověřeno 99.8%)
+                # ════════════════════════════════════════
+                df_vk = pd.DataFrame()
+                if not df_vekp2.empty:
+                    c_hu_int = df_vekp2.columns[0]
+                    c_hu_ext = next((c for c in df_vekp2.columns if "Handling Unit" in str(c) and "intern" not in str(c).lower()), None)
+                    c_gen_d  = next((c for c in df_vekp2.columns if "generierte Lieferung" in str(c) or "Generated delivery" in str(c)), None)
+                    c_pm     = next((c for c in df_vekp2.columns if str(c).strip() == "Packmittel"), None)
+                    c_pma    = next((c for c in df_vekp2.columns if "Packmittelart" in str(c) or ("Packing Material Type" in str(c) and "Desc" not in str(c) and "\n" not in str(c))), None)
+                    c_gew    = next((c for c in df_vekp2.columns if str(c).strip() == "Gesamtgewicht"), None)
+                    c_lgew   = next((c for c in df_vekp2.columns if str(c).strip() == "Ladungsgewicht"), None)
+                    c_egew   = next((c for c in df_vekp2.columns if str(c).strip() == "Eigengewicht"), None)
+                    c_len    = next((c for c in df_vekp2.columns if str(c).strip() in ("Länge", "Length")), None)
+                    c_wid    = next((c for c in df_vekp2.columns if str(c).strip() in ("Breite", "Width")), None)
+                    c_hei    = next((c for c in df_vekp2.columns if str(c).strip() in ("Höhe", "Height")), None)
+                    c_kat    = next((c for c in df_vekp2.columns if str(c).strip() == "Kategorie"), None)
+                    c_art    = next((c for c in df_vekp2.columns if str(c).strip() == "Art"), None)
+
+                    col_map = {c_hu_int: "HU_intern"}
+                    for alias, col in [("Lieferung", c_gen_d), ("Packmittel", c_pm),
+                                       ("Packmittelart", c_pma), ("Gesamtgewicht", c_gew),
+                                       ("Ladungsgewicht", c_lgew), ("Eigengewicht", c_egew),
+                                       ("Laenge", c_len), ("Breite", c_wid), ("Hoehe", c_hei),
+                                       ("Kategorie_vekp", c_kat), ("Art_vekp", c_art)]:
+                        if col:
+                            col_map[col] = alias
+
+                    df_vk = df_vekp2[list(col_map.keys())].copy().rename(columns=col_map)
+                    df_vk["HU_intern"] = df_vk["HU_intern"].astype(str).str.strip()
+
+                    for nc in ["Gesamtgewicht", "Ladungsgewicht", "Eigengewicht",
+                               "Laenge", "Breite", "Hoehe", "Packmittelart"]:
+                        if nc in df_vk.columns:
+                            df_vk[nc] = pd.to_numeric(df_vk[nc], errors="coerce").fillna(0)
+
+                    # L4: Gesamtgewicht = Eigengewicht + Ladungsgewicht (kde chybí)
+                    if "Eigengewicht" in df_vk.columns and "Ladungsgewicht" in df_vk.columns:
+                        mask_zero = df_vk["Gesamtgewicht"] == 0
+                        df_vk.loc[mask_zero, "Gesamtgewicht"] = (
+                            df_vk.loc[mask_zero, "Eigengewicht"] +
+                            df_vk.loc[mask_zero, "Ladungsgewicht"]
+                        )
+
+                    # L2: Art HU výpočet (pokud není přímo v VEKP)
+                    if "Art_vekp" not in df_vk.columns:
+                        if not hu_mat_agg.empty:
+                            df_vk = df_vk.merge(hu_mat_agg, on="HU_intern", how="left")
+                        else:
+                            df_vk["pocet_mat"] = 1
+                            df_vk["pocet_lief"] = 1
+
+                        def calc_art(row):
+                            hu = row["HU_intern"]
+                            if hu in vollpalette_lager:
+                                return "Vollpalette"
+                            pma = float(row.get("Packmittelart", 0) or 0)
+                            mat = row.get("pocet_mat", 1)
+                            lief = row.get("pocet_lief", 1)
+                            if pma == 1000.0 and (pd.isna(mat) or int(mat) <= 1):
+                                return "Vollpalette"
+                            mat = 1 if pd.isna(mat) else int(mat)
+                            lief = 1 if pd.isna(lief) else int(lief)
+                            if mat > 1 or lief > 1:
+                                return "Misch"
+                            return "Sortenrein"
+
+                        df_vk["Art_HU"] = df_vk.apply(calc_art, axis=1)
+                    else:
+                        df_vk["Art_HU"] = df_vk["Art_vekp"]
+
+                # ════════════════════════════════════════
+                # LOGIKA 5: Váha zásilky z LIPS (Bruttogewicht v gramech → kg)
+                # ════════════════════════════════════════
+                lips_vaha = pd.DataFrame()
+                if not df_lips2.empty:
+                    c_ll = df_lips2.columns[0]
+                    c_bg = next((c for c in df_lips2.columns if "Bruttogewicht" in str(c)), None)
+                    c_ng = next((c for c in df_lips2.columns if "Nettogewicht" in str(c)), None)
+                    if c_bg:
+                        lv = df_lips2[[c_ll, c_bg]].copy()
+                        lv.columns = ["Lieferung", "Brutto_g"]
+                        lv["Brutto_g"] = pd.to_numeric(lv["Brutto_g"], errors="coerce").fillna(0)
+                        lv["Lieferung"] = lv["Lieferung"].astype(str).str.strip()
+                        lips_vaha = lv.groupby("Lieferung")["Brutto_g"].sum().reset_index()
+                        lips_vaha["Brutto_kg"] = lips_vaha["Brutto_g"] / 1000.0  # gramy → kg
+
+                # ════════════════════════════════════════
+                # AGREGACE NA ÚROVNI LIEFERUNG
+                # ════════════════════════════════════════
+                aus_lief = pd.DataFrame()
+                if not df_vk.empty and "Lieferung" in df_vk.columns:
+                    df_vk["Lieferung"] = df_vk["Lieferung"].astype(str).str.strip()
+
+                    # L3: Anzahl Packstücke = count distinct HU per Lieferung
+                    agg_dict = {"anzahl_hu": ("HU_intern", "nunique")}
+                    if "Gesamtgewicht" in df_vk.columns:
+                        agg_dict["celk_gew"]  = ("Gesamtgewicht", "sum")
+                        agg_dict["avg_gew"]   = ("Gesamtgewicht", "mean")
+                    if "Ladungsgewicht" in df_vk.columns:
+                        agg_dict["avg_ladung"] = ("Ladungsgewicht", "mean")
+                    if "Packmittel" in df_vk.columns:
+                        agg_dict["pm_typy"] = ("Packmittel", lambda x: ", ".join(
+                            sorted(x.dropna().astype(str).str.strip().unique())
+                        ))
+
+                    aus_lief = df_vk.groupby("Lieferung").agg(**agg_dict).reset_index()
+
+                    # Art distribuce na Lieferung
+                    if "Art_HU" in df_vk.columns:
+                        art_piv = (
+                            df_vk.groupby(["Lieferung", "Art_HU"])["HU_intern"]
+                            .nunique().unstack(fill_value=0).reset_index()
+                        )
+                        aus_lief = aus_lief.merge(art_piv, on="Lieferung", how="left")
+
+                    # Kategorie z LIKP
+                    if not df_lf.empty:
+                        merge_cols = ["Lieferung", "Kategorie", "Order_Type", "is_KEP"]
+                        if "Spediteur" in df_lf.columns:
+                            merge_cols.append("Spediteur")
+                        if "Packstucke" in df_lf.columns:
+                            merge_cols.append("Packstucke")
+                        if "Gew_kg" in df_lf.columns:
+                            merge_cols.append("Gew_kg")
+                        aus_lief = aus_lief.merge(df_lf[merge_cols], on="Lieferung", how="left")
+                    aus_lief["Kategorie"] = aus_lief.get("Kategorie", pd.Series()).fillna("N")
+
+                    # Váha z LIPS
+                    if not lips_vaha.empty:
+                        aus_lief = aus_lief.merge(
+                            lips_vaha[["Lieferung", "Brutto_kg"]], on="Lieferung", how="left"
+                        )
+
+                # ════════════════════════════════════════
+                # ZOBRAZENÍ VÝSLEDKŮ
+                # ════════════════════════════════════════
+                kat_desc_map = {"E": "Paket (KEP)", "N": "Paleta", "O": "OE Paleta", "OE": "OE Paket"}
+
+                # --- Celkové metriky ---
+                if not aus_lief.empty:
+                    tot_l = aus_lief["Lieferung"].nunique()
+                    tot_h = int(aus_lief["anzahl_hu"].sum()) if "anzahl_hu" in aus_lief.columns else 0
+                    avg_h = tot_h / tot_l if tot_l > 0 else 0
+                    pct_kep = aus_lief["Kategorie"].isin(["E", "OE"]).mean() * 100 if "Kategorie" in aus_lief.columns else 0
+
+                    gew_col = "Brutto_kg" if "Brutto_kg" in aus_lief.columns else ("celk_gew" if "celk_gew" in aus_lief.columns else None)
+                    tot_gew = aus_lief[gew_col].sum() if gew_col else 0
+
+                    cm1, cm2, cm3, cm4, cm5 = st.columns(5)
+                    cm1.metric(t("b_aus_total_lief"), f"{tot_l:,}".replace(",", " "))
+                    cm2.metric(t("b_aus_total_hu"), f"{tot_h:,}".replace(",", " "))
+                    cm3.metric(t("b_aus_avg_hu_lief"), f"{avg_h:.2f}")
+                    cm4.metric(t("b_aus_total_vaha"), f"{tot_gew:,.0f} kg".replace(",", " "))
+                    cm5.metric(t("b_aus_pct_kep"), f"{pct_kep:.1f} %")
+
+                # --- L1: KATEGORIE ZÁSILEK ---
+                st.divider()
+                st.subheader(t("b_aus_kat_title"))
+                st.caption(t("b_aus_kat_desc"))
+
+                if not aus_lief.empty and "Kategorie" in aus_lief.columns:
+                    art_cols_avail = [c for c in ["Sortenrein", "Misch", "Vollpalette"] if c in aus_lief.columns]
+                    agg_k = {"pocet_lief": ("Lieferung", "nunique"),
+                             "celk_hu": ("anzahl_hu", "sum")}
+                    if gew_col:
+                        agg_k["celk_gew"] = (gew_col, "sum")
+                    if "avg_gew" in aus_lief.columns:
+                        agg_k["prumer_gew"] = ("avg_gew", "mean")
+                    for ac in art_cols_avail:
+                        agg_k[f"hu_{ac}"] = (ac, "sum")
+
+                    kat_grp = aus_lief.groupby("Kategorie").agg(**agg_k).reset_index()
+                    kat_grp["prumer_hu"] = kat_grp["celk_hu"] / kat_grp["pocet_lief"]
+                    kat_grp["Popis"] = kat_grp["Kategorie"].map(kat_desc_map).fillna(kat_grp["Kategorie"])
+
+                    disp_cols = ["Kategorie", "Popis", "pocet_lief", "celk_hu", "prumer_hu"]
+                    disp_names = [t("b_aus_kat"), t("b_aus_popis"), t("b_aus_lief"), t("b_aus_hu"), t("b_aus_packst")]
+                    if "celk_gew" in kat_grp.columns:
+                        disp_cols.append("celk_gew")
+                        disp_names.append(t("b_aus_vaha_total"))
+                    if "prumer_gew" in kat_grp.columns:
+                        disp_cols.append("prumer_gew")
+                        disp_names.append(t("b_aus_avg_vaha"))
+                    for ac in art_cols_avail:
+                        disp_cols.append(f"hu_{ac}")
+                        disp_names.append(f"HU {ac}")
+
+                    disp_kat = kat_grp[disp_cols].copy()
+                    disp_kat.columns = disp_names
+
+                    fmt_kat = {t("b_aus_packst"): "{:.2f}"}
+                    if t("b_aus_vaha_total") in disp_kat.columns:
+                        fmt_kat[t("b_aus_vaha_total")] = "{:,.0f}"
+                    if t("b_aus_avg_vaha") in disp_kat.columns:
+                        fmt_kat[t("b_aus_avg_vaha")] = "{:.1f}"
+
+                    ck1, ck2 = st.columns([2.5, 1])
+                    with ck1:
+                        st.dataframe(disp_kat.style.format(fmt_kat),
+                                     use_container_width=True, hide_index=True)
+                    with ck2:
+                        st.bar_chart(kat_grp.set_index("Kategorie")["celk_hu"])
+                else:
+                    st.info("Nejsou dostupná data kategorií (chybí LIKP nebo VEKP).")
+
+                # --- L2: Art HU (Sortenrein / Misch / Vollpalette) ---
+                st.divider()
+                st.subheader(t("b_aus_art_title"))
+                st.caption(t("b_aus_art_desc"))
+
+                if not df_vk.empty and "Art_HU" in df_vk.columns:
+                    art_celk = df_vk["Art_HU"].value_counts()
+                    art_sum = art_celk.sum()
+                    ca1, ca2, ca3 = st.columns(3)
+                    for col, label, icon in [
+                        (ca1, "Sortenrein", "📦"),
+                        (ca2, "Misch", "🔀"),
+                        (ca3, "Vollpalette", "🏭"),
+                    ]:
+                        cnt = int(art_celk.get(label, 0))
+                        pct = cnt / art_sum * 100 if art_sum > 0 else 0
+                        col.metric(f"{icon} {label}", f"{cnt:,}".replace(",", " "), f"{pct:.1f} %")
+
+                    # Křížová tabulka Kategorie × Art
+                    if not aus_lief.empty and art_cols_avail:
+                        st.markdown("**Distribuce typů HU podle kategorie:**")
+                        art_cross = aus_lief.groupby("Kategorie")[art_cols_avail].sum().reset_index()
+                        art_cross["Popis"] = art_cross["Kategorie"].map(kat_desc_map).fillna(art_cross["Kategorie"])
+                        art_cross = art_cross[["Kategorie", "Popis"] + art_cols_avail]
+                        st.dataframe(art_cross, use_container_width=True, hide_index=True)
+
+                # --- L3: Anzahl Packstücke (distribuce počtu HU na zásilku) ---
+                st.divider()
+                st.markdown("**📊 Počet HU na zásilku (Anzahl Packstücke):**")
+                if not aus_lief.empty and "anzahl_hu" in aus_lief.columns:
+                    ps_dist = aus_lief["anzahl_hu"].value_counts().sort_index().reset_index()
+                    ps_dist.columns = ["Počet HU", "Počet zásilek"]
+                    ps_dist["% zásilek"] = (ps_dist["Počet zásilek"] / ps_dist["Počet zásilek"].sum() * 100).round(1)
+                    ps1, ps2 = st.columns([1, 2])
+                    with ps1:
+                        st.dataframe(
+                            ps_dist.style.format({"% zásilek": "{:.1f} %"}),
+                            use_container_width=True, hide_index=True
+                        )
+                    with ps2:
+                        st.bar_chart(ps_dist.set_index("Počet HU")["Počet zásilek"])
+
+                # --- L4+L5: Váhy (Gesamtgewicht = Eigengewicht + Ladungsgewicht) ---
+                if not df_vk.empty and any(c in df_vk.columns for c in ["Gesamtgewicht", "Ladungsgewicht", "Eigengewicht"]):
+                    st.divider()
+                    st.markdown("**⚖️ Váhy HU (Logika: Gesamtgewicht = Eigengewicht + Ladungsgewicht):**")
+                    w_cols = [c for c in ["Packmittel", "Gesamtgewicht", "Eigengewicht", "Ladungsgewicht"] if c in df_vk.columns]
+                    if "Packmittel" in df_vk.columns:
+                        wt_grp = df_vk[df_vk["Packmittel"].notna() & (df_vk["Gesamtgewicht"] > 0)].groupby("Packmittel").agg(
+                            pocet=("HU_intern", "nunique"),
+                            avg_total=("Gesamtgewicht", "mean"),
+                            first_eigen=("Eigengewicht", "first") if "Eigengewicht" in df_vk.columns else ("HU_intern", "count"),
+                            avg_ladung=("Ladungsgewicht", "mean") if "Ladungsgewicht" in df_vk.columns else ("HU_intern", "count"),
+                        ).reset_index().sort_values("pocet", ascending=False).head(20)
+                        wt_grp.columns = (
+                            [t("b_aus_carton"), t("b_aus_pocet"), "Prům. Gesamtgew. (kg)",
+                             "Eigengewicht (kg)", "Prům. Ladungsgew. (kg)"]
+                        )
+                        st.dataframe(
+                            wt_grp.style.format({
+                                "Prům. Gesamtgew. (kg)": "{:.2f}",
+                                "Eigengewicht (kg)": "{:.2f}",
+                                "Prům. Ladungsgew. (kg)": "{:.2f}",
+                            }),
+                            use_container_width=True, hide_index=True
+                        )
+                    if not lips_vaha.empty:
+                        tot_lips = lips_vaha["Brutto_kg"].sum()
+                        tot_vekp = df_vk["Gesamtgewicht"].sum() if "Gesamtgewicht" in df_vk.columns else 0
+                        st.caption(
+                            f"Celková váha dle LIPS (Bruttogewicht, gramy→kg): **{tot_lips:,.0f} kg** | "
+                            f"dle VEKP (Gesamtgewicht, kg): **{tot_vekp:,.0f} kg** | "
+                            f"Rozdíl: **{abs(tot_lips - tot_vekp):,.0f} kg**"
+                        )
+
+                # --- L6: CARTON TYPY — rozměry a vlastní váhy ---
+                if not df_vk.empty and "Packmittel" in df_vk.columns:
+                    st.divider()
+                    st.subheader(t("b_aus_carton_title"))
+                    dim_cols = [c for c in ["Laenge", "Breite", "Hoehe", "Eigengewicht"] if c in df_vk.columns]
+                    carton_agg = df_vk[df_vk["Packmittel"].notna()].groupby("Packmittel").agg(
+                        pocet=("HU_intern", "nunique"),
+                        avg_gew=("Gesamtgewicht", "mean") if "Gesamtgewicht" in df_vk.columns else ("HU_intern", "count"),
+                        **{d: (d, "first") for d in dim_cols}
+                    ).reset_index().sort_values("pocet", ascending=False)
+
+                    rename_map = {
+                        "Packmittel": t("b_aus_carton"), "pocet": t("b_aus_pocet"),
+                        "avg_gew": t("b_aus_avg_vaha"),
+                        "Laenge": t("b_aus_delka"), "Breite": t("b_aus_sirka"),
+                        "Hoehe": t("b_aus_vyska"), "Eigengewicht": "Váha prázdné krabice (kg)"
+                    }
+                    carton_disp = carton_agg.rename(columns={k: v for k, v in rename_map.items() if k in carton_agg.columns})
+                    fmt_c = {t("b_aus_avg_vaha"): "{:.2f}"}
+                    for dc in [t("b_aus_delka"), t("b_aus_sirka"), t("b_aus_vyska")]:
+                        if dc in carton_disp.columns:
+                            fmt_c[dc] = "{:.0f}"
+                    if "Váha prázdné krabice (kg)" in carton_disp.columns:
+                        fmt_c["Váha prázdné krabice (kg)"] = "{:.2f}"
+
+                    st.dataframe(
+                        carton_disp.style.format(fmt_c),
+                        use_container_width=True, hide_index=True
+                    )
+
+                # --- L8: KEP Dopravci (SDSHP_AM2) ---
+                st.divider()
+                st.subheader(t("b_aus_sped_title"))
+                kep_col1, kep_col2 = st.columns(2)
+                kep_col1.metric(t("b_aus_kep_count"), f"{len(kep_set)}")
+                total_sped = len(df_sdshp) if not df_sdshp.empty else 0
+                kep_col2.metric(t("b_aus_nonkep_count"), f"{total_sped - len(kep_set)}")
+
+                if not sdshp_display.empty:
+                    col_s0 = sdshp_display.columns[0]
+                    col_k0 = sdshp_display.columns[1] if len(sdshp_display.columns) > 1 else None
+                    sdshp_disp2 = sdshp_display.copy()
+                    sdshp_disp2["Je KEP"] = sdshp_disp2[col_s0].astype(str).str.strip().isin(kep_set).map({True: "✅ KEP", False: "—"})
+                    with st.expander("Zobrazit tabulku dopravců (SDSHP_AM2)"):
+                        st.dataframe(sdshp_disp2, use_container_width=True, hide_index=True)
+
+                # --- L9: Vollpalette T023 ---
+                st.divider()
+                st.subheader(t("b_aus_voll_title"))
+                vt1, vt2 = st.columns(2)
+                vt1.metric(t("b_aus_voll_count"), f"{len(vollpalette_lager):,}".replace(",", " "))
+                if not df_vk.empty and "Art_HU" in df_vk.columns:
+                    voll_count = int((df_vk["Art_HU"] == "Vollpalette").sum())
+                    vt2.metric("HU označených Vollpalette", f"{voll_count:,}".replace(",", " "))
+                if not df_t023.empty:
+                    with st.expander("Zobrazit T023 — přímé pohyby celých palet"):
+                        t023_disp = df_t023.copy()
+                        t023_disp.columns = ["Lagereinheit (HU)", "Transport Order č.", "Pozice TO"]
+                        st.dataframe(t023_disp, use_container_width=True, hide_index=True)
+
+                # --- Detailní tabulka Lieferung ---
+                st.divider()
+                with st.expander(t("b_aus_detail_exp"), expanded=False):
+                    if not aus_lief.empty:
+                        det_cols_show = ["Lieferung", "Kategorie"]
+                        det_fmt = {}
+                        if "anzahl_hu" in aus_lief.columns:
+                            det_cols_show.append("anzahl_hu")
+                        if gew_col:
+                            det_cols_show.append(gew_col)
+                            det_fmt[gew_col] = "{:.1f}"
+                        for ac in art_cols_avail:
+                            if ac in aus_lief.columns:
+                                det_cols_show.append(ac)
+                        if "pm_typy" in aus_lief.columns:
+                            det_cols_show.append("pm_typy")
+
+                        det_aus = aus_lief[det_cols_show].copy()
+                        det_aus["Popis"] = det_aus["Kategorie"].map(kat_desc_map).fillna(det_aus["Kategorie"])
+                        det_aus = det_aus.sort_values(gew_col if gew_col else "Lieferung", ascending=False)
+
+                        col_renames = {"Lieferung": "Delivery", "Kategorie": t("b_aus_kat"),
+                                       "anzahl_hu": t("b_aus_hu"), "pm_typy": t("b_aus_carton"),
+                                       "Popis": t("b_aus_popis"), "Brutto_kg": "Váha LIPS (kg)",
+                                       "celk_gew": "Váha VEKP (kg)"}
+                        det_aus = det_aus.rename(columns={k: v for k, v in col_renames.items() if k in det_aus.columns})
+                        st.dataframe(
+                            det_aus.style.format(det_fmt),
+                            use_container_width=True, hide_index=True
+                        )
+                    else:
+                        st.info("Žádná data zásilek k zobrazení.")
+
+            except Exception as _e:
+                import traceback
+                st.error(f"Chyba při zpracování Auswertung: {_e}")
+                with st.expander("Detail chyby (pro debugging)"):
+                    st.code(traceback.format_exc())
+
     # TAB 5: NÁSTROJE & AUDIT
     # ==========================================
     with tab_audit:
