@@ -148,9 +148,21 @@ Pokud v SAPu ani ručním ověření chybí data o balení, systém aplikuje bez
         'search_label': "Zkontrolujte si konkrétní materiál:",
         'tab_dashboard': "📊 Dashboard & Queue",
         'tab_pallets': "📦 Paletové zakázky",
+        'tab_fu': "🏭 Celé palety (FU)",
         'tab_top': "🏆 TOP Materiály",
         'tab_billing': "💰 Účtování a balení (VEKP)",
         'tab_audit': "🔍 Nástroje & Audit",
+        
+        # FU Tab
+        'fu_title': "Analýza Full Pallet front (PI_PL_FU, PI_PL_FUOE)",
+        'fu_desc': "Srovnání vychystaných jednotek podle Storage Unit Type (KLT vs. Palety).",
+        'fu_col_cat': "Kategorie (SU Type)",
+        'fu_col_lines': "Počet picků (Řádků)",
+        'fu_col_qty': "Celkem kusů",
+        'fu_col_moves': "Fyzické pohyby",
+        'fu_no_data': "Ve frontách PI_PL_FU a PI_PL_FUOE nebyla nalezena žádná data.",
+        'fu_missing_col': "Chybí sloupec 'Storage Unit Type' ve zdrojovém Pick reportu!",
+        
         'b_title': "💰 Korelace mezi Pickováním a Účtováním",
         'b_desc': "Zákazník platí podle počtu výsledných balících jednotek (HU). Zde vidíte náročnost vytvoření těchto zpoplatněných jednotek napříč fakturačními kategoriemi.",
         'b_del_count': "Počet Deliveries",
@@ -213,45 +225,6 @@ Pokud v SAPu ani ručním ověření chybí data o balení, systém aplikuje bez
         'source_to_date': "Datum (z TO)",
         'loading': "🔄 Načítám soubory...",
         'processing': "⚙️ Zpracovávám master data...",
-        'b_aus_title': "Analýza zásilkových dat (Auswertung)",
-        'b_aus_desc': "Data ze zákazníkova souboru — kategorizace, typy HU a váhy počítány stejnou logikou jako v Excelu.",
-        'b_aus_upload_hint': "Pro tuto sekci nahrajte zákazníkův soubor Auswertung_Outbound_HWL.xlsx (nebo soubor s auswertung v názvu).",
-        'b_aus_no_vekp': "Soubor neobsahuje list VEKP/VEPO — nelze vypočítat typy HU.",
-        'b_aus_kat_title': "Kategorie zásilek (E / N / O / OE)",
-        'b_aus_kat_desc': "Kategorie = kombinace Order Type (Versandstelle + T031) + KEP příznak dopravce (SDSHP_AM2).",
-        'b_aus_kat': "Kategorie",
-        'b_aus_popis': "Popis",
-        'b_aus_lief': "Lieferungen",
-        'b_aus_hu': "HU celkem",
-        'b_aus_packst': "Prům. HU / zásilka",
-        'b_aus_avg_vaha': "Prům. váha HU (kg)",
-        'b_aus_avg_ladung': "Prům. obsah HU (kg)",
-        'b_aus_vaha_total': "Váha celkem (kg)",
-        'b_aus_total_lief': "Zásilky celkem",
-        'b_aus_total_hu': "HU celkem",
-        'b_aus_avg_hu_lief': "Prům. HU / zásilka",
-        'b_aus_total_vaha': "Celk. hmotnost (kg)",
-        'b_aus_pct_kep': "Zásilek přes KEP",
-        'b_aus_art_title': "Typy HU (Sortenrein / Misch / Vollpalette)",
-        'b_aus_art_desc': "Vollpalette = HU v T023 nebo 1 mat. na paletě. Sortenrein = 1 materiál / 1 zakázka. Misch = víc materiálů nebo zakázek.",
-        'b_aus_carton_title': "Typy kartonů (Packmittel) — rozměry a váhy",
-        'b_aus_carton': "Typ krabice",
-        'b_aus_pocet': "Počet HU",
-        'b_aus_delka': "Délka (cm)",
-        'b_aus_sirka': "Šířka (cm)",
-        'b_aus_vyska': "Výška (cm)",
-        'b_aus_detail_exp': "Detailní tabulka zásilek (rozbalit)",
-        'b_aus_sped_title': "Dopravci (Spediteur) — KEP / non-KEP",
-        'b_aus_kep_count': "KEP dopravci",
-        'b_aus_nonkep_count': "Non-KEP dopravci",
-        'b_aus_sped': "Spediteur",
-        'b_aus_kep_flag': "KEP",
-        'b_aus_max_gew': "Max. hmotnost (kg)",
-        'b_aus_ladezeit': "Čas nakládky",
-        'b_aus_zone': "Zóna přípravy",
-        'b_aus_voll_title': "Vollpalette — přímé pohyby (T023)",
-        'b_aus_voll_count': "Pohybů celých palet",
-        # Auswertung / zákazníkův soubor
         'b_aus_title': "Analýza zásilkových dat (Auswertung)",
         'b_aus_desc': "Data ze zákazníkova souboru — kategorizace, typy HU a váhy počítány stejnou logikou jako v Excelu.",
         'b_aus_upload_hint': "💡 Pro tuto sekci nahrajte zákazníkův soubor **Auswertung_Outbound_HWL.xlsx** (nebo jiný soubor s 'auswertung' v názvu).",
@@ -378,9 +351,21 @@ If SAP and manual override both lack packaging data, a safety estimate is applie
         'search_label': "Check specific material:",
         'tab_dashboard': "📊 Dashboard & Queue",
         'tab_pallets': "📦 Pallet Orders",
+        'tab_fu': "🏭 Full Pallets (FU)",
         'tab_top': "🏆 TOP Materials",
         'tab_billing': "💰 Billing & Packing (VEKP)",
         'tab_audit': "🔍 Tools & Audit",
+        
+        # FU Tab
+        'fu_title': "Full Pallet Queues Analysis (PI_PL_FU, PI_PL_FUOE)",
+        'fu_desc': "Comparison of picked units by Storage Unit Type (KLT vs. Pallets).",
+        'fu_col_cat': "Category (SU Type)",
+        'fu_col_lines': "Number of Picks (Lines)",
+        'fu_col_qty': "Total Pieces",
+        'fu_col_moves': "Physical Moves",
+        'fu_no_data': "No data found for queues PI_PL_FU and PI_PL_FUOE.",
+        'fu_missing_col': "Column 'Storage Unit Type' is missing in the source Pick report!",
+
         'b_title': "💰 Correlation Between Picking and Billing",
         'b_desc': "The customer pays based on packed Handling Units (HUs). Here you see the effort to create these billed units across categories.",
         'b_del_count': "Delivery Count",
@@ -443,45 +428,6 @@ If SAP and manual override both lack packaging data, a safety estimate is applie
         'source_to_date': "Date (from TO)",
         'loading': "🔄 Loading files...",
         'processing': "⚙️ Processing master data...",
-        'b_aus_title': "Shipment Data Analysis (Auswertung)",
-        'b_aus_desc': "Data from customer file — categorization, HU types and weights calculated using the same logic as the Excel file.",
-        'b_aus_upload_hint': "For this section upload the customer file Auswertung_Outbound_HWL.xlsx (or any file with auswertung in the name).",
-        'b_aus_no_vekp': "File does not contain VEKP/VEPO sheet — cannot calculate HU types.",
-        'b_aus_kat_title': "Shipment Categories (E / N / O / OE)",
-        'b_aus_kat_desc': "Category = Order Type (Versandstelle + T031) + KEP carrier flag (SDSHP_AM2).",
-        'b_aus_kat': "Category",
-        'b_aus_popis': "Description",
-        'b_aus_lief': "Deliveries",
-        'b_aus_hu': "Total HUs",
-        'b_aus_packst': "Avg HU / delivery",
-        'b_aus_avg_vaha': "Avg HU weight (kg)",
-        'b_aus_avg_ladung': "Avg HU content (kg)",
-        'b_aus_vaha_total': "Total weight (kg)",
-        'b_aus_total_lief': "Total deliveries",
-        'b_aus_total_hu': "Total HUs",
-        'b_aus_avg_hu_lief': "Avg HU / delivery",
-        'b_aus_total_vaha': "Total weight (kg)",
-        'b_aus_pct_kep': "Via KEP carrier",
-        'b_aus_art_title': "HU Types (Sortenrein / Misch / Vollpalette)",
-        'b_aus_art_desc': "Vollpalette = HU in T023 or single mat. on pallet. Sortenrein = 1 material / 1 order. Misch = multiple materials or orders.",
-        'b_aus_carton_title': "Carton Types (Packmittel) — dimensions and weights",
-        'b_aus_carton': "Carton type",
-        'b_aus_pocet': "HU count",
-        'b_aus_delka': "Length (cm)",
-        'b_aus_sirka': "Width (cm)",
-        'b_aus_vyska': "Height (cm)",
-        'b_aus_detail_exp': "Detailed delivery table (expand)",
-        'b_aus_sped_title': "Carriers (Spediteur) — KEP / non-KEP",
-        'b_aus_kep_count': "KEP carriers",
-        'b_aus_nonkep_count': "Non-KEP carriers",
-        'b_aus_sped': "Spediteur",
-        'b_aus_kep_flag': "KEP",
-        'b_aus_max_gew': "Max weight (kg)",
-        'b_aus_ladezeit': "Loading time",
-        'b_aus_zone': "Staging zone",
-        'b_aus_voll_title': "Vollpalette — direct movements (T023)",
-        'b_aus_voll_count': "Full pallet movements",
-        # Auswertung / customer file
         'b_aus_title': "Shipment Data Analysis (Auswertung)",
         'b_aus_desc': "Data from customer file — categorization, HU types and weights calculated using the same logic as the Excel file.",
         'b_aus_upload_hint': "💡 For this section upload the customer file **Auswertung_Outbound_HWL.xlsx** (or any file with 'auswertung' in the name).",
@@ -762,6 +708,10 @@ def main():
                 else ''
             )
 
+            # Storage Unit Type (Pro sekci FU)
+            if 'Storage Unit Type' in df_pick.columns:
+                df_pick['Storage Unit Type'] = df_pick['Storage Unit Type'].fillna('').astype(str)
+
             # DATUM: primárně z pick 'Confirmation date' (vždy vyplněn, přesnější)
             # FIX: původní kód hledal 'Confirmation Date' s velkým D - v pick je malé 'd'
             if 'Confirmation date' in df_pick.columns:
@@ -1030,9 +980,9 @@ def main():
     if manual_boxes:
         c_i3.success(t('info_manual').format(len(manual_boxes)))
 
-    # TABS
-    tab_dash, tab_pallets, tab_top, tab_billing, tab_audit = st.tabs([
-        t('tab_dashboard'), t('tab_pallets'), t('tab_top'), t('tab_billing'), t('tab_audit')
+    # TABS (Přidána záložka FU)
+    tab_dash, tab_pallets, tab_fu, tab_top, tab_billing, tab_audit = st.tabs([
+        t('tab_dashboard'), t('tab_pallets'), t('tab_fu'), t('tab_top'), t('tab_billing'), t('tab_audit')
     ])
 
     # ==========================================
@@ -1245,7 +1195,67 @@ def main():
             st.warning(t('no_orders'))
 
     # ==========================================
-    # TAB 3: TOP MATERIÁLY
+    # TAB 3: CELÉ PALETY (FU) - NOVÁ ZÁLOŽKA
+    # ==========================================
+    with tab_fu:
+        st.subheader(t('fu_title'))
+        st.markdown(t('fu_desc'))
+
+        if 'Storage Unit Type' in df_pick.columns:
+            # Filtrovat pouze FU fronty
+            df_fu = df_pick[df_pick['Queue'].astype(str).str.upper().isin(['PI_PL_FU', 'PI_PL_FUOE'])].copy()
+
+            if not df_fu.empty:
+                # Vyčištění sloupce Storage Unit Type
+                df_fu['SU_Type_Clean'] = df_fu['Storage Unit Type'].astype(str).str.strip().str.upper()
+
+                # Kategorizační funkce
+                def categorize_su(su):
+                    if su == 'K1':
+                        return 'KLT (K1)'
+                    elif su in ['EP1', 'EP2', 'EP3', 'EP4']:
+                        return 'Palety (EP1-EP4)'
+                    elif su in ['NAN', 'NONE', '']:
+                        return 'Neznámé/Neuvedeno'
+                    else:
+                        return f'Ostatní ({su})'
+
+                df_fu['SU_Category'] = df_fu['SU_Type_Clean'].apply(categorize_su)
+
+                # Agregace dat
+                fu_summary = df_fu.groupby('SU_Category').agg(
+                    pocet_picku=('Material', 'count'),
+                    celkem_kusu=('Qty', 'sum'),
+                    celkem_pohybu=('Pohyby_Rukou', 'sum')
+                ).reset_index()
+
+                fu_summary = fu_summary.sort_values('pocet_picku', ascending=False)
+                fu_summary.columns = [t('fu_col_cat'), t('fu_col_lines'), t('fu_col_qty'), t('fu_col_moves')]
+
+                # Výpočet metrik
+                total_klt = fu_summary[fu_summary[t('fu_col_cat')] == 'KLT (K1)'][t('fu_col_lines')].sum()
+                total_pal = fu_summary[fu_summary[t('fu_col_cat')] == 'Palety (EP1-EP4)'][t('fu_col_lines')].sum()
+                
+                c_fu1, c_fu2, c_fu3 = st.columns(3)
+                c_fu1.metric("Celkem picků (Řádků) ve FU", f"{len(df_fu):,}".replace(',', ' '))
+                c_fu2.metric("Z toho z KLT (K1)", f"{total_klt:,}".replace(',', ' '))
+                c_fu3.metric("Z toho z Palety (EP)", f"{total_pal:,}".replace(',', ' '))
+
+                st.divider()
+
+                col_f1, col_f2 = st.columns([2, 1])
+                with col_f1:
+                    st.dataframe(fu_summary, use_container_width=True, hide_index=True)
+                with col_f2:
+                    st.bar_chart(fu_summary.set_index(t('fu_col_cat'))[t('fu_col_lines')])
+            else:
+                st.warning(t('fu_no_data'))
+        else:
+            st.warning(t('fu_missing_col'))
+
+
+    # ==========================================
+    # TAB 4: TOP MATERIÁLY
     # ==========================================
     with tab_top:
         st.subheader(t('sec_queue_top_title'))
@@ -1322,7 +1332,7 @@ def main():
     # ==========================================
     # ==========================================
     # ==========================================
-    # TAB 4: ÚČTOVÁNÍ A BALENÍ (VEKP)
+    # TAB 5: ÚČTOVÁNÍ A BALENÍ (VEKP)
     # ==========================================
     with tab_billing:
 
@@ -2107,7 +2117,7 @@ def main():
                 with st.expander("Detail chyby (pro debugging)"):
                     st.code(traceback.format_exc())
 
-    # TAB 5: NÁSTROJE & AUDIT
+    # TAB 6: NÁSTROJE & AUDIT
     # ==========================================
     with tab_audit:
         col_au1, col_au2 = st.columns([3, 2])
