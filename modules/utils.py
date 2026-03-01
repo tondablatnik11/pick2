@@ -4,10 +4,17 @@ import numpy as np
 import re
 
 QUEUE_DESC = {
-    'PI_PL (Mix)': 'Mix Pallet', 'PI_PL (Total)': 'Mix Pallet', 'PI_PL (Single)': 'Mix Pallet',
-    'PI_PL_OE (Mix)': 'Mix Pallet OE', 'PI_PA_OE': 'Parcel OE', 'PI_PL_OE (Total)': 'Mix Pallet OE',
-    'PI_PL_OE (Single)': 'Mix Pallet OE', 'PI_PA': 'Parcel', 'PI_PA_RU': 'Parcel Express',
-    'PI_PL_FU': 'Full Pallet', 'PI_PL_FUOE': 'Full Pallet OE'
+    'PI_PL (Single)': 'Single SKU Pal',
+    'PI_PL (Total)': 'Single SKU Pal + Mix Pal',
+    'PI_PL_OE (Single)': 'OE Single SKU Pal',
+    'PI_PL_OE (Total)': 'OE Single SKU Pal + Mix Pal',
+    'PI_PA_OE': 'OE Parcel',
+    'PI_PL (Mix)': 'Mix Pal',
+    'PI_PA': 'Parcel',
+    'PI_PL_OE (Mix)': 'OE Mix Pal',
+    'PI_PA_RU': 'Parcel Express',
+    'PI_PL_FU': 'Full Pall',
+    'PI_PL_FUOE': 'OE Full Pal'
 }
 BOX_UNITS = {'AEK', 'KAR', 'KART', 'PAK', 'VPE', 'CAR', 'BLO', 'ASK', 'BAG', 'PAC'}
 
