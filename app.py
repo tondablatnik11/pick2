@@ -6,34 +6,69 @@ import re
 import time
 
 # ==========================================
-# 1. NASTAVENÍ STRÁNKY A CSS STYLING
+# 1. NASTAVENÍ STRÁNKY A PROFESIONÁLNÍ CSS
 # ==========================================
 st.set_page_config(
-    page_title="Analýza pickování",
-    page_icon="📦",
+    page_title="Warehouse Control Tower",
+    page_icon="🏢",
     layout="wide",
     initial_sidebar_state="expanded"
 )
 
 st.markdown("""
     <style>
-    div[data-testid="metric-container"] {
-        background-color: #f8f9fa;
-        border: 1px solid #e0e0e0;
-        padding: 5% 5% 5% 10%;
-        border-radius: 10px;
-        box-shadow: 2px 2px 5px rgba(0,0,0,0.05);
+    /* Hlavní pozadí a fonty */
+    .block-container {
+        padding-top: 2rem;
+        padding-bottom: 2rem;
     }
+    
+    /* Vylepšení metrik (karet) */
+    div[data-testid="metric-container"] {
+        background-color: #ffffff;
+        border: 1px solid #e2e8f0;
+        padding: 1rem 1.5rem;
+        border-radius: 0.75rem;
+        box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
+        transition: transform 0.2s ease-in-out;
+    }
+    div[data-testid="metric-container"]:hover {
+        transform: translateY(-2px);
+        box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -2px rgba(0, 0, 0, 0.05);
+    }
+    div[data-testid="metric-container"] > div > div > div > div {
+        color: #1e293b !important;
+        font-weight: 700 !important;
+    }
+    
+    /* Hlavičky */
     .main-header {
-        font-size: 2.5rem;
-        font-weight: 700;
-        color: #1f77b4;
-        margin-bottom: 0.5rem;
+        font-size: 2.75rem;
+        font-weight: 800;
+        background: -webkit-linear-gradient(45deg, #1e3a8a, #3b82f6);
+        -webkit-background-clip: text;
+        -webkit-text-fill-color: transparent;
+        margin-bottom: 0.2rem;
     }
     .sub-header {
-        font-size: 1.2rem;
-        color: #666;
+        font-size: 1.1rem;
+        color: #64748b;
         margin-bottom: 2rem;
+        font-weight: 500;
+    }
+    .section-header {
+        color: #0f172a;
+        border-bottom: 2px solid #e2e8f0;
+        padding-bottom: 0.5rem;
+        margin-top: 2rem;
+        margin-bottom: 1.5rem;
+    }
+    
+    /* Tabulky */
+    .stDataFrame {
+        border-radius: 0.5rem !important;
+        overflow: hidden !important;
+        box-shadow: 0 1px 3px 0 rgba(0, 0, 0, 0.1), 0 1px 2px 0 rgba(0, 0, 0, 0.06) !important;
     }
     </style>
 """, unsafe_allow_html=True)
@@ -63,17 +98,18 @@ BOX_UNITS = {'AEK', 'KAR', 'KART', 'PAK', 'VPE', 'CAR', 'BLO', 'ASK', 'BAG', 'PA
 TEXTS = {
     'cs': {
         'switch_lang': "🇬🇧 Switch to English",
-        'title': "📦 Analýza pickování",
-        'desc': "Nástroj pro modelování fyzické zátěže pickování",
+        'title': "🏢 Warehouse Control Tower",
+        'desc': "Kompletní End-to-End analýza: od fyzického pickování až po čas balení.",
         'upload_title': "📁 Nahrání vstupních dat (Klikněte pro sbalení/rozbalení)",
-        'upload_help': "Nahrajte Pick report, MARM report, TO details (Queue), VEKP (Hlavičky HU), VEPO (Položky HU), Deliveries a volitelně ruční ověření.",
-        'file_status_title': "📋 Stav detekce souborů:",
+        'upload_help': "Nahrajte Pick report, MARM report, TO details (Queue), VEKP (Hlavičky HU), VEPO (Položky HU), Deliveries, OE-Times a volitelně ruční ověření.",
+        'file_status_title': "📋 Stav detekce systémových modulů:",
         'file_pick': "Pick report",
         'file_marm': "MARM",
         'file_queue': "Queue (TO)",
         'file_vekp': "VEKP",
         'file_vepo': "VEPO",
         'file_cats': "Deliveries",
+        'file_oetimes': "Časy Balení (OE)",
         'file_manual': "Ruční ověření",
         'info_users': "💡 Vyloučeno **{} systémových řádků** (UIDJ5089, UIH25501).",
         'info_clean': "💡 Započítán 1 pohyb pro **{} řádků** 'X' (Platí POUZE pro Queue: PI_PL_FU, PI_PL_FUOE).",
@@ -92,24 +128,19 @@ TEXTS = {
         'sec_ratio': "🎯 Spolehlivost dat a zdroj výpočtů",
         'ratio_desc': "Z jakých podkladů aplikace vycházela (Ukazatel kvality dat ze SAPu):",
         'logic_explain_title': "ℹ️ Podrobná metodika: Jak aplikace vypočítává výsledná data?",
-        'logic_explain_text': """Tento analytický model detailně simuluje fyzickou zátěž skladníka podle následujícího postupu:
+        'logic_explain_text': """Tento analytický model detailně simuluje fyzickou zátěž skladníka a balení:
 
-**1. Vstupní soubory:**
-* **Pick report:** Hlavní soubor se seznamem vychystaných položek.
-* **MARM report:** Kmenová data o materiálech ze SAPu.
-* **TO details (Queue):** Dodává informace o frontě.
-* **VEKP / VEPO:** Dodává informace o zabalených jednotkách (HU). Pomocí VEPO aplikace přesně modeluje obalovou hierarchii (krabice na paletách).
-* **Deliveries:** Mapuje zakázky do kategorií.
-* **Ruční ověření (volitelně):** Excel pro ruční přepis velikosti balení (formát K-XXks).
-
-**2. Dekompozice na celá balení (Krabice)**
+**1. Dekompozice na celá balení (Krabice)**
 Systém matematicky rozdělí množství na plné krabice od největší. Co krabice, to **1 fyzický pohyb**.
 
-**3. Analýza volných kusů (Limity)**
+**2. Analýza volných kusů (Limity)**
 Zbylé rozbalené kusy podléhají kontrole ergonomických limitů. Každý těžký/velký kus = **1 pohyb**, lehké kusy se berou do hrsti.
 
-**4. Bezpečnostní odhady (Chybějící data)**
-Pokud chybí data o balení, systém aplikuje bezpečnostní odhad na základě váhy a rozměru.""",
+**3. Obalová hierarchie (Tree-Climbing)**
+Pomocí VEKP a VEPO se aplikace prokouše složitou strukturou balení až na hlavní kořen (Top-Level HU).
+
+**4. Časová náročnost (End-to-End)**
+Propojuje zjištěné fyzické pohyby a výsledné palety se záznamy z OE-Times.""",
         'ratio_moves': "Podíl z celkového počtu POHYBŮ:",
         'ratio_exact': "Přesně (Krabice / Palety / Volné)",
         'ratio_miss': "Odhady (Chybí balení)",
@@ -154,7 +185,8 @@ Pokud chybí data o balení, systém aplikuje bezpečnostní odhad na základě 
         'tab_pallets': "📦 Paletové zakázky",
         'tab_fu': "🏭 Celé palety (FU)",
         'tab_top': "🏆 TOP Materiály",
-        'tab_billing': "💰 Účtování a balení (VEKP)",
+        'tab_billing': "💰 Fakturace (VEKP)",
+        'tab_packing': "⏱️ Časy Balení (OE)",
         'tab_audit': "🔍 Nástroje & Audit",
         'b_title': "💰 Korelace mezi Pickováním a Účtováním",
         'b_desc': "Zákazník platí podle počtu výsledných balících jednotek (HU). Zde vidíte náročnost vytvoření těchto zpoplatněných jednotek napříč fakturačními kategoriemi.",
@@ -180,9 +212,9 @@ Pokud chybí data o balení, systém aplikuje bezpečnostní odhad na základě 
         'b_missing_vekp': "⚠️ Pro zobrazení těchto dat nahrajte soubor VEKP a VEPO.",
         'b_imbalance_orders': "Zakázky s prodělkem",
         'b_of_all': "ze všech",
-        'b_unpaid_to': "Nefakturované Picky (TO)",
+        'b_unpaid_to': "Nefakturované Picky (TO navíc)",
         'b_unpaid_to_help': "Rozdíl: O kolik pickovacích úkolů (TO) se udělalo víc, než kolik se naúčtovalo palet/balíků (HU).",
-        'b_imbalance_title': "⚠️ Zakázky, kde pickujete víc, než dostanete zaplaceno (Ztráta z konsolidace)",
+        'b_imbalance_title': "⚠️ Ztráta z konsolidace (Práce zdarma / Prodělek)",
         'b_imbalance_desc': "Skladník u těchto zakázek oběhal spoustu pickovacích lokací (TO), ale u stolu se to sesypalo do malého počtu krabic/palet (HU). Zákazník platí jen za výsledné HU, takže práce navíc jde za vámi.",
         'b_col_unpaid_to': "TO navíc (Rozdíl)",
         'b_col_mov_hu': "Pohybů / HU",
@@ -267,17 +299,18 @@ Pokud chybí data o balení, systém aplikuje bezpečnostní odhad na základě 
 
     'en': {
         'switch_lang': "🇨🇿 Přepnout do češtiny",
-        'title': "📦 Picking Analysis",
-        'desc': "Tool for modeling physical picking workload.",
+        'title': "🏢 Warehouse Control Tower",
+        'desc': "End-to-End analysis: from physical picking to packing times.",
         'upload_title': "📁 Upload Input Data (Click to expand/collapse)",
-        'upload_help': "Upload Pick report, MARM report, TO details (Queue), VEKP (Packing), VEPO (HU Items), Deliveries Categories, and optional Manual Override.",
-        'file_status_title': "📋 File Detection Status:",
+        'upload_help': "Upload Pick report, MARM report, TO details (Queue), VEKP (Packing), VEPO (HU Items), Deliveries Categories, OE-Times, and optional Manual Override.",
+        'file_status_title': "📋 System Modules Status:",
         'file_pick': "Pick report",
         'file_marm': "MARM",
         'file_queue': "Queue (TO)",
         'file_vekp': "VEKP",
         'file_vepo': "VEPO",
         'file_cats': "Deliveries",
+        'file_oetimes': "Packing Times (OE)",
         'file_manual': "Manual Override",
         'info_users': "💡 Excluded **{} system lines** (UIDJ5089, UIH25501).",
         'info_clean': "💡 1 move counted for **{} lines** with 'X' (Only for PI_PL_FU, PI_PL_FUOE).",
@@ -296,24 +329,19 @@ Pokud chybí data o balení, systém aplikuje bezpečnostní odhad na základě 
         'sec_ratio': "🎯 Data Reliability & Source",
         'ratio_desc': "Data foundation (SAP Data Quality indicator):",
         'logic_explain_title': "ℹ️ Detailed Methodology: How does the app calculate results?",
-        'logic_explain_text': """This analytical model meticulously simulates the picker's physical workload:
+        'logic_explain_text': """This analytical model meticulously simulates the picker's physical workload and packing:
 
-**1. Input Files:**
-* **Pick report:** Main file with picked items.
-* **MARM report:** SAP master data (units AEK, CAR, ASK, BLO...).
-* **TO details (Queue):** Provides Queue and confirmation dates.
-* **VEKP / VEPO:** Packed Handling Units (HUs) for billing correlation.
-* **Deliveries:** Maps deliveries to billing categories.
-* **Manual Override (optional):** Excel for manual packaging sizes (K-XXpcs format).
-
-**2. Decomposition into Full Boxes**
+**1. Decomposition into Full Boxes**
 Quantities are split into full boxes from largest first. Each box = **1 physical move**.
 
-**3. Loose Pieces Analysis**
+**2. Loose Pieces Analysis**
 Remaining pieces are checked against ergonomic limits. Heavy/large = **1 move each**, light pieces are grabbed together.
 
-**4. Safety Estimates (Missing Data)**
-If SAP and manual override both lack packaging data, a safety estimate is applied.""",
+**3. Packing Hierarchy (Tree-Climbing)**
+Using VEKP and VEPO, the app climbs through complex nested packing structures up to the Top-Level HU.
+
+**4. End-to-End Time**
+Correlates physical moves and final pallets with OE-Times to analyze packing speed.""",
         'ratio_moves': "Share of total MOVEMENTS:",
         'ratio_exact': "Exact (Boxes / Pallets / Loose)",
         'ratio_miss': "Estimates (Missing packaging)",
@@ -359,6 +387,7 @@ If SAP and manual override both lack packaging data, a safety estimate is applie
         'tab_fu': "🏭 Full Pallets (FU)",
         'tab_top': "🏆 TOP Materials",
         'tab_billing': "💰 Billing & Packing (VEKP)",
+        'tab_packing': "⏱️ Packing Times (OE)",
         'tab_audit': "🔍 Tools & Audit",
         'b_title': "💰 Correlation Between Picking and Billing",
         'b_desc': "The customer pays based on packed Handling Units (HUs). Here you see the effort to create these billed units across categories.",
@@ -386,7 +415,7 @@ If SAP and manual override both lack packaging data, a safety estimate is applie
         'b_of_all': "of all",
         'b_unpaid_to': "Unbilled Picks (Extra TOs)",
         'b_unpaid_to_help': "Difference: The amount of extra picking tasks (TOs) performed compared to the billed shipping units (HUs).",
-        'b_imbalance_title': "⚠️ Orders where you pick more than you get paid for (Consolidation Loss)",
+        'b_imbalance_title': "⚠️ Consolidation Loss (Unpaid Work)",
         'b_imbalance_desc': "For these orders, the picker walked to many locations (TOs), but everything was consolidated into a few boxes/pallets (HUs) at the packing station. Since the customer only pays per HU, the extra work is uncompensated.",
         'b_col_unpaid_to': "Extra TOs (Diff)",
         'b_col_mov_hu': "Moves / HU",
@@ -497,6 +526,24 @@ def get_match_key(val):
     return v
 
 
+def parse_packing_time(val):
+    v = str(val).strip()
+    if v in ['', 'nan', 'None', 'NaN']: return 0.0
+    try:
+        num = float(v)
+        if num < 1.0: return num * 24 * 60
+        return num
+    except Exception:
+        pass
+    parts = v.split(':')
+    try:
+        if len(parts) == 3: return int(parts[0])*60 + int(parts[1]) + float(parts[2])/60.0
+        elif len(parts) == 2: return int(parts[0]) + float(parts[1])/60.0
+    except Exception:
+        pass
+    return 0.0
+
+
 def fast_compute_moves(qty_list, queue_list, su_list, box_list, w_list, d_list,
                        v_lim, d_lim, h_lim):
     res_total, res_exact, res_miss = [], [], []
@@ -589,7 +636,7 @@ def main():
             progress_bar.progress(10)
 
             df_pick_raw = df_marm_raw = df_manual_raw = None
-            df_queue_raw = df_vekp_raw = df_cats_raw = df_vepo_raw = None
+            df_queue_raw = df_vekp_raw = df_cats_raw = df_vepo_raw = df_oe_raw = None
 
             for file in uploaded_files:
                 fname = file.name.lower()
@@ -632,6 +679,8 @@ def main():
                     'Transfer Order Number' in cols or 'SD Document' in cols
                 ):
                     df_queue_raw = temp_df
+                elif 'DN NUMBER (SAP)' in cols and 'Process Time' in cols:
+                    df_oe_raw = temp_df
                 elif len(temp_df.columns) >= 2:
                     df_manual_raw = temp_df
 
@@ -643,9 +692,9 @@ def main():
                 t('file_vekp'): df_vekp_raw is not None,
                 t('file_vepo'): df_vepo_raw is not None,
                 t('file_cats'): df_cats_raw is not None,
-                t('file_manual'): df_manual_raw is not None,
+                t('file_oetimes'): df_oe_raw is not None,
             }
-            s_cols = st.columns(7)
+            s_cols = st.columns(len(file_status))
             for col, (fname_label, ok) in zip(s_cols, file_status.items()):
                 col.metric(fname_label, "✅" if ok else "❌")
 
@@ -658,10 +707,15 @@ def main():
             progress_bar.progress(40)
 
             df_pick = df_pick_raw.copy()
-            df_pick['Material'] = df_pick['Material'].astype(str).str.strip()
+            
+            # --- ZÁCHRANA PŘED DUCHY (Interní přesuny bez Delivery) ---
+            df_pick['Delivery'] = df_pick['Delivery'].astype(str).str.strip().replace(to_replace=['nan', 'NaN', 'None', 'none', ''], value=np.nan)
+            df_pick['Material'] = df_pick['Material'].astype(str).str.strip().replace(to_replace=['nan', 'NaN', 'None', 'none', ''], value=np.nan)
+            df_pick = df_pick.dropna(subset=['Delivery', 'Material']).copy()
+            # ------------------------------------------------------------
+            
             df_pick['Match_Key'] = get_match_key_vectorized(df_pick['Material'])
             df_pick['Qty'] = pd.to_numeric(df_pick['Act.qty (dest)'], errors='coerce').fillna(0)
-            df_pick['Delivery'] = df_pick['Delivery'].astype(str).str.strip()
 
             if 'Source Storage Bin' in df_pick.columns:
                 df_pick['Source Storage Bin'] = df_pick['Source Storage Bin'].fillna('').astype(str)
@@ -688,8 +742,6 @@ def main():
                 mask_admins = df_pick['User'].isin(['UIDJ5089', 'UIH25501'])
                 num_removed_admins = int(mask_admins.sum())
                 df_pick = df_pick[~mask_admins].copy()
-
-            df_pick = df_pick.dropna(subset=['Delivery', 'Material']).copy()
 
             queue_count_col = 'Delivery'
             df_pick['Queue'] = 'N/A'
@@ -827,6 +879,26 @@ def main():
                 )
                 df_cats_raw = df_cats_raw.drop_duplicates('Lieferung')
 
+            # Zpracování OE-Times
+            if df_oe_raw is not None:
+                df_oe_raw['Delivery'] = df_oe_raw['DN NUMBER (SAP)'].astype(str).str.strip()
+                df_oe_raw['Process_Time_Min'] = df_oe_raw['Process Time'].apply(parse_packing_time)
+                # Seskupení, pokud má zakázka více řádků
+                df_oe_raw = df_oe_raw.groupby('Delivery').agg(
+                    Process_Time_Min=('Process_Time_Min', 'sum'),
+                    CUSTOMER=('CUSTOMER', 'first'),
+                    Material=('Material', 'first'),
+                    KLT=('KLT', lambda x: '; '.join(x.dropna().astype(str))),
+                    Palety=('Palety', lambda x: '; '.join(x.dropna().astype(str))),
+                    Cartons=('Cartons', lambda x: '; '.join(x.dropna().astype(str))),
+                    Scan_SN=('Scanning serial numbers', 'first'),
+                    Reprint=('Reprinting labels ', 'first'),
+                    Diff_KLT=('Difficult KLTs', 'first'),
+                    Shift=('Shift', 'first'),
+                    Num_Items=('Number of item types', 'first')
+                ).reset_index()
+                df_oe_raw.rename(columns={'Scan_SN': 'Scanning serial numbers', 'Reprint': 'Reprinting labels ', 'Diff_KLT': 'Difficult KLTs'}, inplace=True)
+
             st.session_state.update({
                 'last_files_hash': current_files_hash,
                 'df_pick_prep': df_pick,
@@ -839,6 +911,7 @@ def main():
                 'df_vekp': df_vekp_raw,
                 'df_vepo': df_vepo_raw,
                 'df_cats': df_cats_raw,
+                'df_oe': df_oe_raw
             })
 
             progress_bar.progress(100)
@@ -847,7 +920,7 @@ def main():
             status_text.empty()
 
     else:
-        for key in ['last_files_hash', 'df_pick_prep', 'df_vekp', 'df_vepo', 'df_cats', 'auto_voll_hus']:
+        for key in ['last_files_hash', 'df_pick_prep', 'df_vekp', 'df_vepo', 'df_cats', 'df_oe', 'auto_voll_hus']:
             st.session_state.pop(key, None)
 
     if 'df_pick_prep' not in st.session_state or st.session_state['df_pick_prep'] is None:
@@ -863,6 +936,7 @@ def main():
     df_vekp = st.session_state.get('df_vekp')
     df_vepo = st.session_state.get('df_vepo')
     df_cats = st.session_state.get('df_cats')
+    df_oe = st.session_state.get('df_oe')
 
     df_pick['Month'] = df_pick['Date'].dt.to_period('M').astype(str).replace('NaT', t('unknown'))
 
@@ -942,40 +1016,40 @@ def main():
     if manual_boxes:
         c_i3.success(t('info_manual').format(len(manual_boxes)))
 
-    tab_dash, tab_pallets, tab_fu, tab_top, tab_billing, tab_audit = st.tabs([
-        t('tab_dashboard'), t('tab_pallets'), t('tab_fu'), t('tab_top'), t('tab_billing'), t('tab_audit')
-    ])
+    tabs = st.tabs([t('tab_dashboard'), t('tab_pallets'), t('tab_fu'), t('tab_top'), t('tab_billing'), t('tab_packing'), t('tab_audit')])
 
     # ==========================================
     # TAB 1: DASHBOARD & QUEUE
     # ==========================================
-    with tab_dash:
+    with tabs[0]:
         display_q = None
 
         tot_mov = df_pick['Pohyby_Rukou'].sum()
         if tot_mov > 0:
-            st.subheader(t('sec_ratio'))
-            st.write(t('ratio_desc'))
+            st.markdown(f"<div class='section-header'><h3>{t('sec_ratio')}</h3><p>{t('ratio_desc')}</p></div>", unsafe_allow_html=True)
             st.markdown(f"**{t('ratio_moves')}**")
 
             c_r1, c_r2 = st.columns(2)
-            c_r1.metric(
-                t('ratio_exact'),
-                f"{df_pick['Pohyby_Exact'].sum() / tot_mov * 100:.1f} %",
-                f"{df_pick['Pohyby_Exact'].sum():,.0f} {t('audit_phys_moves').lower()}"
-            )
-            c_r2.metric(
-                t('ratio_miss'),
-                f"{df_pick['Pohyby_Loose_Miss'].sum() / tot_mov * 100:.1f} %",
-                f"{df_pick['Pohyby_Loose_Miss'].sum():,.0f} {t('audit_phys_moves').lower()}",
-                delta_color="inverse"
-            )
+            with c_r1:
+                with st.container(border=True):
+                    st.metric(
+                        t('ratio_exact'),
+                        f"{df_pick['Pohyby_Exact'].sum() / tot_mov * 100:.1f} %",
+                        f"{df_pick['Pohyby_Exact'].sum():,.0f} {t('audit_phys_moves').lower()}"
+                    )
+            with c_r2:
+                with st.container(border=True):
+                    st.metric(
+                        t('ratio_miss'),
+                        f"{df_pick['Pohyby_Loose_Miss'].sum() / tot_mov * 100:.1f} %",
+                        f"{df_pick['Pohyby_Loose_Miss'].sum():,.0f} {t('audit_phys_moves').lower()}",
+                        delta_color="inverse"
+                    )
             with st.expander(t('logic_explain_title')):
                 st.info(t('logic_explain_text'))
 
         if (df_pick['Queue'].notna().any() and df_pick['Queue'].nunique() > 1):
-            st.divider()
-            st.subheader(t('sec_queue_title'))
+            st.markdown(f"<div class='section-header'><h3>{t('sec_queue_title')}</h3></div>", unsafe_allow_html=True)
 
             df_q_filter = df_pick.copy()
 
@@ -1077,9 +1151,8 @@ def main():
     # ==========================================
     # TAB 2: PALETOVÉ ZAKÁZKY
     # ==========================================
-    with tab_pallets:
-        st.subheader(t('sec1_title'))
-        st.markdown(t('pallets_clean_info'))
+    with tabs[1]:
+        st.markdown(f"<div class='section-header'><h3>{t('sec1_title')}</h3><p>{t('pallets_clean_info')}</p></div>", unsafe_allow_html=True)
 
         df_pallets_clean = df_pick[
             df_pick['Queue'].astype(str).str.upper().isin(['PI_PL', 'PI_PL_OE'])
@@ -1114,10 +1187,14 @@ def main():
                 )
 
                 c1, c2, c3, c4 = st.columns(4)
-                c1.metric(t('m_orders'), f"{len(filtered_orders):,}".replace(',', ' '))
-                c2.metric(t('m_qty'), f"{filtered_orders['total_qty'].mean():.1f}")
-                c3.metric(t('m_pos'), f"{filtered_orders['num_positions'].mean():.2f}")
-                c4.metric(t('m_mov_loc'), f"{filtered_orders['mov_per_loc'].mean():.1f}")
+                with c1:
+                    with st.container(border=True): st.metric(t('m_orders'), f"{len(filtered_orders):,}".replace(',', ' '))
+                with c2:
+                    with st.container(border=True): st.metric(t('m_qty'), f"{filtered_orders['total_qty'].mean():.1f}")
+                with c3:
+                    with st.container(border=True): st.metric(t('m_pos'), f"{filtered_orders['num_positions'].mean():.2f}")
+                with c4:
+                    with st.container(border=True): st.metric(t('m_mov_loc'), f"{filtered_orders['mov_per_loc'].mean():.1f}")
 
                 tot_p_pal = filtered_orders['celkem_pohybu'].sum()
                 if tot_p_pal > 0:
@@ -1147,9 +1224,8 @@ def main():
     # ==========================================
     # TAB 3: CELÉ PALETY A KLT (FU)
     # ==========================================
-    with tab_fu:
-        st.subheader(t('fu_title'))
-        st.markdown(t('fu_desc'))
+    with tabs[2]:
+        st.markdown(f"<div class='section-header'><h3>{t('fu_title')}</h3><p>{t('fu_desc')}</p></div>", unsafe_allow_html=True)
 
         df_fu = df_pick[df_pick['Queue'].astype(str).str.upper().isin(['PI_PL_FU', 'PI_PL_FUOE'])].copy()
 
@@ -1199,8 +1275,8 @@ def main():
     # ==========================================
     # TAB 4: TOP MATERIÁLY
     # ==========================================
-    with tab_top:
-        st.subheader(t('sec_queue_top_title'))
+    with tabs[3]:
+        st.markdown(f"<div class='section-header'><h3>{t('sec_queue_top_title')}</h3></div>", unsafe_allow_html=True)
         q_options = [t('all_queues')] + sorted(df_pick['Queue'].dropna().unique().tolist())
         selected_queue_disp = st.selectbox(t('q_select'), options=q_options)
 
@@ -1273,7 +1349,8 @@ def main():
     # ==========================================
     # TAB 5: ÚČTOVÁNÍ A BALENÍ (VEKP)
     # ==========================================
-    with tab_billing:
+    with tabs[4]:
+        st.markdown(f"<div class='section-header'><h3>{t('b_title')}</h3><p>{t('b_desc')}</p></div>", unsafe_allow_html=True)
         
         # --- GLOBÁLNÍ AUSWERTUNG MAPOVÁNÍ PRO KATEGORIE (O vs OE a KEP logiky) ---
         aus_category_map = {}
@@ -1340,50 +1417,51 @@ def main():
             else:
                 vekp_filtered['Clean_Parent'] = ""
 
-            # Najdeme reálně obsazené jednotky (listy) podle VEPO
+            # --- ZPŘESNĚNÍ POMOCÍ VEPO A TREE-CLIMBING ---
             valid_base_hus = set()
             if df_vepo is not None and not df_vepo.empty:
                 vepo_hu_col = next((c for c in df_vepo.columns if "Internal HU" in str(c) or "HU-Nummer intern" in str(c)), df_vepo.columns[0])
+                vepo_lower_col = next((c for c in df_vepo.columns if "Lower-level" in str(c) or "untergeordn" in str(c).lower()), None)
+                
                 valid_base_hus = set(df_vepo[vepo_hu_col].astype(str).str.strip().str.lstrip('0'))
+                if vepo_lower_col:
+                    valid_base_hus.update(set(df_vepo[vepo_lower_col].dropna().astype(str).str.strip().str.lstrip('0')))
             else:
                 valid_base_hus = set(vekp_filtered['Clean_HU_Int'])
 
-            # ŠPLHÁNÍ PO STROMU (DOKONALÝ ALGORITMUS HIERARCHIE)
             hu_agg_list = []
             for delivery, group in vekp_filtered.groupby("Generated delivery"):
-                # Křížový slovník (vyrovná interní a externí čísla rodičů do stejného formátu)
                 ext_to_int = dict(zip(group['Clean_HU_Ext'], group['Clean_HU_Int']))
-                parent_map = {}
+                p_map = {}
                 for _, r in group.iterrows():
                     child = str(r['Clean_HU_Int'])
                     parent = str(r['Clean_Parent'])
-                    # Pokud je rodič napsán externím kódem, převedu ho na interní
                     if parent in ext_to_int:
                         parent = ext_to_int[parent]
-                    parent_map[child] = parent
+                    p_map[child] = parent
                     
-                # Vezmu všechny jednotky, ve kterých je reálně materiál (Listy)
-                delivery_leaves = [hu for hu in group['Clean_HU_Int'] if hu in valid_base_hus]
+                # Listy = jednotky, ve kterých je fyzicky materiál (podle VEPO)
+                leaves = [h for h in group['Clean_HU_Int'] if h in valid_base_hus]
                 
-                # U každého Listu vylezu nahoru, dokud nenajdu hlavní paletu (Kořen)
-                delivery_roots = set()
-                for leaf in delivery_leaves:
+                roots = set()
+                for leaf in leaves:
                     curr = leaf
                     visited = set()
-                    while curr in parent_map and parent_map[curr] != "" and curr not in visited:
+                    while curr in p_map and p_map[curr] != "" and curr not in visited:
                         visited.add(curr)
-                        curr = parent_map[curr]
-                    delivery_roots.add(curr)
+                        curr = p_map[curr]
+                    roots.add(curr)
                     
                 hu_agg_list.append({
                     "Generated delivery": delivery,
-                    "hu_leaf": len(delivery_leaves),
-                    "hu_top_level": len(delivery_roots)
+                    "hu_leaf": len(leaves),
+                    "hu_top_level": len(roots)
                 })
                 
             hu_agg = pd.DataFrame(hu_agg_list)
             if hu_agg.empty:
                 hu_agg = pd.DataFrame(columns=["Generated delivery", "hu_leaf", "hu_top_level"])
+            # -------------------------------------------------------------
 
             pick_agg = df_pick.groupby("Delivery").agg(
                 pocet_to=(queue_count_col, "nunique"),
@@ -1443,18 +1521,17 @@ def main():
             billing_df["pohybu_na_hu"] = np.where(
                 billing_df["pocet_hu"] > 0,
                 billing_df["pohyby_celkem"] / billing_df["pocet_hu"], 0)
-            billing_df["nepokryte_to"] = (
+            billing_df["TO_navic"] = (
                 billing_df["pocet_to"] - billing_df["pocet_hu"]).clip(lower=0).astype(int)
             billing_df["avg_mov_per_loc"] = np.where(
                 billing_df["pocet_lokaci"] > 0,
                 billing_df["pohyby_celkem"] / billing_df["pocet_lokaci"], 0)
 
+            st.session_state['billing_df'] = billing_df
+
         # ═══════════════════════════════════════════════════════════════
         # SEKCE A: PICK ↔ HU KORELACE
         # ═══════════════════════════════════════════════════════════════
-        st.subheader(t("b_title"))
-        st.markdown(t("b_desc"))
-
         if not billing_df.empty:
             total_deliveries = len(df_pick["Delivery"].dropna().unique())
             total_pick_moves = int(df_pick["Pohyby_Rukou"].sum())
@@ -1464,17 +1541,21 @@ def main():
             moves_per_hu = total_pick_moves / total_hus if total_hus > 0 else 0
 
             c1, c2, c3, c4, c5, c6 = st.columns(6)
-            c1.metric(t("b_del_count"), f"{total_deliveries:,}".replace(",", " "))
-            c2.metric(t("b_to_count"), f"{total_tos:,}".replace(",", " "))
-            c3.metric(t("b_hu_count"), f"{int(total_hus):,}".replace(",", " "))
-            c4.metric(t("b_mov_per_hu"), f"{moves_per_hu:.1f}")
-            nerov_count = int((billing_df["nepokryte_to"] > 0).sum())
-            nepokr_to_sum = int(billing_df["nepokryte_to"].sum())
-            c5.metric(t("b_imbalance_orders"), f"{nerov_count:,}".replace(",", " "),
-                      f"{nerov_count / len(billing_df) * 100:.1f} % {t('b_of_all')}",
-                      delta_color="inverse")
-            c6.metric(t("b_unpaid_to"), f"{nepokr_to_sum:,}".replace(",", " "),
-                      t("b_unpaid_to_help"), delta_color="inverse")
+            with c1:
+                with st.container(border=True): st.metric(t("b_del_count"), f"{total_deliveries:,}".replace(",", " "))
+            with c2:
+                with st.container(border=True): st.metric(t("b_to_count"), f"{total_tos:,}".replace(",", " "))
+            with c3:
+                with st.container(border=True): st.metric(t("b_hu_count"), f"{int(total_hus):,}".replace(",", " "))
+            with c4:
+                with st.container(border=True): st.metric(t("b_mov_per_hu"), f"{moves_per_hu:.1f}")
+            
+            nerov_count = int((billing_df["TO_navic"] > 0).sum())
+            nepokr_to_sum = int(billing_df["TO_navic"].sum())
+            with c5:
+                with st.container(border=True): st.metric(t("b_imbalance_orders"), f"{nerov_count:,}".replace(",", " "), f"{nerov_count / len(billing_df) * 100:.1f} % {t('b_of_all')}", delta_color="inverse")
+            with c6:
+                with st.container(border=True): st.metric(t("b_unpaid_to"), f"{nepokr_to_sum:,}".replace(",", " "), t("b_unpaid_to_help"), delta_color="inverse")
 
             st.divider()
             st.subheader(t("b_cat_title"))
@@ -1486,7 +1567,7 @@ def main():
                 pohyby_celkem=("pohyby_celkem", "sum"),
                 pohyby_exact=("pohyby_exact", "sum"),
                 pohyby_miss=("pohyby_miss", "sum"),
-                nepokryte_to_sum=("nepokryte_to", "sum"),
+                TO_navic=("TO_navic", "sum"),
             ).reset_index()
             cat_summary["avg_loc_per_hu"] = np.where(
                 cat_summary["pocet_hu"] > 0, cat_summary["pocet_lokaci"] / cat_summary["pocet_hu"], 0)
@@ -1500,7 +1581,7 @@ def main():
             
             cat_disp = cat_summary[[
                 "Category_Full", "pocet_zakazek", "pocet_to_sum", "pocet_hu", "avg_loc_per_hu",
-                "avg_mov_per_loc", "nepokryte_to_sum", "pct_exact", "pct_miss"]].copy()
+                "avg_mov_per_loc", "TO_navic", "pct_exact", "pct_miss"]].copy()
             cat_disp.columns = [
                 t("b_col_type"), t("b_col_orders"), t("b_col_tos"), t("b_col_hu"), t("b_col_loc_hu"),
                 t("b_col_mov_loc"), t("b_col_unpaid_to"), t("b_col_pct_ex"), t("b_col_pct_ms")]
@@ -1519,19 +1600,20 @@ def main():
                 st.bar_chart(chart_data)
 
             st.divider()
-            st.markdown(t("detail_breakdown"))
-            det_df = billing_df[["Delivery", "Category_Full", "pocet_to",
-                                  "pohyby_celkem", "pocet_hu", "nepokryte_to", "pohybu_na_hu"]
-                                ].sort_values("pohyby_celkem", ascending=False).copy()
-            det_df.columns = [t("b_table_del"), t("b_table_cat"), t("b_table_to"),
-                               t("b_table_mov"), t("b_table_hu"), t("b_col_unpaid_to"), t("b_table_mph")]
-            st.dataframe(det_df.style.format({t("b_table_mph"): "{:.1f}"}),
-                         use_container_width=True, hide_index=True)
+            st.markdown(f"### {t('b_imbalance_title')}")
+            st.info(t('b_imbalance_desc'))
+            imb_df = billing_df[billing_df['TO_navic'] > 0].sort_values("TO_navic", ascending=False).head(50)
+            if not imb_df.empty:
+                imb_disp = imb_df[['Delivery', 'Category_Full', 'pocet_to', 'pohyby_celkem', 'pocet_hu', 'TO_navic']].copy()
+                imb_disp.columns = ["Delivery", "Kategorie", "Pick TO celkem", "Pohyby rukou", "Účtované HU", t('b_col_unpaid_to')]
+                st.dataframe(imb_disp.style.background_gradient(subset=[t('b_col_unpaid_to')], cmap='Reds'), use_container_width=True, hide_index=True)
+            else:
+                st.success(t("b_no_imbalance"))
         else:
             st.warning(t("b_missing_vekp"))
 
         # ═══════════════════════════════════════════════════════════════════
-        # SEKCE B: AUSWERTUNG — logiky ze zákazníkova souboru
+        # SEKCE B: AUSWERTUNG — logiky ze zákazníkova souboru (PONECHÁNO ZCELA PŮVODNÍ)
         # ═══════════════════════════════════════════════════════════════════
         st.divider()
         st.subheader("📊 " + t("b_aus_title"))
@@ -1697,8 +1779,30 @@ def main():
                     else:
                         df_vk["Kategorie"] = "N"
 
-                    if "Parent_HU" in df_vk.columns:
-                        df_vk['Clean_Parent'] = df_vk["Parent_HU"].astype(str).str.strip().str.lstrip('0').replace({'nan': '', 'none': ''})
+                    vepo_nested_hus_aus = set()
+                    vepo_parent_hus_aus = set()
+                    if df_vepo is not None and not df_vepo.empty:
+                        vepo_hu_col_aus = next((c for c in df_vepo.columns if "Internal HU" in str(c) or "HU-Nummer intern" in str(c)), df_vepo.columns[0])
+                        vepo_lower_col_aus = next((c for c in df_vepo.columns if "Lower-level" in str(c) or "untergeordn" in str(c).lower()), None)
+                        
+                        if vepo_lower_col_aus:
+                            vepo_nested_hus_aus = set(df_vepo[vepo_lower_col_aus].dropna().astype(str).str.strip().str.lstrip('0'))
+                            vepo_nested_hus_aus = {h for h in vepo_nested_hus_aus if h not in ["", "nan", "none"]}
+                            vepo_parent_hus_aus = set(df_vepo.loc[
+                                df_vepo[vepo_lower_col_aus].notna() & (df_vepo[vepo_lower_col_aus].astype(str).str.strip() != ""),
+                                vepo_hu_col_aus
+                            ].astype(str).str.strip().str.lstrip('0'))
+
+                        valid_hus_aus = set(df_vepo[vepo_hu_col_aus].astype(str).str.strip().str.lstrip('0'))
+                        valid_hus_aus.update(vepo_nested_hus_aus)
+                        df_vk = df_vk[df_vk['Clean_HU_Int'].isin(valid_hus_aus)].copy()
+
+                    if vepo_nested_hus_aus or vepo_parent_hus_aus:
+                        df_vk['is_top_level'] = ~df_vk['Clean_HU_Int'].isin(vepo_nested_hus_aus)
+                        df_vk['is_leaf'] = ~df_vk['Clean_HU_Int'].isin(vepo_parent_hus_aus)
+                    elif "Parent_HU" in df_vk.columns:
+                        df_vk['Clean_Parent'] = df_vk["Parent_HU"].astype(str).str.strip().str.lstrip('0')
+                        df_vk['Clean_Parent'] = df_vk['Clean_Parent'].replace({'nan': '', 'none': ''})
                         
                         id_to_int_vk = {}
                         for _, r in df_vk.iterrows():
@@ -1827,20 +1931,25 @@ def main():
                     has_pick = "pohyby_celkem" in aus_lief.columns and aus_lief["pohyby_celkem"].notna().any()
                     n_cols = 6 if has_pick else 5
                     metrics_cols = st.columns(n_cols)
-                    metrics_cols[0].metric(t("b_aus_total_lief"), f"{tot_l:,}".replace(",", " "))
-                    metrics_cols[1].metric(t("b_aus_total_hu"), f"{tot_h:,}".replace(",", " "))
-                    metrics_cols[2].metric(t("b_aus_avg_hu_lief"), f"{avg_h:.2f}")
-                    metrics_cols[3].metric(t("b_aus_total_vaha"), f"{tot_gew:,.0f} kg".replace(",", " "))
-                    metrics_cols[4].metric(t("b_aus_pct_kep"), f"{pct_kep:.1f} %")
+                    with metrics_cols[0]:
+                        with st.container(border=True): st.metric(t("b_aus_total_lief"), f"{tot_l:,}".replace(",", " "))
+                    with metrics_cols[1]:
+                        with st.container(border=True): st.metric(t("b_aus_total_hu"), f"{tot_h:,}".replace(",", " "))
+                    with metrics_cols[2]:
+                        with st.container(border=True): st.metric(t("b_aus_avg_hu_lief"), f"{avg_h:.2f}")
+                    with metrics_cols[3]:
+                        with st.container(border=True): st.metric(t("b_aus_total_vaha"), f"{tot_gew:,.0f} kg".replace(",", " "))
+                    with metrics_cols[4]:
+                        with st.container(border=True): st.metric(t("b_aus_pct_kep"), f"{pct_kep:.1f} %")
                     if has_pick:
                         avg_mpl_all = (aus_lief["pohyby_celkem"].sum() /
                                        aus_lief["pocet_lokaci"].sum()
                                        if aus_lief["pocet_lokaci"].sum() > 0 else 0)
-                        metrics_cols[5].metric("Prům. pohybů / lokaci", f"{avg_mpl_all:.2f}")
+                        with metrics_cols[5]:
+                            with st.container(border=True): st.metric("Prům. pohybů / lokaci", f"{avg_mpl_all:.2f}")
 
                 st.divider()
-                st.subheader(t("b_aus_kat_title"))
-                st.caption(t("b_aus_kat_desc"))
+                st.markdown(f"<div class='section-header'><h3>{t('b_aus_kat_title')}</h3><p>{t('b_aus_kat_desc')}</p></div>", unsafe_allow_html=True)
 
                 if not aus_lief.empty and "Kategorie" in aus_lief.columns:
                     has_pick_data = "pohyby_celkem" in aus_lief.columns
@@ -1912,8 +2021,7 @@ def main():
                     st.info("Nejsou dostupná data kategorií (chybí LIKP nebo VEKP).")
 
                 st.divider()
-                st.subheader(t("b_aus_art_title"))
-                st.caption(t("b_aus_art_desc"))
+                st.markdown(f"<div class='section-header'><h3>{t('b_aus_art_title')}</h3><p>{t('b_aus_art_desc')}</p></div>", unsafe_allow_html=True)
 
                 if not df_vk.empty and "Art_HU" in df_vk.columns:
                     art_celk = df_vk["Art_HU"].value_counts()
@@ -1924,7 +2032,9 @@ def main():
                                                (ca3, "Vollpalette", "🏭")]:
                         cnt = int(art_celk.get(label, 0))
                         pct = cnt / art_sum * 100 if art_sum > 0 else 0
-                        col_m.metric(f"{icon} {label}", f"{cnt:,}".replace(",", " "), f"{pct:.1f} %")
+                        with col_m:
+                            with st.container(border=True):
+                                st.metric(f"{icon} {label}", f"{cnt:,}".replace(",", " "), f"{pct:.1f} %")
 
                     if not aus_lief.empty and art_cols_avail:
                         st.markdown("**Distribuce typů HU podle kategorie:**")
@@ -1948,11 +2058,8 @@ def main():
 
                 if not df_vk.empty and any(c in df_vk.columns for c in ["Gesamtgewicht", "Ladungsgewicht"]):
                     st.divider()
-                    st.subheader("⚖️ " + t("b_aus_art_title").replace("Typy HU", "Váhy HU")
-                                 if "Typy HU" in t("b_aus_art_title")
-                                 else "⚖️ Váhy HU (Gesamtgewicht = Eigengewicht + Ladungsgewicht)")
-                    st.caption("Gesamtgewicht = Eigengewicht (prázdná krabice) + Ladungsgewicht (obsah). "
-                               "Ověřeno 99.8% shodou na zákazníkových datech.")
+                    st.markdown(f"<div class='section-header'><h3>⚖️ Váhy HU (Gesamtgewicht = Eigengewicht + Ladungsgewicht)</h3></div>", unsafe_allow_html=True)
+                    st.caption("Ověřeno 99.8% shodou na zákazníkových datech.")
 
                     if "Packmittel" in df_vk.columns:
                         df_vk_pick = df_vk.copy()
@@ -2021,7 +2128,7 @@ def main():
 
                 if not df_vk.empty and "Packmittel" in df_vk.columns:
                     st.divider()
-                    st.subheader(t("b_aus_carton_title"))
+                    st.markdown(f"<div class='section-header'><h3>{t('b_aus_carton_title')}</h3></div>", unsafe_allow_html=True)
                     st.caption("Rozměry a vlastní váhy krabic z Auswertungu, obohaceno o pohyby z vašeho pick reportu.")
 
                     dim_cols = [c for c in ["Laenge", "Breite", "Hoehe", "Eigengewicht"] if c in df_vk.columns]
@@ -2084,30 +2191,32 @@ def main():
                         use_container_width=True, hide_index=True)
 
                 st.divider()
-                st.subheader(t("b_aus_sped_title"))
+                st.markdown(f"<div class='section-header'><h3>{t('b_aus_sped_title')}</h3></div>", unsafe_allow_html=True)
                 kc1, kc2 = st.columns(2)
-                kc1.metric(t("b_aus_kep_count"), str(len(kep_set)))
-                kc2.metric(t("b_aus_nonkep_count"), str(len(df_sdshp) - len(kep_set) if not df_sdshp.empty else 0))
+                with kc1:
+                    with st.container(border=True): st.metric(t("b_aus_kep_count"), str(len(kep_set)))
+                with kc2:
+                    with st.container(border=True): st.metric(t("b_aus_nonkep_count"), str(len(df_sdshp) - len(kep_set) if not df_sdshp.empty else 0))
+                
                 if not sdshp_display.empty:
                     col_s0 = sdshp_display.columns[0]
                     sdshp_d2 = sdshp_display.copy()
-                    sdshp_d2["Je KEP"] = sdshp_d2[col_s0].astype(str).str.strip().isin(kep_set).map(
-                        {True: "✅ KEP", False: "—"})
+                    sdshp_d2["Je KEP"] = sdshp_d2[col_s0].astype(str).str.strip().isin(kep_set).map({True: "✅ KEP", False: "—"})
                     with st.expander("Zobrazit tabulku dopravců (SDSHP_AM2)"):
                         st.dataframe(sdshp_d2, use_container_width=True, hide_index=True)
 
                 st.divider()
-                st.subheader(t("b_aus_voll_title"))
+                st.markdown(f"<div class='section-header'><h3>{t('b_aus_voll_title')}</h3></div>", unsafe_allow_html=True)
                 vt1, vt2 = st.columns(2)
-                vt1.metric(t("b_aus_voll_count"), f"{len(vollpalette_lager):,}".replace(",", " "))
+                with vt1:
+                    with st.container(border=True): st.metric(t("b_aus_voll_count"), f"{len(vollpalette_lager):,}".replace(",", " "))
                 if not df_vk.empty and "Art_HU" in df_vk.columns:
-                    vt2.metric("HU označených Vollpalette",
-                               f"{int((df_vk['Art_HU'] == 'Vollpalette').sum()):,}".replace(",", " "))
+                    with vt2:
+                        with st.container(border=True): st.metric("HU označených Vollpalette", f"{int((df_vk['Art_HU'] == 'Vollpalette').sum()):,}".replace(",", " "))
                 if not df_t023.empty:
                     with st.expander("Zobrazit T023 — přímé pohyby celých palet"):
                         t023_d = df_t023.copy()
-                        t023_d.columns = (["Lagereinheit (HU)", "Transport Order č.", "Pozice TO"]
-                                          + list(t023_d.columns[3:]))
+                        t023_d.columns = (["Lagereinheit (HU)", "Transport Order č.", "Pozice TO"] + list(t023_d.columns[3:]))
                         st.dataframe(t023_d, use_container_width=True, hide_index=True)
 
                 st.divider()
@@ -2115,35 +2224,24 @@ def main():
                     if not aus_lief.empty:
                         det_cols_s = ["Lieferung", "Kategorie"]
                         det_fmt    = {}
-                        if "anzahl_hu" in aus_lief.columns:
-                            det_cols_s.append("anzahl_hu")
-                        if gew_col:
-                            det_cols_s.append(gew_col); det_fmt[gew_col] = "{:.1f}"
+                        if "anzahl_hu" in aus_lief.columns: det_cols_s.append("anzahl_hu")
+                        if gew_col: det_cols_s.append(gew_col); det_fmt[gew_col] = "{:.1f}"
                         for ac in art_cols_avail:
-                            if ac in aus_lief.columns:
-                                det_cols_s.append(ac)
+                            if ac in aus_lief.columns: det_cols_s.append(ac)
                         if "avg_mov_per_loc" in aus_lief.columns:
-                            det_cols_s.append("avg_mov_per_loc")
-                            det_fmt["avg_mov_per_loc"] = "{:.2f}"
-                        if "pm_typy" in aus_lief.columns:
-                            det_cols_s.append("pm_typy")
+                            det_cols_s.append("avg_mov_per_loc"); det_fmt["avg_mov_per_loc"] = "{:.2f}"
+                        if "pm_typy" in aus_lief.columns: det_cols_s.append("pm_typy")
 
                         det_aus = aus_lief[det_cols_s].copy()
                         det_aus["Popis"] = det_aus["Kategorie"].map(kat_desc_map).fillna(det_aus["Kategorie"])
                         sort_by = gew_col if (gew_col and gew_col in det_aus.columns) else "Lieferung"
                         det_aus = det_aus.sort_values(sort_by, ascending=False)
 
-                        col_renames = {"Lieferung": "Delivery", "Kategorie": t("b_aus_kat"),
-                                       "anzahl_hu": t("b_aus_hu"), "pm_typy": t("b_aus_carton"),
-                                       "Popis": t("b_aus_popis"), "Brutto_kg": "Váha LIPS (kg)",
-                                       "celk_gew": "Váha VEKP (kg)",
-                                       "avg_mov_per_loc": "Prům. pohybů / lokaci"}
-                        det_aus = det_aus.rename(columns={k: v for k, v in col_renames.items()
-                                                           if k in det_aus.columns})
+                        col_renames = {"Lieferung": "Delivery", "Kategorie": t("b_aus_kat"), "anzahl_hu": t("b_aus_hu"), "pm_typy": t("b_aus_carton"),
+                                       "Popis": t("b_aus_popis"), "Brutto_kg": "Váha LIPS (kg)", "celk_gew": "Váha VEKP (kg)", "avg_mov_per_loc": "Prům. pohybů / lokaci"}
+                        det_aus = det_aus.rename(columns={k: v for k, v in col_renames.items() if k in det_aus.columns})
                         det_fmt_renamed = {col_renames.get(k, k): v for k, v in det_fmt.items()}
-                        st.dataframe(det_aus.style.format(
-                            {k: v for k, v in det_fmt_renamed.items() if k in det_aus.columns}),
-                            use_container_width=True, hide_index=True)
+                        st.dataframe(det_aus.style.format({k: v for k, v in det_fmt_renamed.items() if k in det_aus.columns}), use_container_width=True, hide_index=True)
                     else:
                         st.info("Žádná data zásilek k zobrazení.")
 
@@ -2153,13 +2251,97 @@ def main():
                 with st.expander("Detail chyby (pro debugging)"):
                     st.code(traceback.format_exc())
 
-    # TAB 6: NÁSTROJE & AUDIT
     # ==========================================
-    with tab_audit:
+    # TAB 6: ČASY BALENÍ (OE-TIMES)
+    # ==========================================
+    with tabs[5]:
+        st.markdown("<div class='section-header'><h3>⏱️ Analýza časů balení (End-to-End)</h3><p>Propojení délky balení u stolu s fyzickou náročností pickování v uličkách.</p></div>", unsafe_allow_html=True)
+        
+        if df_oe is not None and not df_oe.empty:
+            b_df = st.session_state.get('billing_df', pd.DataFrame())
+            if not b_df.empty:
+                e2e_df = pd.merge(b_df, df_oe, on='Delivery', how='inner')
+                e2e_df = e2e_df[e2e_df['Process_Time_Min'] > 0].copy()
+                
+                if not e2e_df.empty:
+                    e2e_df['Minut na 1 HU'] = np.where(e2e_df['pocet_hu'] > 0, e2e_df['Process_Time_Min'] / e2e_df['pocet_hu'], 0)
+                    e2e_df['Pick Pohybů za 1 min balení'] = e2e_df['pohyby_celkem'] / e2e_df['Process_Time_Min']
+                    
+                    c1, c2, c3 = st.columns(3)
+                    with c1:
+                        with st.container(border=True): st.metric("Zmapováno zakázek E2E", f"{len(e2e_df):,}")
+                    with c2:
+                        with st.container(border=True): st.metric("Prům. čas balení zakázky", f"{e2e_df['Process_Time_Min'].mean():.1f} min")
+                    with c3:
+                        with st.container(border=True): st.metric("Prům. rychlost balení", f"{e2e_df['Minut na 1 HU'].mean():.1f} min / 1 HU")
+
+                    with st.expander("🔍 Zobrazit kompletní Master Data tabulku (Pick -> Balení)"):
+                        disp_e2e = e2e_df[['Delivery', 'CUSTOMER', 'pocet_to', 'pohyby_celkem', 'pocet_hu', 'Process_Time_Min', 'Minut na 1 HU', 'Pick Pohybů za 1 min balení']].copy()
+                        disp_e2e.columns = ["Delivery", "Zákazník", "Pick TO", "Pick Pohyby", "Výsledné HU", "Čas Balení (min)", "Minut na 1 HU", "Pohybů / min balení"]
+                        st.dataframe(disp_e2e.style.background_gradient(subset=["Čas Balení (min)"], cmap='Oranges').format("{:.1f}", subset=["Čas Balení (min)", "Minut na 1 HU", "Pohybů / min balení"]), use_container_width=True, hide_index=True)
+
+            st.markdown("<div class='section-header'><h3>📊 Detailní rozpad časů</h3></div>", unsafe_allow_html=True)
+            sc1, sc2, sc3 = st.columns(3)
+            
+            with sc1:
+                st.markdown("**Podle Zákazníka (Customer)**")
+                cust_agg = df_oe[df_oe['Process_Time_Min'] > 0].groupby('CUSTOMER').agg(
+                    Zakazky=('Delivery', 'nunique'), Prum_Cas=('Process_Time_Min', 'mean')
+                ).reset_index().sort_values('Prum_Cas', ascending=False)
+                st.dataframe(cust_agg.style.format({'Prum_Cas': '{:.1f} min'}), hide_index=True, use_container_width=True)
+
+            with sc2:
+                st.markdown("**Podle Materiálu**")
+                mat_agg = df_oe[(df_oe['Process_Time_Min'] > 0) & (df_oe['Material'].notna())].groupby('Material').agg(
+                    Zakazky=('Delivery', 'nunique'), Prum_Cas=('Process_Time_Min', 'mean')
+                ).reset_index().sort_values('Prum_Cas', ascending=False).head(20)
+                st.dataframe(mat_agg.style.format({'Prum_Cas': '{:.1f} min'}), hide_index=True, use_container_width=True)
+
+            with sc3:
+                st.markdown("**Podle Obalu (KLT, Palety, Kartony)**")
+                pack_stats = []
+                for _, row in df_oe.iterrows():
+                    time_min = row.get('Process_Time_Min', 0)
+                    if time_min <= 0: continue
+                    for col in ['KLT', 'Palety', 'Cartons']:
+                        if col in df_oe.columns and str(row[col]).strip().lower() not in ['nan', '', 'none']:
+                            matches = re.findall(r'([^,;]+?)\s*\(\s*(\d+)\s*[xX]\s*\)', str(row[col]))
+                            for m in matches: pack_stats.append({'Obal': m[0].strip(), 'Cas_Zakazky': time_min, 'Pouzito_ks': int(m[1])})
+                if pack_stats:
+                    p_df = pd.DataFrame(pack_stats)
+                    p_agg = p_df.groupby('Obal').agg(
+                        Vyskyt_v_Zakazkach=('Cas_Zakazky', 'count'),
+                        Prum_Cas_Cele_Zakazky=('Cas_Zakazky', 'mean'),
+                        Celkem_Pouzito_ks=('Pouzito_ks', 'sum')
+                    ).reset_index().sort_values('Prum_Cas_Cele_Zakazky', ascending=False)
+                    st.dataframe(p_agg.style.format({'Prum_Cas_Cele_Zakazky': '{:.1f} min'}), hide_index=True, use_container_width=True)
+                else: st.info("Žádná specifikace obalů nenalezena.")
+
+            st.markdown("<div class='section-header'><h3>🐌 Analýza 'Žroutů času' (Vliv na délku balení)</h3></div>", unsafe_allow_html=True)
+            eaters = []
+            for col in ['Scanning serial numbers', 'Reprinting labels ', 'Difficult KLTs']:
+                if col in df_oe.columns:
+                    mask = df_oe[col].astype(str).str.strip().str.upper().isin(['Y', 'X', 'YES', 'ANO', '1']) | (pd.to_numeric(df_oe[col], errors='coerce').fillna(0) > 0)
+                    with_flag = df_oe[mask]['Process_Time_Min'].mean()
+                    without_flag = df_oe[~mask]['Process_Time_Min'].mean()
+                    if pd.notna(with_flag) and pd.notna(without_flag):
+                        eaters.append({"Událost": col, "Prům. čas (Pokud nastane)": with_flag, "Prům. čas (Běžně)": without_flag, "Rozdíl (Zpoždění)": with_flag - without_flag, "Počet výskytů": mask.sum()})
+            
+            if eaters:
+                edf = pd.DataFrame(eaters).sort_values("Rozdíl (Zpoždění)", ascending=False)
+                st.dataframe(edf.style.background_gradient(subset=["Rozdíl (Zpoždění)"], cmap='Reds').format("{:.1f} min", subset=["Prům. čas (Pokud nastane)", "Prům. čas (Běžně)", "Rozdíl (Zpoždění)"]), hide_index=True, use_container_width=True)
+
+        else:
+            st.warning("⚠️ Pro zobrazení této sekce nahrajte prosím soubor s časy balení (OE-Times.xlsx).")
+
+    # ==========================================
+    # TAB 7: NÁSTROJE & AUDIT
+    # ==========================================
+    with tabs[6]:
         col_au1, col_au2 = st.columns([3, 2])
 
         with col_au1:
-            st.subheader(t('audit_title'))
+            st.markdown(f"<div class='section-header'><h3>{t('audit_title')}</h3></div>", unsafe_allow_html=True)
 
             need_new_samples = (
                 'audit_samples' not in st.session_state
@@ -2224,24 +2406,19 @@ def main():
 
                                 if zbytek > 0:
                                     over_limit = (w >= limit_vahy) or (d >= limit_rozmeru)
-                                    limit_str = (f"{limit_vahy}kg" if w >= limit_vahy
-                                                 else f"{limit_rozmeru}cm")
+                                    limit_str = (f"{limit_vahy}kg" if w >= limit_vahy else f"{limit_rozmeru}cm")
                                     if over_limit:
-                                        st.warning(
-                                            t('audit_lim').format(int(zbytek), limit_str, int(zbytek))
-                                        )
+                                        st.warning(t('audit_lim').format(int(zbytek), limit_str, int(zbytek)))
                                     else:
                                         hmaty = int(np.ceil(zbytek / kusy_na_hmat))
-                                        st.success(
-                                            t('audit_grab').format(int(zbytek), hmaty, kusy_na_hmat)
-                                        )
+                                        st.success(t('audit_grab').format(int(zbytek), hmaty, kusy_na_hmat))
 
                             total_moves = int(row.get('Pohyby_Rukou', 0))
                             st.markdown(f"> **{t('audit_phys_moves')}: `{total_moves}`**")
                             st.write("---")
 
         with col_au2:
-            st.subheader(t('sec3_title'))
+            st.markdown(f"<div class='section-header'><h3>{t('sec3_title')}</h3></div>", unsafe_allow_html=True)
             mat_search = st.selectbox(
                 t('search_label'),
                 options=[""] + sorted(df_pick['Material'].unique().tolist())
@@ -2265,39 +2442,41 @@ def main():
                 else:
                     st.metric(t('marm_boxes'), f"*{t('box_missing')}*")
 
-        # --- NOVÝ AUDIT ÚČTOVÁNÍ (PICK vs VEKP) ---
+        # --- NOVÝ END-TO-END RENTGEN ZAKÁZKY ---
         st.divider()
-        st.subheader(t('audit_b_title'))
+        st.markdown("<div class='section-header'><h3>🔍 Rentgen Zakázky (End-to-End Audit)</h3></div>", unsafe_allow_html=True)
         avail_dels = sorted(df_pick['Delivery'].dropna().unique())
-        sel_del = st.selectbox(t('audit_b_sel'), options=[""] + avail_dels)
+        sel_del = st.selectbox("Vyberte Delivery pro kompletní rentgen:", options=[""] + avail_dels)
         
         if sel_del:
+            st.markdown("#### 1️⃣ Fáze: Pickování ve skladu")
             pick_del = df_pick[df_pick['Delivery'] == sel_del]
             to_count = pick_del[queue_count_col].nunique()
             moves_count = pick_del['Pohyby_Rukou'].sum()
             
-            hu_count = 0
-            vekp_del = pd.DataFrame()
+            c1, c2 = st.columns(2)
+            c1.metric("Počet úkolů (TO)", to_count)
+            c2.metric("Fyzických pohybů", int(moves_count))
+            with st.expander("Zobrazit Pick List"): st.dataframe(pick_del[[queue_count_col, 'Material', 'Qty', 'Pohyby_Rukou', 'Removal of total SU']], hide_index=True, use_container_width=True)
+
+            st.markdown("#### 2️⃣ Fáze: Systémové Obaly (VEKP / VEPO)")
             if df_vekp is not None and not df_vekp.empty:
                 vekp_del = df_vekp[df_vekp['Generated delivery'] == sel_del].copy()
                 
                 sel_del_kat = "N"
                 if 'billing_df' in locals() and not billing_df.empty:
                     cat_row = billing_df[billing_df['Delivery'] == sel_del]
-                    if not cat_row.empty:
-                        sel_del_kat = str(cat_row.iloc[0]['Category_Full']).upper()
+                    if not cat_row.empty: sel_del_kat = str(cat_row.iloc[0]['Category_Full']).upper()
                 
                 vekp_hu_col_aud = next((c for c in vekp_del.columns if "Internal HU" in str(c) or "HU-Nummer intern" in str(c)), vekp_del.columns[0])
                 c_hu_ext_aud = vekp_del.columns[1]
-                parent_col_aud = next((c for c in vekp_del.columns if "higher-level" in str(c).lower() or "übergeordn" in str(c).lower() or "superordinate" in str(c).lower()), None)
+                parent_col_aud = next((c for c in vekp_del.columns if "higher-level" in str(c).lower() or "übergeordn" in str(c).lower()), None)
                 
                 vekp_del['Clean_HU_Int'] = vekp_del[vekp_hu_col_aud].astype(str).str.strip().str.lstrip('0')
                 vekp_del['Clean_HU_Ext'] = vekp_del[c_hu_ext_aud].astype(str).str.strip().str.lstrip('0')
 
-                if parent_col_aud:
-                    vekp_del['Clean_Parent'] = vekp_del[parent_col_aud].astype(str).str.strip().str.lstrip('0').replace({'nan': '', 'none': ''})
-                else:
-                    vekp_del['Clean_Parent'] = ""
+                if parent_col_aud: vekp_del['Clean_Parent'] = vekp_del[parent_col_aud].astype(str).str.strip().str.lstrip('0').replace({'nan': '', 'none': ''})
+                else: vekp_del['Clean_Parent'] = ""
                     
                 ext_to_int_aud = dict(zip(vekp_del['Clean_HU_Ext'], vekp_del['Clean_HU_Int']))
                 parent_map_aud = {}
@@ -2341,34 +2520,29 @@ def main():
                     )
 
                 hu_count = len(vekp_del[vekp_del['Status pro fakturaci'].str.contains('✅') | vekp_del['Status pro fakturaci'].str.contains('🏭')])
+                st.metric("Zabalených HU (VEKP)", hu_count)
                 
-            c_a1, c_a2, c_a3, c_a4 = st.columns(4)
-            c_a1.metric("Počet Pickovacích TO", to_count)
-            c_a2.metric("Fyzických pohybů", f"{int(moves_count):,}")
-            c_a3.metric("Zabalených HU (VEKP)", hu_count)
-            c_a4.metric("Pohybů na 1 HU", f"{moves_count / hu_count:.2f}" if hu_count > 0 else "Chybí HU")
-            
-            col_d1, col_d2 = st.columns(2)
-            with col_d1:
-                st.markdown(t('audit_b_pick_det'))
-                disp_p = pick_del[[queue_count_col, 'Material', 'Qty', 'Pohyby_Rukou']].copy()
-                st.dataframe(disp_p, hide_index=True, use_container_width=True)
-            with col_d2:
-                st.markdown(t('audit_b_vekp_det'))
-                if not vekp_del.empty:
+                with st.expander("Zobrazit hierarchii obalů"):
                     disp_cols = [c_hu_ext_aud, 'Packaging materials', 'Total Weight', 'Status pro fakturaci']
-                    if 'Typ' in vekp_del.columns:
-                        disp_cols.insert(2, 'Typ')
                     disp_v = vekp_del[[c for c in disp_cols if c in vekp_del.columns]].copy()
-                    
                     def color_status(val):
                         if '✅' in str(val) or '🏭' in str(val): return 'color: green; font-weight: bold'
                         if '❌' in str(val): return 'color: #d62728; text-decoration: line-through'
                         return ''
-                    
-                    st.dataframe(disp_v.style.applymap(color_status, subset=['Status pro fakturaci']), hide_index=True, use_container_width=True)
-                else:
-                    st.warning(t('audit_b_no_vekp'))
+                    st.dataframe(disp_v.style.map(color_status, subset=['Status pro fakturaci']), hide_index=True, use_container_width=True)
+            else: st.info("Chybí soubor VEKP pro druhou fázi.")
+
+            st.markdown("#### 3️⃣ Fáze: Čas u balícího stolu (OE-Times)")
+            if df_oe is not None:
+                oe_del = df_oe[df_oe['Delivery'] == sel_del]
+                if not oe_del.empty:
+                    ro = oe_del.iloc[0]
+                    cc1, cc2, cc3 = st.columns(3)
+                    cc1.metric("Procesní čas", f"{ro.get('Process_Time_Min', 0):.1f} min")
+                    cc2.metric("Pracovník / Směna", str(ro.get('Shift', '-')))
+                    cc3.metric("Počet druhů zboží", str(ro.get('Num_Items', '-')))
+                    with st.expander("Zobrazit kompletní záznam balení"): st.dataframe(oe_del, hide_index=True, use_container_width=True)
+                else: st.info("K této zakázce nebyl v souboru OE-Times nalezen žádný záznam.")
 
         # ==========================================
         # EXPORT DO EXCELU
@@ -2422,7 +2596,7 @@ def main():
         st.download_button(
             label=t('btn_download'),
             data=buffer.getvalue(),
-            file_name=f"Warehouse_Analysis_{time.strftime('%Y%m%d_%H%M')}.xlsx",
+            file_name=f"Warehouse_Control_Tower_{time.strftime('%Y%m%d_%H%M')}.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
             type="primary"
         )
