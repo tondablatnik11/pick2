@@ -2,12 +2,13 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 import time
+import re
 
 # Databáze a výpočty
 from database import save_to_db, load_from_db
-from modules.utils import fast_compute_moves
+from modules.utils import fast_compute_moves, get_match_key_vectorized, get_match_key, parse_packing_time, BOX_UNITS
 
-# Záložky (Tabs) z naší nové struktury
+# Záložky (Tabs)
 from modules.tab_dashboard import render_dashboard
 from modules.tab_pallets import render_pallets
 from modules.tab_fu import render_fu
@@ -41,9 +42,12 @@ st.markdown("""
 # ==========================================
 @st.cache_data(show_spinner=False, ttl=3600)
 def fetch_and_prep_data():
-    """Načte data z databáze a uloží je bleskově do paměti."""
     df_pick_raw = load_from_db('raw_pick')
     if df_pick_raw is None or df_pick_raw.empty: return None
+
+    df_marm_raw = load_from_db('raw_marm')
+    df_queue_raw = load_from_db('raw_queue')
+    df_manual_raw = load_from_db('raw_manual')
 
     # Čištění pick reportu
     df_pick = df_pick_raw.copy()
@@ -51,13 +55,12 @@ def fetch_and_prep_data():
     df_pick['Material'] = df_pick['Material'].astype(str).str.strip().replace(['nan', 'NaN', 'None', ''], np.nan)
     df_pick = df_pick.dropna(subset=['Delivery', 'Material']).copy()
     
+    df_pick['Match_Key'] = get_match_key_vectorized(df_pick['Material'])
     df_pick['Qty'] = pd.to_numeric(df_pick['Act.qty (dest)'], errors='coerce').fillna(0)
     df_pick['Source Storage Bin'] = df_pick.get('Source Storage Bin', df_pick.get('Storage Bin', '')).fillna('').astype(str)
     df_pick['Removal of total SU'] = df_pick.get('Removal of total SU', '').fillna('').astype(str).str.strip().str.upper()
     df_pick['Date'] = pd.to_datetime(df_pick.get('Confirmation date', df_pick.get('Confirmation Date')), errors='coerce')
     
-    # Automatická detekce Queue podle TO
-    df_queue_raw = load_from_db('raw_queue')
     queue_count_col = 'Delivery'
     df_pick['Queue'] = 'N/A'
     if df_queue_raw is not None and not df_queue_raw.empty:
@@ -66,18 +69,80 @@ def fetch_and_prep_data():
             df_pick['Queue'] = df_pick['Transfer Order Number'].map(q_map).fillna('N/A')
             queue_count_col = 'Transfer Order Number'
 
-    # Zajištění bezpečných sloupců pro rozměry a obaly, pokud nejsou v DB
-    for col in ['Piece_Weight_KG', 'Piece_Max_Dim_CM']:
-        if col not in df_pick.columns: df_pick[col] = 0.0
-    if 'Box_Sizes_List' not in df_pick.columns: df_pick['Box_Sizes_List'] = np.empty((len(df_pick), 0)).tolist()
+    # Zpracování Master Dat (Obaly, váhy a rozměry)
+    manual_boxes = {}
+    if df_manual_raw is not None and not df_manual_raw.empty:
+        c_mat, c_pkg = df_manual_raw.columns[0], df_manual_raw.columns[1]
+        for _, row in df_manual_raw.iterrows():
+            raw_mat = str(row[c_mat])
+            if raw_mat.upper() in ['NAN', 'NONE', '']: continue
+            mat_key = get_match_key(raw_mat)
+            pkg = str(row[c_pkg])
+            nums = re.findall(r'\bK-(\d+)ks?\b|(\d+)\s*ks\b|balen[íi]\s+po\s+(\d+)|krabice\s+(?:po\s+)?(\d+)|(?:role|pytl[íi]k|pytel)[^\d]*(\d+)', pkg, flags=re.IGNORECASE)
+            ext = sorted(list(set([int(g) for m in nums for g in m if g])), reverse=True)
+            if not ext and re.search(r'po\s*kusech', pkg, re.IGNORECASE): ext = [1]
+            if ext: manual_boxes[mat_key] = ext
 
-    # Zpracování Vollpalet (auto_voll_hus)
+    box_dict, weight_dict, dim_dict = {}, {}, {}
+    if df_marm_raw is not None and not df_marm_raw.empty:
+        df_marm_raw['Match_Key'] = get_match_key_vectorized(df_marm_raw['Material'])
+        df_boxes = df_marm_raw[df_marm_raw['Alternative Unit of Measure'].isin(BOX_UNITS)].copy()
+        df_boxes['Numerator'] = pd.to_numeric(df_boxes['Numerator'], errors='coerce').fillna(0)
+        box_dict = df_boxes.groupby('Match_Key')['Numerator'].apply(lambda g: sorted([int(x) for x in g if x > 1], reverse=True)).to_dict()
+
+        df_st = df_marm_raw[df_marm_raw['Alternative Unit of Measure'].isin(['ST', 'PCE', 'KS', 'EA', 'PC'])].copy()
+        df_st['Gross Weight'] = pd.to_numeric(df_st['Gross Weight'], errors='coerce').fillna(0)
+        df_st['Weight_KG'] = np.where(df_st['Unit of Weight'].astype(str).str.upper() == 'G', df_st['Gross Weight'] / 1000.0, df_st['Gross Weight'])
+        weight_dict = df_st.groupby('Match_Key')['Weight_KG'].first().to_dict()
+
+        def to_cm(val, unit):
+            try:
+                v = float(val); u = str(unit).upper().strip()
+                return v / 10.0 if u == 'MM' else v * 100.0 if u == 'M' else v
+            except: return 0.0
+
+        for dim_col, short in [('Length', 'L'), ('Width', 'W'), ('Height', 'H')]:
+            if dim_col in df_st.columns: df_st[short] = df_st.apply(lambda r, dc=dim_col: to_cm(r[dc], r.get('Unit of Dimension', 'CM')), axis=1)
+            else: df_st[short] = 0.0
+        dim_dict = df_st.set_index('Match_Key')[['L', 'W', 'H']].max(axis=1).to_dict()
+
+    df_pick['Box_Sizes_List'] = df_pick['Match_Key'].apply(lambda m: manual_boxes.get(m, box_dict.get(m, [])))
+    df_pick['Piece_Weight_KG'] = df_pick['Match_Key'].map(weight_dict).fillna(0.0)
+    df_pick['Piece_Max_Dim_CM'] = df_pick['Match_Key'].map(dim_dict).fillna(0.0)
+
+    # Vollpalety
     auto_voll_hus = set()
     mask_x = df_pick['Removal of total SU'] == 'X'
     if 'Handling Unit' in df_pick.columns: auto_voll_hus.update(df_pick.loc[mask_x, 'Handling Unit'].dropna().astype(str).str.strip())
     auto_voll_hus = {h for h in auto_voll_hus if h not in ["", "nan", "None"]}
 
-    # Načtení Auswertung dat
+    # OE-Times úprava
+    df_oe = load_from_db('raw_oe')
+    if df_oe is not None and not df_oe.empty:
+        df_oe['Delivery'] = df_oe['DN NUMBER (SAP)'].astype(str).str.strip()
+        df_oe['Process_Time_Min'] = df_oe['Process Time'].apply(parse_packing_time)
+        
+        agg_dict = {'Process_Time_Min': 'sum'}
+        if 'CUSTOMER' in df_oe.columns: agg_dict['CUSTOMER'] = 'first'
+        if 'Material' in df_oe.columns: agg_dict['Material'] = 'first'
+        if 'KLT' in df_oe.columns: agg_dict['KLT'] = lambda x: '; '.join(x.dropna().astype(str))
+        if 'Palety' in df_oe.columns: agg_dict['Palety'] = lambda x: '; '.join(x.dropna().astype(str))
+        if 'Cartons' in df_oe.columns: agg_dict['Cartons'] = lambda x: '; '.join(x.dropna().astype(str))
+        if 'Scanning serial numbers' in df_oe.columns: agg_dict['Scanning serial numbers'] = 'first'
+        if 'Reprinting labels ' in df_oe.columns: agg_dict['Reprinting labels '] = 'first'
+        if 'Difficult KLTs' in df_oe.columns: agg_dict['Difficult KLTs'] = 'first'
+        if 'Shift' in df_oe.columns: agg_dict['Shift'] = 'first'
+        if 'Number of item types' in df_oe.columns: agg_dict['Number of item types'] = 'first'
+        
+        df_oe = df_oe.groupby('Delivery').agg(agg_dict).reset_index()
+
+    df_cats = load_from_db('raw_cats')
+    if df_cats is not None and not df_cats.empty:
+        df_cats['Lieferung'] = df_cats['Lieferung'].astype(str).str.strip()
+        if 'Kategorie' in df_cats.columns and 'Art' in df_cats.columns:
+            df_cats['Category_Full'] = df_cats['Kategorie'].astype(str).str.strip() + " " + df_cats['Art'].astype(str).str.strip()
+        df_cats = df_cats.drop_duplicates('Lieferung')
+
     aus_data = {}
     for sheet in ["LIKP", "SDSHP_AM2", "T031", "VEKP", "VEPO", "LIPS", "T023"]:
         aus_df = load_from_db(f'aus_{sheet.lower()}')
@@ -86,23 +151,21 @@ def fetch_and_prep_data():
     return {
         'df_pick': df_pick, 'queue_count_col': queue_count_col, 'auto_voll_hus': auto_voll_hus,
         'df_vekp': load_from_db('raw_vekp'), 'df_vepo': load_from_db('raw_vepo'),
-        'df_cats': load_from_db('raw_cats'), 'df_oe': load_from_db('raw_oe'), 'aus_data': aus_data
+        'df_cats': df_cats, 'df_oe': df_oe, 'aus_data': aus_data
     }
 
 # ==========================================
-# 3. HLAVNÍ BĚH APLIKACE A ADMIN ZÓNA
+# 3. HLAVNÍ BĚH APLIKACE
 # ==========================================
 def main():
     st.markdown(f"<div class='main-header'>🏢 Warehouse Control Tower</div>", unsafe_allow_html=True)
     st.markdown(f"<div class='sub-header'>End-to-End analýza (Modulární architektura)</div>", unsafe_allow_html=True)
 
-    # Parametry
     st.sidebar.header("⚙️ Konfigurace algoritmů")
     limit_vahy = st.sidebar.number_input("Hranice váhy (kg)", min_value=0.1, max_value=20.0, value=2.0, step=0.5)
     limit_rozmeru = st.sidebar.number_input("Hranice rozměru (cm)", min_value=1.0, max_value=200.0, value=15.0, step=1.0)
     kusy_na_hmat = st.sidebar.slider("Ks do hrsti", min_value=1, max_value=20, value=1, step=1)
 
-    # Admin Zóna
     st.sidebar.divider()
     with st.sidebar.expander("🛠️ Admin Zóna (Nahrát data do DB)"):
         st.info("Nahrajte Excely sem. Zpracují se do databáze a aplikace poběží bleskově.")
@@ -131,8 +194,7 @@ def main():
                     time.sleep(1.5)
                     st.rerun()
 
-    # Načtení z DB
-    with st.spinner("🔄 Načítám data z databáze... (Díky cache to trvá jen zlomek sekundy)"):
+    with st.spinner("🔄 Načítám data z databáze..."):
         data_dict = fetch_and_prep_data()
 
     if data_dict is None:
@@ -142,35 +204,27 @@ def main():
     df_pick = data_dict['df_pick']
     st.session_state['auto_voll_hus'] = data_dict['auto_voll_hus']
 
-    # Datumový filtr
     df_pick['Month'] = df_pick['Date'].dt.to_period('M').astype(str).replace('NaT', 'Neznámé')
     st.sidebar.divider()
     date_mode = st.sidebar.radio("Filtr období:", ['Celé období', 'Podle měsíce'], label_visibility="collapsed")
     if date_mode == 'Podle měsíce':
         df_pick = df_pick[df_pick['Month'] == st.sidebar.selectbox("Vyberte měsíc:", options=sorted(df_pick['Month'].unique()))].copy()
 
-    # Přepočet fyzických pohybů
     tt, te, tm = fast_compute_moves(df_pick['Qty'].values, df_pick['Queue'].values, df_pick['Removal of total SU'].values, df_pick['Box_Sizes_List'].values, df_pick['Piece_Weight_KG'].values, df_pick['Piece_Max_Dim_CM'].values, limit_vahy, limit_rozmeru, kusy_na_hmat)
     df_pick['Pohyby_Rukou'], df_pick['Pohyby_Exact'], df_pick['Pohyby_Loose_Miss'] = tt, te, tm
+    
+    # ZDE JE TA CHYBĚJÍCÍ OPRAVA (Výpočet celkové váhy)
+    df_pick['Celkova_Vaha_KG'] = df_pick['Qty'] * df_pick['Piece_Weight_KG']
 
-    # ==========================================
-    # VYKRESLENÍ ZÁLOŽEK Z MODULŮ
-    # ==========================================
     tabs = st.tabs(["📊 Dashboard & Queue", "📦 Palety", "🏭 Celé palety (FU)", "🏆 TOP Materiály", "💰 Fakturace (VEKP)", "⏱️ Časy Balení (OE)", "🔍 Detailní Audit"])
 
     with tabs[0]: render_dashboard(df_pick, data_dict['queue_count_col'])
     with tabs[1]: render_pallets(df_pick)
     with tabs[2]: render_fu(df_pick, data_dict['queue_count_col'])
     with tabs[3]: render_top(df_pick)
-    
-    with tabs[4]: 
-        billing_df = render_billing(df_pick, data_dict['df_vekp'], data_dict['df_vepo'], data_dict['df_cats'], data_dict['queue_count_col'], data_dict['aus_data'])
-    
-    with tabs[5]: 
-        render_packing(billing_df if 'billing_df' in locals() else pd.DataFrame(), data_dict['df_oe'])
-    
-    with tabs[6]: 
-        render_audit(df_pick, data_dict['df_vekp'], data_dict['df_vepo'], data_dict['df_oe'], data_dict['queue_count_col'], billing_df if 'billing_df' in locals() else pd.DataFrame())
+    with tabs[4]: billing_df = render_billing(df_pick, data_dict['df_vekp'], data_dict['df_vepo'], data_dict['df_cats'], data_dict['queue_count_col'], data_dict['aus_data'])
+    with tabs[5]: render_packing(billing_df if 'billing_df' in locals() else pd.DataFrame(), data_dict['df_oe'])
+    with tabs[6]: render_audit(df_pick, data_dict['df_vekp'], data_dict['df_vepo'], data_dict['df_oe'], data_dict['queue_count_col'], billing_df if 'billing_df' in locals() else pd.DataFrame())
 
 if __name__ == "__main__":
     main()
