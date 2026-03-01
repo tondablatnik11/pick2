@@ -1271,7 +1271,6 @@ def main():
     # ==========================================
     with tab_billing:
         
-        # --- GLOBÁLNÍ AUSWERTUNG MAPOVÁNÍ PRO KATEGORIE (O vs OE a KEP logiky) ---
         aus_category_map = {}
         aus_data = st.session_state.get("auswertung_raw", {})
         if aus_data:
@@ -1330,20 +1329,16 @@ def main():
             vepo_nested_hus = set()
             vepo_parent_hus = set()
 
-            # --- NEPRŮSTŘELNÁ DETEKCE HIERARCHIE PŘÍMO Z VEPO ---
             if df_vepo is not None and not df_vepo.empty:
                 vepo_hu_col = next((c for c in df_vepo.columns if "Internal HU" in str(c) or "HU-Nummer intern" in str(c)), df_vepo.columns[0])
                 vepo_lower_col = next((c for c in df_vepo.columns if "Lower-level" in str(c) or "untergeordn" in str(c).lower()), None)
                 
-                # Získáme všechny HU z VEPO (jednotky obsahující materiál + rodičovské jednotky obsahující tyto krabice)
                 valid_hus = set(df_vepo[vepo_hu_col].astype(str).str.strip().str.lstrip('0'))
                 
                 if vepo_lower_col:
-                    # Toto jsou jednotky (Krabice), které leží uvnitř jiných jednotek. Rozhodně NEJSOU Top-Level.
                     vepo_nested_hus = set(df_vepo[vepo_lower_col].dropna().astype(str).str.strip().str.lstrip('0'))
                     vepo_nested_hus = {h for h in vepo_nested_hus if h not in ["", "nan", "none"]}
                     
-                    # Toto jsou jednotky (Palety), které mají uvnitř jiné krabice. Rozhodně NEJSOU Leaf (Obyčejný balík).
                     vepo_parent_hus = set(df_vepo.loc[
                         df_vepo[vepo_lower_col].notna() & (df_vepo[vepo_lower_col].astype(str).str.strip() != ""),
                         vepo_hu_col
@@ -1351,19 +1346,15 @@ def main():
                     
                     valid_hus.update(vepo_nested_hus)
                 
-                # Zbavíme se veškerého prázdného smetí, co si SAP vymyslel
                 vekp_clean = vekp_clean[vekp_clean['Clean_HU_Int'].isin(valid_hus)].copy()
-            # --------------------------------------------------------
 
             valid_deliveries = df_pick["Delivery"].dropna().unique()
             vekp_filtered = vekp_clean[vekp_clean["Generated delivery"].isin(valid_deliveries)].copy()
 
             if vepo_nested_hus or vepo_parent_hus:
-                # Ultimátní pravda podle VEPO
                 vekp_filtered['is_top_level'] = ~vekp_filtered['Clean_HU_Int'].isin(vepo_nested_hus)
                 vekp_filtered['is_leaf'] = ~vekp_filtered['Clean_HU_Int'].isin(vepo_parent_hus)
             else:
-                # Fallback, pokud VEPO selhalo (pokusíme se to slepit z VEKP)
                 parent_col_vepo = next((c for c in vekp_filtered.columns if "higher-level" in str(c).lower() or "übergeordn" in str(c).lower() or "superordinate" in str(c).lower()), None)
                 if parent_col_vepo:
                     vekp_filtered['Clean_Parent'] = vekp_filtered[parent_col_vepo].astype(str).str.strip().str.lstrip('0').replace({'nan': '', 'none': ''})
@@ -2316,7 +2307,6 @@ def main():
                 vekp_del['Clean_HU_Int'] = vekp_del[vekp_hu_col_aud].astype(str).str.strip().str.lstrip('0')
                 vekp_del['Clean_HU_Ext'] = vekp_del[c_hu_ext_aud].astype(str).str.strip().str.lstrip('0')
 
-                # Dokonalé párování přes VEPO (žádné hádání přes prázdné VEKP sloupce)
                 nested_hus_aud = set()
                 parent_hus_aud = set()
                 
@@ -2333,14 +2323,12 @@ def main():
                             vepo_hu_col_aud
                         ].astype(str).str.strip().str.lstrip('0'))
                     
-                    # Ověříme, že jednotka není virtuální smetí
                     valid_hus_aud = set(df_vepo[vepo_hu_col_aud].astype(str).str.strip().str.lstrip('0'))
                     valid_hus_aud.update(nested_hus_aud)
                     vekp_del['Obsahuje_Material (VEPO)'] = vekp_del['Clean_HU_Int'].isin(valid_hus_aud)
                 else:
                     vekp_del['Obsahuje_Material (VEPO)'] = True
 
-                # Hierarchie (Pokud je vnořená dle VEPO, není to Top-Level. Pokud má uvnitř jiné dle VEPO, není to Leaf)
                 if df_vepo is not None and vepo_lower_col_aud:
                     vekp_del['Typ'] = vekp_del.apply(
                         lambda r: "Inner (Vnořená)" if str(r['Clean_HU_Int']) in nested_hus_aud else "Top-Level", axis=1
@@ -2350,7 +2338,6 @@ def main():
                     vekp_del['Typ'] = "Top-Level"
                     vekp_del['Je_Leaf'] = True
 
-                # Fakturace (Kombinace Kategorie a Obalové logiky)
                 vekp_del['Status pro fakturaci'] = vekp_del.apply(
                     lambda r: "❌ Neúčtuje se (Prázdná/Smazaná HU)" if not r['Obsahuje_Material (VEPO)'] 
                     else (
@@ -2360,11 +2347,11 @@ def main():
                     ), axis=1
                 )
 
-                # Speciální označení, pokud je to Vollpalette
+                # OPRAVA: Vollpalette se aplikuje POUZE POKUD jednotka už má zelenou fajfku (nepřepisuje červené křížky!)
                 auto_voll_hus_aud = st.session_state.get('auto_voll_hus', set())
                 if c_hu_ext_aud:
                     vekp_del['Status pro fakturaci'] = vekp_del.apply(
-                        lambda r: "🏭 Účtuje se (Vollpalette)" if str(r['Clean_HU_Ext']) in auto_voll_hus_aud else r['Status pro fakturaci'], axis=1
+                        lambda r: "🏭 Účtuje se (Vollpalette)" if (str(r['Clean_HU_Ext']) in auto_voll_hus_aud and "✅" in r['Status pro fakturaci']) else r['Status pro fakturaci'], axis=1
                     )
 
                 hu_count = len(vekp_del[vekp_del['Status pro fakturaci'].str.contains('✅') | vekp_del['Status pro fakturaci'].str.contains('🏭')])
