@@ -244,7 +244,7 @@ Pokud v SAPu ani ručním ověření chybí data o balení, systém aplikuje bez
         'b_aus_total_vaha': "Celk. hmotnost (kg)",
         'b_aus_pct_kep': "Zásilek přes KEP",
         'b_aus_art_title': "Typy HU (Sortenrein / Misch / Vollpalette)",
-        'b_aus_art_desc': "Vollpalette = HU v T023 nebo 1 mat. na paletě. Sortenrein = 1 materiál / 1 zakázka. Misch = víc materiálů nebo zakázek.",
+        'b_aus_art_desc': "Vollpalette = Přímé pohyby celých palet zaznamenané v tabulce T023. Sortenrein = 1 materiál / 1 zakázka. Misch = víc materiálů nebo zakázek.",
         'b_aus_carton_title': "Typy kartonů (Packmittel) — rozměry a váhy",
         'b_aus_carton': "Typ krabice",
         'b_aus_pocet': "Počet HU",
@@ -446,7 +446,7 @@ If SAP and manual override both lack packaging data, a safety estimate is applie
         'b_aus_avg_hu_lief': "Avg HU / delivery",
         'b_aus_pct_kep': "Via KEP carrier",
         'b_aus_art_title': "HU Types (Sortenrein / Misch / Vollpalette)",
-        'b_aus_art_desc': "Vollpalette = HU in T023 or single mat. on pallet. Sortenrein = 1 material / 1 order. Misch = multiple materials or orders.",
+        'b_aus_art_desc': "Vollpalette = Direct movements of full pallets as recorded in T023 table. Sortenrein = 1 material / 1 order. Misch = multiple materials or orders.",
         'b_aus_carton_title': "Carton Types (Packmittel) — dimensions and weights",
         'b_aus_carton': "Carton type",
         'b_aus_pocet': "HU count",
@@ -957,7 +957,6 @@ def main():
             st.divider()
             st.subheader(t('sec_queue_title'))
 
-            # Protože máme globální filtr, tabulka rovnou pracuje se zfiltrovaným df_pick
             df_q_filter = df_pick.copy()
 
             if not df_q_filter.empty:
@@ -1264,7 +1263,6 @@ def main():
             df_sdshp_tmp = aus_data.get("SDSHP_AM2", pd.DataFrame())
             df_t031_tmp  = aus_data.get("T031",  pd.DataFrame())
             
-            # KEP dopravci
             kep_set = set()
             if not df_sdshp_tmp.empty:
                 col_s = df_sdshp_tmp.columns[0]
@@ -1272,7 +1270,6 @@ def main():
                 if col_k:
                     kep_set = set(df_sdshp_tmp.loc[df_sdshp_tmp[col_k].astype(str).str.strip() == "X", col_s].astype(str).str.strip())
             
-            # Order type mapování
             order_type_map = {}
             if not df_t031_tmp.empty:
                 order_type_map = dict(zip(df_t031_tmp.iloc[:, 0].astype(str).str.strip(), df_t031_tmp.iloc[:, 1].astype(str).str.strip()))
@@ -1296,7 +1293,6 @@ def main():
                 else:
                     tmp_lf["is_KEP"] = False
                     
-                # 100% spolehlivé rozdělení O a OE z logiky zákazníka
                 tmp_lf["Kategorie"] = np.where(
                     tmp_lf["is_KEP"],
                     np.where(tmp_lf["Order_Type"] == "O", "OE", "E"),
@@ -1339,7 +1335,6 @@ def main():
                 billing_df["pocet_lokaci"] > 0,
                 billing_df["pohyby_celkem"] / billing_df["pocet_lokaci"], 0)
 
-            # Napojení Deliveries.xlsx pokud je nahrán
             if df_cats is not None:
                 billing_df = pd.merge(
                     billing_df, df_cats[["Lieferung", "Category_Full"]],
@@ -1347,16 +1342,13 @@ def main():
             else:
                 billing_df["Category_Full"] = pd.NA
 
-            # Fallback pomocí Reverse Engineeringu logiky
             def odvod_kategorii(row):
                 cat_full = row.get('Category_Full')
                 if pd.notna(cat_full) and str(cat_full).strip() not in ["", "nan", t("uncategorized")]:
                     return cat_full
                 
-                # 1. Primárně zkusí přiřadit Kategorii (E/N/O/OE) dle LIKP a KEP Logiky Auswertungu
                 kat = aus_category_map.get(row["Delivery"])
                 
-                # 2. Pokud chybí data, použije náš ověřený odhad z Queue
                 if not kat:
                     q = str(row.get('hlavni_fronta', '')).upper()
                     if 'PI_PA_OE' in q:
@@ -1435,7 +1427,6 @@ def main():
                     subset=[t("b_col_type"), t("b_col_mov_loc")], **{"font-weight": "bold"}),
                     use_container_width=True, hide_index=True)
             with cb2:
-                # Ošetření: V grafu skryjeme prázdné "bez kategorie", aby to nerozbilo vizuál měřítka
                 chart_data = cat_summary[cat_summary["Category_Full"] != t("uncategorized")].set_index("Category_Full")["avg_mov_per_loc"]
                 st.bar_chart(chart_data)
 
@@ -1561,6 +1552,8 @@ def main():
                 df_vk = pd.DataFrame()
                 if not df_vekp2.empty:
                     c_hu_int = df_vekp2.columns[0]
+                    # FIX: Získáváme SPRÁVNÉ EXTERNÍ ČÍSLO HU pro porovnání s T023
+                    c_hu_ext = df_vekp2.columns[1]
                     c_gen_d  = next((c for c in df_vekp2.columns if "generierte Lieferung" in str(c)
                                      or "Generated delivery" in str(c)), None)
                     c_pm     = next((c for c in df_vekp2.columns if str(c).strip() == "Packmittel"), None)
@@ -1576,7 +1569,8 @@ def main():
                     c_art  = next((c for c in df_vekp2.columns if str(c).strip() == "Art"), None)
                     c_kat  = next((c for c in df_vekp2.columns if str(c).strip() == "Kategorie"), None)
 
-                    col_map = {c_hu_int: "HU_intern"}
+                    # Přidali jsme c_hu_ext do slovníku
+                    col_map = {c_hu_int: "HU_intern", c_hu_ext: "Handling_Unit_Ext"}
                     for alias, col in [("Lieferung", c_gen_d), ("Packmittel", c_pm),
                                        ("Packmittelart", c_pma), ("Gesamtgewicht", c_gew),
                                        ("Ladungsgewicht", c_lgew), ("Eigengewicht", c_egew),
@@ -1587,6 +1581,8 @@ def main():
 
                     df_vk = df_vekp2[list(col_map.keys())].copy().rename(columns=col_map)
                     df_vk["HU_intern"] = df_vk["HU_intern"].astype(str).str.strip()
+                    df_vk["Handling_Unit_Ext"] = df_vk["Handling_Unit_Ext"].astype(str).str.strip()
+                    
                     if "Lieferung" in df_vk.columns:
                         df_vk["Lieferung"] = df_vk["Lieferung"].astype(str).str.strip()
 
@@ -1610,15 +1606,17 @@ def main():
                             df_vk["pocet_lief"] = 1
 
                         def _calc_art(row):
-                            if row["HU_intern"] in vollpalette_lager:
+                            # FIX: Správné porovnání přes DLOUHÉ číslo z VEKP do T023 tabulky
+                            if str(row.get("Handling_Unit_Ext", "")).strip() in vollpalette_lager:
                                 return "Vollpalette"
-                            pma = float(row.get("Packmittelart", 0) or 0)
+                                
+                            # FIX: Falešné odhadovací pravidlo "Packmittelart == 1000" je PRYČ!
+                            # Počítáme čistě Misch vs Sortenrein podle počtu materiálů a zásilek.
                             mat = row.get("pocet_mat", 1)
                             lief = row.get("pocet_lief", 1)
-                            if pma == 1000.0 and (pd.isna(mat) or int(mat) <= 1):
-                                return "Vollpalette"
                             mat  = 1 if pd.isna(mat)  else int(mat)
                             lief = 1 if pd.isna(lief) else int(lief)
+                            
                             return "Misch" if (mat > 1 or lief > 1) else "Sortenrein"
 
                         df_vk["Art_HU"] = df_vk.apply(_calc_art, axis=1)
@@ -1730,7 +1728,6 @@ def main():
                     if has_pick_data:
                         agg_k["sum_pohyby"]  = ("pohyby_celkem",  "sum")
                         agg_k["sum_lokaci"]  = ("pocet_lokaci",   "sum")
-                        # PŘIDÁN SOUČET TO PRO AUSWERTUNG TABULKU
                         agg_k["sum_to"]      = ("pocet_to",       "sum")
 
                     kat_grp = aus_lief.groupby("Kategorie").agg(**agg_k).reset_index()
