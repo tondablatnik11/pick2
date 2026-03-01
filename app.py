@@ -24,13 +24,7 @@ st.set_page_config(page_title="Warehouse Control Tower", page_icon="🏢", layou
 st.markdown("""
     <style>
     .block-container { padding-top: 2rem; padding-bottom: 2rem; }
-    div[data-testid="metric-container"] {
-        background-color: #ffffff; border: 1px solid #e2e8f0; padding: 1rem 1.5rem;
-        border-radius: 0.75rem; box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1); transition: transform 0.2s ease-in-out;
-    }
-    div[data-testid="metric-container"]:hover {
-        transform: translateY(-2px); box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.1);
-    }
+    div[data-testid="metric-container"] { background-color: #ffffff; border: 1px solid #e2e8f0; padding: 1rem 1.5rem; border-radius: 0.75rem; box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1); }
     .main-header { font-size: 2.75rem; font-weight: 800; background: -webkit-linear-gradient(45deg, #1e3a8a, #3b82f6); -webkit-background-clip: text; -webkit-text-fill-color: transparent; margin-bottom: 0.2rem; }
     .sub-header { font-size: 1.1rem; color: #64748b; margin-bottom: 2rem; font-weight: 500; }
     .section-header { color: #0f172a; border-bottom: 2px solid #e2e8f0; padding-bottom: 0.5rem; margin-top: 2rem; margin-bottom: 1.5rem; }
@@ -51,10 +45,17 @@ def fetch_and_prep_data():
 
     # Čištění pick reportu
     df_pick = df_pick_raw.copy()
-    df_pick['Delivery'] = df_pick['Delivery'].astype(str).str.strip().replace(['nan', 'NaN', 'None', ''], np.nan)
-    df_pick['Material'] = df_pick['Material'].astype(str).str.strip().replace(['nan', 'NaN', 'None', ''], np.nan)
+    df_pick['Delivery'] = df_pick['Delivery'].astype(str).str.strip().replace(to_replace=['nan', 'NaN', 'None', 'none', ''], value=np.nan)
+    df_pick['Material'] = df_pick['Material'].astype(str).str.strip().replace(to_replace=['nan', 'NaN', 'None', 'none', ''], value=np.nan)
     df_pick = df_pick.dropna(subset=['Delivery', 'Material']).copy()
     
+    # OPRAVA 1: CHYBĚJÍCÍ FILTR ADMINŮ
+    num_removed_admins = 0
+    if 'User' in df_pick.columns:
+        mask_admins = df_pick['User'].isin(['UIDJ5089', 'UIH25501'])
+        num_removed_admins = int(mask_admins.sum())
+        df_pick = df_pick[~mask_admins].copy()
+
     df_pick['Match_Key'] = get_match_key_vectorized(df_pick['Material'])
     df_pick['Qty'] = pd.to_numeric(df_pick['Act.qty (dest)'], errors='coerce').fillna(0)
     df_pick['Source Storage Bin'] = df_pick.get('Source Storage Bin', df_pick.get('Storage Bin', '')).fillna('').astype(str)
@@ -68,6 +69,20 @@ def fetch_and_prep_data():
             q_map = df_queue_raw.dropna(subset=['Transfer Order Number', 'Queue']).drop_duplicates('Transfer Order Number').set_index('Transfer Order Number')['Queue'].to_dict()
             df_pick['Queue'] = df_pick['Transfer Order Number'].map(q_map).fillna('N/A')
             queue_count_col = 'Transfer Order Number'
+            
+            # OPRAVA 2: CHYBĚJÍCÍ DOPLŇOVÁNÍ DATUMŮ
+            for d_col in ['Confirmation Date', 'Creation Date']:
+                if d_col in df_queue_raw.columns:
+                    d_map = df_queue_raw.dropna(subset=['Transfer Order Number', d_col]).drop_duplicates('Transfer Order Number').set_index('Transfer Order Number')[d_col].to_dict()
+                    to_dates = df_pick['Transfer Order Number'].map(d_map)
+                    df_pick['Date'] = df_pick['Date'].fillna(pd.to_datetime(to_dates, errors='coerce'))
+                    break
+        elif 'SD Document' in df_queue_raw.columns:
+            q_map = df_queue_raw.dropna(subset=['SD Document', 'Queue']).drop_duplicates('SD Document').set_index('SD Document')['Queue'].to_dict()
+            df_pick['Queue'] = df_pick['Delivery'].map(q_map).fillna('N/A')
+
+        # OPRAVA 3: CHYBĚJÍCÍ FILTR CLEARANCE
+        df_pick = df_pick[df_pick['Queue'].astype(str).str.upper() != 'CLEARANCE'].copy()
 
     # Zpracování Master Dat (Obaly, váhy a rozměry)
     manual_boxes = {}
@@ -151,7 +166,8 @@ def fetch_and_prep_data():
     return {
         'df_pick': df_pick, 'queue_count_col': queue_count_col, 'auto_voll_hus': auto_voll_hus,
         'df_vekp': load_from_db('raw_vekp'), 'df_vepo': load_from_db('raw_vepo'),
-        'df_cats': df_cats, 'df_oe': df_oe, 'aus_data': aus_data
+        'df_cats': df_cats, 'df_oe': df_oe, 'aus_data': aus_data,
+        'num_removed_admins': num_removed_admins, 'manual_boxes_count': len(manual_boxes)
     }
 
 # ==========================================
@@ -189,6 +205,7 @@ def main():
                         elif 'Lieferung' in cols and 'Kategorie' in cols: save_to_db(temp_df, 'raw_cats')
                         elif 'Queue' in cols and ('Transfer Order Number' in cols or 'SD Document' in cols): save_to_db(temp_df, 'raw_queue')
                         elif 'DN NUMBER (SAP)' in cols and 'Process Time' in cols: save_to_db(temp_df, 'raw_oe')
+                        elif len(temp_df.columns) >= 2: save_to_db(temp_df, 'raw_manual')
                     st.cache_data.clear()
                     st.success("✅ Hotovo! Data jsou v databázi.")
                     time.sleep(1.5)
@@ -203,6 +220,8 @@ def main():
 
     df_pick = data_dict['df_pick']
     st.session_state['auto_voll_hus'] = data_dict['auto_voll_hus']
+    num_removed_admins = data_dict['num_removed_admins']
+    manual_boxes_count = data_dict['manual_boxes_count']
 
     df_pick['Month'] = df_pick['Date'].dt.to_period('M').astype(str).replace('NaT', 'Neznámé')
     st.sidebar.divider()
@@ -212,9 +231,17 @@ def main():
 
     tt, te, tm = fast_compute_moves(df_pick['Qty'].values, df_pick['Queue'].values, df_pick['Removal of total SU'].values, df_pick['Box_Sizes_List'].values, df_pick['Piece_Weight_KG'].values, df_pick['Piece_Max_Dim_CM'].values, limit_vahy, limit_rozmeru, kusy_na_hmat)
     df_pick['Pohyby_Rukou'], df_pick['Pohyby_Exact'], df_pick['Pohyby_Loose_Miss'] = tt, te, tm
-    
-    # ZDE JE TA CHYBĚJÍCÍ OPRAVA (Výpočet celkové váhy)
     df_pick['Celkova_Vaha_KG'] = df_pick['Qty'] * df_pick['Piece_Weight_KG']
+
+    # OPRAVA 4: CHYBĚJÍCÍ INFORMAČNÍ HLÁŠKY
+    c_i1, c_i2, c_i3 = st.columns(3)
+    if num_removed_admins > 0:
+        c_i1.info(f"💡 Vyloučeno **{num_removed_admins} systémových řádků** (UIDJ5089, UIH25501).")
+    x_c = ((df_pick['Removal of total SU'] == 'X') & (df_pick['Queue'].astype(str).str.upper().isin(['PI_PL_FU', 'PI_PL_FUOE']))).sum()
+    if x_c > 0:
+        c_i2.warning(f"💡 Započítán 1 pohyb pro **{x_c} řádků** 'X' (Platí POUZE pro Queue: PI_PL_FU, PI_PL_FUOE).")
+    if manual_boxes_count > 0:
+        c_i3.success(f"✅ Načteno ruční ověření pro **{manual_boxes_count} unikátních materiálů**.")
 
     tabs = st.tabs(["📊 Dashboard & Queue", "📦 Palety", "🏭 Celé palety (FU)", "🏆 TOP Materiály", "💰 Fakturace (VEKP)", "⏱️ Časy Balení (OE)", "🔍 Detailní Audit"])
 
