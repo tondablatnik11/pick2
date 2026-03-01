@@ -220,22 +220,28 @@ def main():
                                 st.success(f"✅ Uloženo jako Queue: {file.name}")
                                 
                             # TVRDÁ DETEKCE PODLE NÁZVU SOUBORU PRO OE-TIMES
-                            elif 'oe-times' in fname or any('PROCESS TIME' in c for c in cols_up):
+                            elif 'oe-times' in fname or any('PROCESS' in c for c in cols_up):
                                 rename_map = {}
+                                has_dn = False
+                                has_time = False
+                                
                                 for orig, up in zip(cols, cols_up):
-                                    if 'DN NUMBER' in up or 'DELIVERY' in up or 'DODAVKA' in up: 
+                                    # Najde první sloupec, co vypadá jako Delivery, a pak už další ignoruje
+                                    if not has_dn and ('DN NUMBER' in up or 'DELIVERY' in up or 'DODAVKA' in up):
                                         rename_map[orig] = 'DN NUMBER (SAP)'
-                                    if 'PROCESS' in up or 'TIME' in up or 'CAS' in up or 'ČAS' in up: 
+                                        has_dn = True
+                                    # Najde první sloupec s časem (vyhýbá se obecnému slovu TIME kvůli Start/End Time)
+                                    elif not has_time and ('PROCESS' in up or 'CAS' in up or 'ČAS' in up):
                                         rename_map[orig] = 'Process Time'
+                                        has_time = True
+                                        
                                 temp_df.rename(columns=rename_map, inplace=True)
+                                
+                                # Ultimátní pojistka: Smaže z dat případné zdvojené sloupce se stejným názvem
+                                temp_df = temp_df.loc[:, ~temp_df.columns.duplicated()]
+                                
                                 save_to_db(temp_df, 'raw_oe')
                                 st.success(f"✅ Uloženo jako OE-Times: {file.name}")
-                                
-                            elif len(cols) >= 2 and (any('MATERIAL' in c for c in cols_up) or any('MATERIÁL' in c for c in cols_up)):
-                                save_to_db(temp_df, 'raw_manual')
-                                st.success(f"✅ Uloženo jako Ruční Master Data: {file.name}")
-                            else:
-                                st.warning(f"⚠️ Soubor '{file.name}' nebyl rozpoznán! Zkontrolujte názvy sloupců.")
                             
                         except Exception as e:
                             st.error(f"❌ Chyba u souboru {file.name}: {e}")
