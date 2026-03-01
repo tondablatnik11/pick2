@@ -189,22 +189,43 @@ def main():
                                 aus_xl = pd.ExcelFile(file)
                                 for sn in aus_xl.sheet_names: 
                                     save_to_db(aus_xl.parse(sn, dtype=str), f"aus_{sn.lower()}")
-                                st.success(f"✅ Uloženo: {file.name}")
+                                st.success(f"✅ Uloženo (Auswertung): {file.name}")
                                 continue
 
                             temp_df = pd.read_csv(file, dtype=str, sep=None, engine='python') if fname.endswith('.csv') else pd.read_excel(file, dtype=str)
+                            
+                            # MAGICKÝ KROK: Odstraníme neviditelné mezery na začátku a konci názvů sloupců
+                            temp_df.columns = temp_df.columns.str.strip()
                             cols = set(temp_df.columns)
                             
-                            if 'Delivery' in cols and 'Act.qty (dest)' in cols: save_to_db(temp_df, 'raw_pick')
-                            elif 'Numerator' in cols and 'Alternative Unit of Measure' in cols: save_to_db(temp_df, 'raw_marm')
-                            elif 'Handling Unit' in cols and 'Generated delivery' in cols: save_to_db(temp_df, 'raw_vekp')
-                            elif ('Handling unit item' in cols or 'Handling Unit Position' in cols) and 'Material' in cols: save_to_db(temp_df, 'raw_vepo')
-                            elif 'Lieferung' in cols and 'Kategorie' in cols: save_to_db(temp_df, 'raw_cats')
-                            elif 'Queue' in cols and ('Transfer Order Number' in cols or 'SD Document' in cols): save_to_db(temp_df, 'raw_queue')
-                            elif 'DN NUMBER (SAP)' in cols and 'Process Time' in cols: save_to_db(temp_df, 'raw_oe')
-                            elif len(temp_df.columns) >= 2: save_to_db(temp_df, 'raw_manual')
+                            # Vylepšené rozpoznávání s přesným hlášením
+                            if 'Delivery' in cols and 'Act.qty (dest)' in cols: 
+                                save_to_db(temp_df, 'raw_pick')
+                                st.success(f"✅ Uloženo jako Pick Report: {file.name}")
+                            elif 'Numerator' in cols and 'Alternative Unit of Measure' in cols: 
+                                save_to_db(temp_df, 'raw_marm')
+                                st.success(f"✅ Uloženo jako MARM: {file.name}")
+                            elif 'Handling Unit' in cols and 'Generated delivery' in cols: 
+                                save_to_db(temp_df, 'raw_vekp')
+                                st.success(f"✅ Uloženo jako VEKP: {file.name}")
+                            elif ('Handling unit item' in cols or 'Handling Unit Position' in cols) and 'Material' in cols: 
+                                save_to_db(temp_df, 'raw_vepo')
+                                st.success(f"✅ Uloženo jako VEPO: {file.name}")
+                            elif 'Lieferung' in cols and 'Kategorie' in cols: 
+                                save_to_db(temp_df, 'raw_cats')
+                                st.success(f"✅ Uloženo jako Kategorie: {file.name}")
+                            elif 'Queue' in cols and ('Transfer Order Number' in cols or 'SD Document' in cols): 
+                                save_to_db(temp_df, 'raw_queue')
+                                st.success(f"✅ Uloženo jako Queue: {file.name}")
+                            elif 'DN NUMBER (SAP)' in cols and 'Process Time' in cols: 
+                                save_to_db(temp_df, 'raw_oe')
+                                st.success(f"✅ Uloženo jako OE-Times: {file.name}")
+                            elif len(cols) >= 2 and ('Material' in cols or 'Materiál' in cols): # Zpřísnění pro ruční data
+                                save_to_db(temp_df, 'raw_manual')
+                                st.success(f"✅ Uloženo jako Ruční Master Data: {file.name}")
+                            else:
+                                st.warning(f"⚠️ Soubor '{file.name}' nebyl rozpoznán! Zkontrolujte názvy sloupců.")
                             
-                            st.success(f"✅ Uloženo: {file.name}")
                         except Exception as e:
                             st.error(f"❌ Chyba u souboru {file.name}: {e}")
                             
