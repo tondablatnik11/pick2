@@ -194,33 +194,40 @@ def main():
 
                             temp_df = pd.read_csv(file, dtype=str, sep=None, engine='python') if fname.endswith('.csv') else pd.read_excel(file, dtype=str)
                             
-                            # MAGICKÝ KROK: Odstraníme neviditelné mezery na začátku a konci názvů sloupců
+                            # Odstraníme neviditelné znaky a převedeme na velká písmena pro "chytré" hledání
                             temp_df.columns = temp_df.columns.str.strip()
-                            cols = set(temp_df.columns)
+                            cols = temp_df.columns.tolist()
+                            cols_up = [str(c).upper() for c in cols]
                             
-                            # Vylepšené rozpoznávání s přesným hlášením
-                            if 'Delivery' in cols and 'Act.qty (dest)' in cols: 
+                            # Vylepšené, nerozbitné rozpoznávání (hledá jen části textu a ignoruje velikost písmen)
+                            if any('DELIVERY' in c for c in cols_up) and any('ACT.QTY' in c for c in cols_up):
                                 save_to_db(temp_df, 'raw_pick')
                                 st.success(f"✅ Uloženo jako Pick Report: {file.name}")
-                            elif 'Numerator' in cols and 'Alternative Unit of Measure' in cols: 
+                            elif any('NUMERATOR' in c for c in cols_up) and any('ALTERNATIVE UNIT' in c for c in cols_up): 
                                 save_to_db(temp_df, 'raw_marm')
                                 st.success(f"✅ Uloženo jako MARM: {file.name}")
-                            elif 'Handling Unit' in cols and 'Generated delivery' in cols: 
+                            elif any('HANDLING UNIT' in c for c in cols_up) and any('GENERATED DELIVERY' in c for c in cols_up): 
                                 save_to_db(temp_df, 'raw_vekp')
                                 st.success(f"✅ Uloženo jako VEKP: {file.name}")
-                            elif ('Handling unit item' in cols or 'Handling Unit Position' in cols) and 'Material' in cols: 
+                            elif (any('HANDLING UNIT ITEM' in c for c in cols_up) or any('HANDLING UNIT POSITION' in c for c in cols_up)) and any('MATERIAL' in c for c in cols_up): 
                                 save_to_db(temp_df, 'raw_vepo')
                                 st.success(f"✅ Uloženo jako VEPO: {file.name}")
-                            elif 'Lieferung' in cols and 'Kategorie' in cols: 
+                            elif any('LIEFERUNG' in c for c in cols_up) and any('KATEGORIE' in c for c in cols_up): 
                                 save_to_db(temp_df, 'raw_cats')
                                 st.success(f"✅ Uloženo jako Kategorie: {file.name}")
-                            elif 'Queue' in cols and ('Transfer Order Number' in cols or 'SD Document' in cols): 
+                            elif any('QUEUE' in c for c in cols_up) and (any('TRANSFER ORDER' in c for c in cols_up) or any('SD DOCUMENT' in c for c in cols_up)): 
                                 save_to_db(temp_df, 'raw_queue')
                                 st.success(f"✅ Uloženo jako Queue: {file.name}")
-                            elif 'DN NUMBER (SAP)' in cols and 'Process Time' in cols: 
+                            elif any('DN NUMBER' in c for c in cols_up) and any('PROCESS TIME' in c for c in cols_up):
+                                # Jakmile to pozná OE-Times, sjednotí názvy sloupců, aby je pak aplikace bez problému našla
+                                rename_map = {}
+                                for orig, up in zip(cols, cols_up):
+                                    if 'DN NUMBER' in up: rename_map[orig] = 'DN NUMBER (SAP)'
+                                    if 'PROCESS TIME' in up: rename_map[orig] = 'Process Time'
+                                temp_df.rename(columns=rename_map, inplace=True)
                                 save_to_db(temp_df, 'raw_oe')
                                 st.success(f"✅ Uloženo jako OE-Times: {file.name}")
-                            elif len(cols) >= 2 and ('Material' in cols or 'Materiál' in cols): # Zpřísnění pro ruční data
+                            elif len(cols) >= 2 and (any('MATERIAL' in c for c in cols_up) or any('MATERIÁL' in c for c in cols_up)):
                                 save_to_db(temp_df, 'raw_manual')
                                 st.success(f"✅ Uloženo jako Ruční Master Data: {file.name}")
                             else:
