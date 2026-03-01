@@ -3,12 +3,11 @@ import pandas as pd
 import numpy as np
 import io
 import time
+import re
 
-# Databáze a výpočty
 from database import save_to_db, load_from_db
 from modules.utils import t, fast_compute_moves, get_match_key_vectorized, get_match_key, parse_packing_time, BOX_UNITS
 
-# Záložky (Tabs) z naší nové struktury
 from modules.tab_dashboard import render_dashboard
 from modules.tab_pallets import render_pallets
 from modules.tab_fu import render_fu
@@ -17,9 +16,6 @@ from modules.tab_billing import render_billing
 from modules.tab_packing import render_packing
 from modules.tab_audit import render_audit
 
-# ==========================================
-# 1. NASTAVENÍ STRÁNKY A STYLING
-# ==========================================
 st.set_page_config(page_title="Warehouse Control Tower", page_icon="🏢", layout="wide", initial_sidebar_state="expanded")
 st.markdown("""
     <style>
@@ -33,9 +29,6 @@ st.markdown("""
 
 if 'lang' not in st.session_state: st.session_state.lang = 'cs'
 
-# ==========================================
-# 2. CACHE PRO NAČTENÍ Z DATABÁZE
-# ==========================================
 @st.cache_data(show_spinner=False, ttl=3600)
 def fetch_and_prep_data():
     df_pick_raw = load_from_db('raw_pick')
@@ -80,7 +73,6 @@ def fetch_and_prep_data():
             df_pick['Queue'] = df_pick['Delivery'].map(q_map).fillna('N/A')
         df_pick = df_pick[df_pick['Queue'].astype(str).str.upper() != 'CLEARANCE'].copy()
 
-    import re
     manual_boxes = {}
     if df_manual_raw is not None and not df_manual_raw.empty:
         c_mat, c_pkg = df_manual_raw.columns[0], df_manual_raw.columns[1]
@@ -126,16 +118,30 @@ def fetch_and_prep_data():
     if 'Handling Unit' in df_pick.columns: auto_voll_hus.update(df_pick.loc[mask_x, 'Handling Unit'].dropna().astype(str).str.strip())
     auto_voll_hus = {h for h in auto_voll_hus if h not in ["", "nan", "None"]}
 
+    # --- ZCELA OPRAVENÉ NAČÍTÁNÍ OE-TIMES ---
     df_oe = load_from_db('raw_oe')
     if df_oe is not None and not df_oe.empty:
-        df_oe['Delivery'] = df_oe['DN NUMBER (SAP)'].astype(str).str.strip()
-        df_oe['Process_Time_Min'] = df_oe['Process Time'].apply(parse_packing_time)
-        agg_dict = {'Process_Time_Min': 'sum'}
-        for col in ['CUSTOMER', 'Material', 'Scanning serial numbers', 'Reprinting labels ', 'Difficult KLTs', 'Shift', 'Number of item types']:
-            if col in df_oe.columns: agg_dict[col] = 'first'
-        for col in ['KLT', 'Palety', 'Cartons']:
-            if col in df_oe.columns: agg_dict[col] = lambda x: '; '.join(x.dropna().astype(str))
-        df_oe = df_oe.groupby('Delivery').agg(agg_dict).reset_index()
+        cols_up = [str(c).upper() for c in df_oe.columns]
+        rename_map = {}
+        for orig, up in zip(df_oe.columns, cols_up):
+            if 'DN NUMBER' in up or 'DELIVERY' in up or 'DODAVKA' in up: rename_map[orig] = 'DN NUMBER (SAP)'
+            if 'PROCESS' in up or 'CAS' in up or 'ČAS' in up or 'TIME' in up: rename_map[orig] = 'Process Time'
+        df_oe.rename(columns=rename_map, inplace=True)
+        
+        # Pojistka: Pokud se najdou správné sloupce, pokračujeme, jinak data přeskočíme
+        if 'DN NUMBER (SAP)' in df_oe.columns and 'Process Time' in df_oe.columns:
+            df_oe['Delivery'] = df_oe['DN NUMBER (SAP)'].astype(str).str.strip()
+            df_oe['Process_Time_Min'] = df_oe['Process Time'].apply(parse_packing_time)
+            
+            agg_dict = {'Process_Time_Min': 'sum'}
+            for col in ['CUSTOMER', 'Material', 'Scanning serial numbers', 'Reprinting labels ', 'Difficult KLTs', 'Shift', 'Number of item types']:
+                if col in df_oe.columns: agg_dict[col] = 'first'
+            for col in ['KLT', 'Palety', 'Cartons']:
+                if col in df_oe.columns: agg_dict[col] = lambda x: '; '.join(x.dropna().astype(str))
+                
+            df_oe = df_oe.groupby('Delivery').agg(agg_dict).reset_index()
+        else:
+            df_oe = None # Tabulka je příliš poškozená a bude čekat na nový upload
 
     df_cats = load_from_db('raw_cats')
     if df_cats is not None and not df_cats.empty:
@@ -156,9 +162,6 @@ def fetch_and_prep_data():
         'weight_dict': weight_dict, 'dim_dict': dim_dict, 'box_dict': box_dict
     }
 
-# ==========================================
-# 3. HLAVNÍ BĚH APLIKACE A ADMIN ZÓNA
-# ==========================================
 def main():
     col_title, col_lang = st.columns([8, 1])
     with col_title:
@@ -193,13 +196,11 @@ def main():
                                 continue
 
                             temp_df = pd.read_csv(file, dtype=str, sep=None, engine='python') if fname.endswith('.csv') else pd.read_excel(file, dtype=str)
-                            
-                            # Odstraníme neviditelné znaky a převedeme na velká písmena pro "chytré" hledání
                             temp_df.columns = temp_df.columns.str.strip()
                             cols = temp_df.columns.tolist()
                             cols_up = [str(c).upper() for c in cols]
                             
-                            # Vylepšené, nerozbitné rozpoznávání
+                            # Vylepšené nahrávání
                             if any('DELIVERY' in c for c in cols_up) and any('ACT.QTY' in c for c in cols_up):
                                 save_to_db(temp_df, 'raw_pick')
                                 st.success(f"✅ Uloženo jako Pick Report: {file.name}")
@@ -219,29 +220,32 @@ def main():
                                 save_to_db(temp_df, 'raw_queue')
                                 st.success(f"✅ Uloženo jako Queue: {file.name}")
                                 
-                            # TVRDÁ DETEKCE PODLE NÁZVU SOUBORU PRO OE-TIMES
-                            elif 'oe-times' in fname or any('PROCESS' in c for c in cols_up):
+                            # TVRDÁ DETEKCE PODLE NÁZVU PRO OE-TIMES
+                            elif 'oe-times' in fname or any('PROCESS' in c for c in cols_up) or any('TIME' in c for c in cols_up):
                                 rename_map = {}
                                 has_dn = False
                                 has_time = False
                                 
                                 for orig, up in zip(cols, cols_up):
-                                    # Najde první sloupec, co vypadá jako Delivery, a pak už další ignoruje
                                     if not has_dn and ('DN NUMBER' in up or 'DELIVERY' in up or 'DODAVKA' in up):
                                         rename_map[orig] = 'DN NUMBER (SAP)'
                                         has_dn = True
-                                    # Najde první sloupec s časem (vyhýbá se obecnému slovu TIME kvůli Start/End Time)
-                                    elif not has_time and ('PROCESS' in up or 'CAS' in up or 'ČAS' in up):
+                                    elif not has_time and ('PROCESS' in up or 'CAS' in up or 'ČAS' in up or 'TIME' in up):
                                         rename_map[orig] = 'Process Time'
                                         has_time = True
                                         
                                 temp_df.rename(columns=rename_map, inplace=True)
-                                
-                                # Ultimátní pojistka: Smaže z dat případné zdvojené sloupce se stejným názvem
+                                # Odstranění jakýchkoliv duplicitních sloupců
                                 temp_df = temp_df.loc[:, ~temp_df.columns.duplicated()]
                                 
                                 save_to_db(temp_df, 'raw_oe')
                                 st.success(f"✅ Uloženo jako OE-Times: {file.name}")
+                                
+                            elif len(cols) >= 2 and (any('MATERIAL' in c for c in cols_up) or any('MATERIÁL' in c for c in cols_up)):
+                                save_to_db(temp_df, 'raw_manual')
+                                st.success(f"✅ Uloženo jako Ruční Master Data: {file.name}")
+                            else:
+                                st.warning(f"⚠️ Soubor '{file.name}' nebyl rozpoznán! Zkontrolujte názvy sloupců.")
                             
                         except Exception as e:
                             st.error(f"❌ Chyba u souboru {file.name}: {e}")
@@ -250,7 +254,6 @@ def main():
                     time.sleep(2.0)
                     st.rerun()
 
-    # --- ZDE BYL CHYBNÝ INDENT (ODSAZENÍ), NYNÍ ZCELA OPRAVENO ---
     with st.spinner("🔄 Načítám data z databáze..."):
         data_dict = fetch_and_prep_data()
 
