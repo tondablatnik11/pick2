@@ -5,3 +5,4 @@ numpy
 psycopg2-binary
 SQLAlchemy
 plotly
+matplotlib
