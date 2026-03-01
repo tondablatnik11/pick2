@@ -425,12 +425,22 @@ def main():
                            'background-color': 'rgba(31,119,180,0.05)'}
                     )
                 )
-                col_qt1, col_qt2 = st.columns([2.5, 1])
-                with col_qt1:
-                    st.dataframe(styled_q, use_container_width=True, hide_index=True)
-                with col_qt2:
-                    chart_data = q_sum.drop_duplicates('Queue').set_index('Queue')['prum_pohybu_lokace']
-                    st.bar_chart(chart_data)
+                col_qt1, col_qt2 = st.columns([2.5, 1.5])
+            with col_qt1:
+                st.dataframe(styled_q, use_container_width=True, hide_index=True)
+            with col_qt2:
+                # Moderní Plotly graf
+                fig = px.bar(
+                    q_sum.drop_duplicates('Queue'), 
+                    x='Queue', 
+                    y='prum_pohybu_lokace',
+                    title='Náročnost (Pohyby na 1 lokaci)',
+                    text_auto='.1f', # Ukáže čísla přímo na sloupcích
+                    color='prum_pohybu_lokace', # Obarví sloupce podle zátěže
+                    color_continuous_scale='Reds' # Čím víc pohybů, tím červenější
+                )
+                fig.update_layout(xaxis_title="", yaxis_title="Pohyby", coloraxis_showscale=False)
+                st.plotly_chart(fig, use_container_width=True)
 
     # ==========================================
     # TAB 2: PALETOVÉ ZAKÁZKY
