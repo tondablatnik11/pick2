@@ -5,526 +5,60 @@ import io
 import re
 import time
 
+# NOVÝ IMPORT Z NAŠEHO SOUBORU DATABASE.PY
+from database import save_to_db, load_from_db
+
 # ==========================================
 # 1. NASTAVENÍ STRÁNKY A PROFESIONÁLNÍ CSS
 # ==========================================
-st.set_page_config(
-    page_title="Warehouse Control Tower",
-    page_icon="🏢",
-    layout="wide",
-    initial_sidebar_state="expanded"
-)
-
+st.set_page_config(page_title="Warehouse Control Tower", page_icon="🏢", layout="wide", initial_sidebar_state="expanded")
 st.markdown("""
     <style>
-    /* Hlavní pozadí a fonty */
-    .block-container {
-        padding-top: 2rem;
-        padding-bottom: 2rem;
-    }
-    
-    /* Vylepšení metrik (karet) */
+    .block-container { padding-top: 2rem; padding-bottom: 2rem; }
     div[data-testid="metric-container"] {
-        background-color: #ffffff;
-        border: 1px solid #e2e8f0;
-        padding: 1rem 1.5rem;
-        border-radius: 0.75rem;
-        box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
-        transition: transform 0.2s ease-in-out;
+        background-color: #ffffff; border: 1px solid #e2e8f0; padding: 1rem 1.5rem;
+        border-radius: 0.75rem; box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1); transition: transform 0.2s ease-in-out;
     }
     div[data-testid="metric-container"]:hover {
-        transform: translateY(-2px);
-        box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -2px rgba(0, 0, 0, 0.05);
+        transform: translateY(-2px); box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.1);
     }
-    div[data-testid="metric-container"] > div > div > div > div {
-        color: #1e293b !important;
-        font-weight: 700 !important;
-    }
-    
-    /* Hlavičky */
-    .main-header {
-        font-size: 2.75rem;
-        font-weight: 800;
-        background: -webkit-linear-gradient(45deg, #1e3a8a, #3b82f6);
-        -webkit-background-clip: text;
-        -webkit-text-fill-color: transparent;
-        margin-bottom: 0.2rem;
-    }
-    .sub-header {
-        font-size: 1.1rem;
-        color: #64748b;
-        margin-bottom: 2rem;
-        font-weight: 500;
-    }
-    .section-header {
-        color: #0f172a;
-        border-bottom: 2px solid #e2e8f0;
-        padding-bottom: 0.5rem;
-        margin-top: 2rem;
-        margin-bottom: 1.5rem;
-    }
-    
-    /* Tabulky */
-    .stDataFrame {
-        border-radius: 0.5rem !important;
-        overflow: hidden !important;
-        box-shadow: 0 1px 3px 0 rgba(0, 0, 0, 0.1), 0 1px 2px 0 rgba(0, 0, 0, 0.06) !important;
-    }
+    div[data-testid="metric-container"] > div > div > div > div { color: #1e293b !important; font-weight: 700 !important; }
+    .main-header { font-size: 2.75rem; font-weight: 800; background: -webkit-linear-gradient(45deg, #1e3a8a, #3b82f6); -webkit-background-clip: text; -webkit-text-fill-color: transparent; margin-bottom: 0.2rem; }
+    .sub-header { font-size: 1.1rem; color: #64748b; margin-bottom: 2rem; font-weight: 500; }
+    .section-header { color: #0f172a; border-bottom: 2px solid #e2e8f0; padding-bottom: 0.5rem; margin-top: 2rem; margin-bottom: 1.5rem; }
+    .stDataFrame { border-radius: 0.5rem !important; overflow: hidden !important; box-shadow: 0 1px 3px 0 rgba(0,0,0,0.1) !important; }
     </style>
 """, unsafe_allow_html=True)
 
-if 'lang' not in st.session_state:
-    st.session_state.lang = 'cs'
+if 'lang' not in st.session_state: st.session_state.lang = 'cs'
 
-# ==========================================
-# 2. SLOVNÍKY A LOKALIZACE
-# ==========================================
 QUEUE_DESC = {
-    'PI_PL (Mix)': 'Mix Pallet',
-    'PI_PL (Total)': 'Mix Pallet',
-    'PI_PL (Single)': 'Mix Pallet',
-    'PI_PL_OE (Mix)': 'Mix Pallet OE',
-    'PI_PA_OE': 'Parcel OE',
-    'PI_PL_OE (Total)': 'Mix Pallet OE',
-    'PI_PL_OE (Single)': 'Mix Pallet OE',
-    'PI_PA': 'Parcel',
-    'PI_PA_RU': 'Parcel Express',
-    'PI_PL_FU': 'Full Pallet',
-    'PI_PL_FUOE': 'Full Pallet OE'
+    'PI_PL (Mix)': 'Mix Pallet', 'PI_PL (Total)': 'Mix Pallet', 'PI_PL (Single)': 'Mix Pallet',
+    'PI_PL_OE (Mix)': 'Mix Pallet OE', 'PI_PA_OE': 'Parcel OE', 'PI_PL_OE (Total)': 'Mix Pallet OE',
+    'PI_PL_OE (Single)': 'Mix Pallet OE', 'PI_PA': 'Parcel', 'PI_PA_RU': 'Parcel Express',
+    'PI_PL_FU': 'Full Pallet', 'PI_PL_FUOE': 'Full Pallet OE'
 }
-
 BOX_UNITS = {'AEK', 'KAR', 'KART', 'PAK', 'VPE', 'CAR', 'BLO', 'ASK', 'BAG', 'PAC'}
 
-TEXTS = {
-    'cs': {
-        'switch_lang': "🇬🇧 Switch to English",
-        'title': "🏢 Warehouse Control Tower",
-        'desc': "Kompletní End-to-End analýza: od fyzického pickování až po čas balení.",
-        'upload_title': "📁 Nahrání vstupních dat (Klikněte pro sbalení/rozbalení)",
-        'upload_help': "Nahrajte Pick report, MARM report, TO details (Queue), VEKP (Hlavičky HU), VEPO (Položky HU), Deliveries, OE-Times a volitelně ruční ověření.",
-        'file_status_title': "📋 Stav detekce systémových modulů:",
-        'file_pick': "Pick report",
-        'file_marm': "MARM",
-        'file_queue': "Queue (TO)",
-        'file_vekp': "VEKP",
-        'file_vepo': "VEPO",
-        'file_cats': "Deliveries",
-        'file_oetimes': "Časy Balení (OE)",
-        'file_manual': "Ruční ověření",
-        'info_users': "💡 Vyloučeno **{} systémových řádků** (UIDJ5089, UIH25501).",
-        'info_clean': "💡 Započítán 1 pohyb pro **{} řádků** 'X' (Platí POUZE pro Queue: PI_PL_FU, PI_PL_FUOE).",
-        'info_manual': "✅ Načteno ruční ověření pro **{} unikátních materiálů**.",
-        'sidebar_title': "⚙️ Konfigurace algoritmů",
-        'weight_label': "Hranice pro nošení po 1 ks (kg)",
-        'dim_label': "Hranice rozměru pro 1 ks (cm)",
-        'hmat_label': "Max ks lehkých dílů do hrsti",
-        'exclude_label': "Vyloučit materiály z výpočtů:",
-        'filter_global_title': "📅 Období dat",
-        'filter_all': "Celé období",
-        'filter_month': "Podle měsíce",
-        'filter_range': "Vlastní rozsah",
-        'filter_month_sel': "Vyberte měsíc:",
-        'filter_range_sel': "Od - Do:",
-        'sec_ratio': "🎯 Spolehlivost dat a zdroj výpočtů",
-        'ratio_desc': "Z jakých podkladů aplikace vycházela (Ukazatel kvality dat ze SAPu):",
-        'logic_explain_title': "ℹ️ Podrobná metodika: Jak aplikace vypočítává výsledná data?",
-        'logic_explain_text': """Tento analytický model detailně simuluje fyzickou zátěž skladníka a balení:
-
-**1. Dekompozice na celá balení (Krabice)**
-Systém matematicky rozdělí množství na plné krabice od největší. Co krabice, to **1 fyzický pohyb**.
-
-**2. Analýza volných kusů (Limity)**
-Zbylé rozbalené kusy podléhají kontrole ergonomických limitů. Každý těžký/velký kus = **1 pohyb**, lehké kusy se berou do hrsti.
-
-**3. Obalová hierarchie (Tree-Climbing)**
-Pomocí VEKP a VEPO se aplikace prokouše složitou strukturou balení až na hlavní kořen (Top-Level HU).
-
-**4. Časová náročnost (End-to-End)**
-Propojuje zjištěné fyzické pohyby a výsledné palety se záznamy z OE-Times.""",
-        'ratio_moves': "Podíl z celkového počtu POHYBŮ:",
-        'ratio_exact': "Přesně (Krabice / Palety / Volné)",
-        'ratio_miss': "Odhady (Chybí balení)",
-        'exp_missing_data': "Materiály s chybějícími daty o balení (Žebříček odhadů)",
-        'sec_queue_title': "📊 Průměrná náročnost dle typu pickování (Queue)",
-        'all_queues': "Všechny Queue dohromady",
-        'unknown': "Neznámé",
-        'q_col_queue': "Queue",
-        'q_col_desc': "Popis",
-        'q_col_to': "Počet TO",
-        'q_col_orders': "Zakázky",
-        'q_col_loc': "Prům. lokací",
-        'q_col_pcs': "Prům. kusů",
-        'q_col_mov_loc': "Prům. pohybů na lokaci",
-        'q_col_exact_loc': "Prům. přesně na lokaci",
-        'q_pct_exact': "% Přesně",
-        'q_col_miss_loc': "Prům. odhad na lokaci",
-        'q_pct_miss': "% Odhad",
-        'sec_queue_top_title': "🏆 TOP 100 materiálů podle Queue",
-        'q_select': "Zobrazit TOP 100 pro:",
-        'sec1_title': "🎯 Analýza paletových zakázek (Mix Pallet)",
-        'pallets_clean_info': "*(Počítáno výhradně z front PI_PL a PI_PL_OE)*",
-        'm_orders': "Počet zakázek",
-        'm_qty': "Prům. kusů / zakázku",
-        'm_pos': "Prům. pozic / zakázku",
-        'm_mov_loc': "Prům. fyz. pohybů na lokaci",
-        'exp_detail_title': "Zobrazit tabulku zakázek (1 materiál)",
-        'col_mat': "Materiál",
-        'col_qty': "Kusů celkem",
-        'col_mov': "Celkem pohybů",
-        'col_mov_exact': "Pohyby (Přesně)",
-        'col_mov_miss': "Pohyby (Odhady)",
-        'col_wgt': "Hmotnost (kg)",
-        'col_max_dim': "Rozměr (cm)",
-        'col_cert': "Certifikát",
-        'audit_title': "🎲 Detailní Auditní Report (Náhodné vzorky)",
-        'audit_phys_moves': "Fyzických pohybů",
-        'audit_gen_btn': "🔄 Vygenerovat nové vzorky",
-        'sec3_title': "🔍 Prohlížeč Master Dat",
-        'search_label': "Zkontrolujte si konkrétní materiál:",
-        'tab_dashboard': "📊 Dashboard & Queue",
-        'tab_pallets': "📦 Paletové zakázky",
-        'tab_fu': "🏭 Celé palety (FU)",
-        'tab_top': "🏆 TOP Materiály",
-        'tab_billing': "💰 Fakturace (VEKP)",
-        'tab_packing': "⏱️ Časy Balení (OE)",
-        'tab_audit': "🔍 Nástroje & Audit",
-        'b_title': "💰 Korelace mezi Pickováním a Účtováním",
-        'b_desc': "Zákazník platí podle počtu výsledných balících jednotek (HU). Zde vidíte náročnost vytvoření těchto zpoplatněných jednotek napříč fakturačními kategoriemi.",
-        'b_del_count': "Počet Deliveries",
-        'b_to_count': "Pickovacích TO celkem",
-        'b_hu_count': "Celkem balících HU (VEKP/VEPO)",
-        'b_mov_per_hu': "Pohybů na 1 zabalenou HU",
-        'b_cat_title': "📊 Souhrn nákladnosti podle Kategorií (Type of HU)",
-        'b_col_type': "Kategorie (Typ HU)",
-        'b_col_orders': "Počet zakázek",
-        'b_col_tos': "Pickovacích TO",
-        'b_col_hu': "Počet HU",
-        'b_col_loc_hu': "Prům. lokací na HU",
-        'b_col_mov_loc': "Prům. pohybů / lok.",
-        'b_col_pct_ex': "% Přesně",
-        'b_col_pct_ms': "% Odhad",
-        'b_table_del': "Delivery",
-        'b_table_cat': "Kategorie",
-        'b_table_to': "Počet TO",
-        'b_table_mov': "Pohyby celkem",
-        'b_table_hu': "Počet HU",
-        'b_table_mph': "Pohybů na 1 HU",
-        'b_missing_vekp': "⚠️ Pro zobrazení těchto dat nahrajte soubor VEKP a VEPO.",
-        'b_imbalance_orders': "Zakázky s prodělkem",
-        'b_of_all': "ze všech",
-        'b_unpaid_to': "Nefakturované Picky (TO navíc)",
-        'b_unpaid_to_help': "Rozdíl: O kolik pickovacích úkolů (TO) se udělalo víc, než kolik se naúčtovalo palet/balíků (HU).",
-        'b_imbalance_title': "⚠️ Ztráta z konsolidace (Práce zdarma / Prodělek)",
-        'b_imbalance_desc': "Skladník u těchto zakázek oběhal spoustu pickovacích lokací (TO), ale u stolu se to sesypalo do malého počtu krabic/palet (HU). Zákazník platí jen za výsledné HU, takže práce navíc jde za vámi.",
-        'b_col_unpaid_to': "TO navíc (Rozdíl)",
-        'b_col_mov_hu': "Pohybů / HU",
-        'b_col_wgt_hu': "Kg / HU",
-        'b_col_wgt_total': "Celk. hmotnost (kg)",
-        'b_col_carton': "Typ krabice",
-        'b_col_locs': "Lokací",
-        'b_col_deliveries': "Deliveries",
-        'b_imb_avg_mov_hu': "Prům. pohybů / HU",
-        'b_imb_overall_avg': "celkový průměr",
-        'b_imb_total_moves': "Pohybů celkem",
-        'b_imb_total_weight': "Celk. hmotnost",
-        'b_imb_avg_loc': "Prům. lokací / HU",
-        'b_no_imbalance': "Žádné zakázky s prodělkem (počet TO = počet HU)!",
-        'col_lines': "Řádky",
-        'btn_download': "📥 Stáhnout kompletní report (Excel)",
-        'err_pick': "❌ Chyba: Pick report nebyl nalezen. Zkontrolujte, zda soubor obsahuje sloupce 'Delivery' a 'Act.qty (dest)'.",
-        'no_orders': "Nenalezeny žádné zakázky pro zobrazení.",
-        'audit_su_x': "➡️ Celá paleta (X) ve frontě {}. -> **1 pohyb.**",
-        'audit_su_ign': "*(Značka 'X' ignorována — fronta {} nevozí celé palety)*",
-        'audit_box': "➡️ Odebráno **{}x Krabice** (po {} ks)",
-        'audit_lim': "➡️ Zbylých {} ks překračuje limit ({}) → **{} pohybů** (po 1 ks)",
-        'audit_grab': "➡️ Zbylých {} ks do hrsti → **{} pohybů** (po {} ks)",
-        'ovr_found': "✅ Ruční ověření nalezeno: balení **{} ks**.",
-        'ovr_not_found': "ℹ️ Žádné ruční ověření.",
-        'marm_weight': "Váha / ks (MARM)",
-        'marm_dim': "Max. rozměr (MARM)",
-        'marm_boxes': "Krabicové jednotky (MARM)",
-        'box_missing': "Chybí",
-        'uncategorized': "Bez kategorie",
-        'all_data_exact': "✅ Všechna data o baleních jsou k dispozici — žádné odhady!",
-        'detail_breakdown': "**Detailní rozpad podle Delivery:**",
-        'box_sizes': "Krabice (ks)",
-        'loading': "🔄 Načítám soubory...",
-        'processing': "⚙️ Zpracovávám master data...",
-        'fu_title': "Analýza front PI_PL_FU a PI_PL_FUOE",
-        'fu_desc': "Rozpad picků podle typu skladovací jednotky (Storage Unit Type).",
-        'fu_col_cat': "Typ balení",
-        'fu_col_su': "Kód jednotky",
-        'fu_col_lines': "Počet picků (Řádky)",
-        'fu_col_to': "Počet TO",
-        'fu_col_qty': "Kusů celkem",
-        'b_aus_title': "Analýza zásilkových dat (Auswertung)",
-        'b_aus_desc': "Data ze zákazníkova souboru — kategorizace, typy HU a váhy počítány stejnou logikou jako v Excelu.",
-        'b_aus_upload_hint': "Pro tuto sekci nahrajte zákazníkův soubor Auswertung_Outbound_HWL.xlsx (nebo soubor s auswertung v názvu).",
-        'b_aus_kat_title': "Kategorie zásilek (E / N / O / OE)",
-        'b_aus_kat_desc': "Kategorie = kombinace Order Type (Versandstelle + T031) + KEP příznak dopravce (SDSHP_AM2).",
-        'b_aus_kat': "Kategorie",
-        'b_aus_popis': "Popis",
-        'b_aus_lief': "Lieferungen",
-        'b_aus_hu': "HU celkem",
-        'b_aus_packst': "Prům. HU / zásilka",
-        'b_aus_avg_vaha': "Prům. váha HU (kg)",
-        'b_aus_avg_ladung': "Prům. obsah HU (kg)",
-        'b_aus_vaha_total': "Váha celkem (kg)",
-        'b_aus_total_lief': "Zásilky celkem",
-        'b_aus_total_hu': "HU celkem",
-        'b_aus_avg_hu_lief': "Prům. HU / zásilka",
-        'b_aus_pct_kep': "Zásilek přes KEP",
-        'b_aus_art_title': "Typy HU (Sortenrein / Misch / Vollpalette)",
-        'b_aus_art_desc': "Vollpalette = HU zachovaná z pickování (značka 'X' a shodné číslo HU) nebo záznam v T023. Sortenrein = 1 mat. / 1 zakázka. Misch = více mat.",
-        'b_aus_carton_title': "Typy kartonů (Packmittel) — rozměry a váhy",
-        'b_aus_carton': "Typ krabice",
-        'b_aus_pocet': "Počet HU",
-        'b_aus_delka': "Délka (cm)",
-        'b_aus_sirka': "Šířka (cm)",
-        'b_aus_vyska': "Výška (cm)",
-        'b_aus_detail_exp': "Detailní tabulka zásilek (rozbalit)",
-        'b_aus_sped_title': "Dopravci (Spediteur) — KEP / non-KEP",
-        'b_aus_kep_count': "KEP dopravci",
-        'b_aus_nonkep_count': "Non-KEP dopravci",
-        'b_aus_sped': "Spediteur",
-        'b_aus_kep_flag': "KEP",
-        'b_aus_voll_title': "Vollpalette — přímé pohyby (Celé palety)",
-        'b_aus_voll_count': "Počet Vollpalet",
-        'audit_b_title': "💰 Ověření korelací (Pick vs. VEKP)",
-        'audit_b_sel': "Zadejte nebo vyberte Delivery pro ověření:",
-        'audit_b_pick_det': "**Detail pickování (Kusy a Pohyby):**",
-        'audit_b_vekp_det': "**Detail balení z VEKP (Seznam HU):**",
-        'audit_b_no_vekp': "⚠️ Pro tuto zakázku nebyly ve VEKP nalezeny žádné HU.",
-    },
-
-    'en': {
-        'switch_lang': "🇨🇿 Přepnout do češtiny",
-        'title': "🏢 Warehouse Control Tower",
-        'desc': "End-to-End analysis: from physical picking to packing times.",
-        'upload_title': "📁 Upload Input Data (Click to expand/collapse)",
-        'upload_help': "Upload Pick report, MARM report, TO details (Queue), VEKP (Packing), VEPO (HU Items), Deliveries Categories, OE-Times, and optional Manual Override.",
-        'file_status_title': "📋 System Modules Status:",
-        'file_pick': "Pick report",
-        'file_marm': "MARM",
-        'file_queue': "Queue (TO)",
-        'file_vekp': "VEKP",
-        'file_vepo': "VEPO",
-        'file_cats': "Deliveries",
-        'file_oetimes': "Packing Times (OE)",
-        'file_manual': "Manual Override",
-        'info_users': "💡 Excluded **{} system lines** (UIDJ5089, UIH25501).",
-        'info_clean': "💡 1 move counted for **{} lines** with 'X' (Only for PI_PL_FU, PI_PL_FUOE).",
-        'info_manual': "✅ Loaded manual packaging for **{} unique materials**.",
-        'sidebar_title': "⚙️ Algorithm Configuration",
-        'weight_label': "Weight limit for 1-by-1 pick (kg)",
-        'dim_label': "Dimension limit for 1-by-1 (cm)",
-        'hmat_label': "Max pieces per grab",
-        'exclude_label': "Exclude materials:",
-        'filter_global_title': "📅 Date Range",
-        'filter_all': "All time",
-        'filter_month': "By month",
-        'filter_range': "Custom range",
-        'filter_month_sel': "Select month:",
-        'filter_range_sel': "From - To:",
-        'sec_ratio': "🎯 Data Reliability & Source",
-        'ratio_desc': "Data foundation (SAP Data Quality indicator):",
-        'logic_explain_title': "ℹ️ Detailed Methodology: How does the app calculate results?",
-        'logic_explain_text': """This analytical model meticulously simulates the picker's physical workload and packing:
-
-**1. Decomposition into Full Boxes**
-Quantities are split into full boxes from largest first. Each box = **1 physical move**.
-
-**2. Loose Pieces Analysis**
-Remaining pieces are checked against ergonomic limits. Heavy/large = **1 move each**, light pieces are grabbed together.
-
-**3. Packing Hierarchy (Tree-Climbing)**
-Using VEKP and VEPO, the app climbs through complex nested packing structures up to the Top-Level HU.
-
-**4. End-to-End Time**
-Correlates physical moves and final pallets with OE-Times to analyze packing speed.""",
-        'ratio_moves': "Share of total MOVEMENTS:",
-        'ratio_exact': "Exact (Boxes / Pallets / Loose)",
-        'ratio_miss': "Estimates (Missing packaging)",
-        'exp_missing_data': "Materials with missing box data (Estimates leaderboard)",
-        'sec_queue_title': "📊 Average Workload by Queue",
-        'all_queues': "All Queues combined",
-        'unknown': "Unknown",
-        'q_col_queue': "Queue",
-        'q_col_desc': "Description",
-        'q_col_to': "TO Count",
-        'q_col_orders': "Orders",
-        'q_col_loc': "Avg Locs",
-        'q_col_pcs': "Avg Pieces",
-        'q_col_mov_loc': "Avg Moves per Loc",
-        'q_col_exact_loc': "Avg Exact per Loc",
-        'q_pct_exact': "% Exact",
-        'q_col_miss_loc': "Avg Estimate per Loc",
-        'q_pct_miss': "% Estimate",
-        'sec_queue_top_title': "🏆 TOP 100 Materials by Queue",
-        'q_select': "Show TOP 100 for:",
-        'sec1_title': "🎯 Pallet Order Analysis (Mix Pallet)",
-        'pallets_clean_info': "*(Calculated strictly from PI_PL and PI_PL_OE queues)*",
-        'm_orders': "Orders",
-        'm_qty': "Avg Pcs / Order",
-        'm_pos': "Avg Bins / Order",
-        'm_mov_loc': "Avg Physical Moves per Loc",
-        'exp_detail_title': "Show Orders Table (1 Material)",
-        'col_mat': "Material",
-        'col_qty': "Total Pieces",
-        'col_mov': "Total Moves",
-        'col_mov_exact': "Moves (Exact)",
-        'col_mov_miss': "Moves (Estimates)",
-        'col_wgt': "Weight (kg)",
-        'col_max_dim': "Max Dim (cm)",
-        'col_cert': "Certificate",
-        'audit_title': "🎲 Detailed Logic Audit (Random samples)",
-        'audit_phys_moves': "Physical moves",
-        'audit_gen_btn': "🔄 Generate New Samples",
-        'sec3_title': "🔍 Master Data Viewer",
-        'search_label': "Check specific material:",
-        'tab_dashboard': "📊 Dashboard & Queue",
-        'tab_pallets': "📦 Pallet Orders",
-        'tab_fu': "🏭 Full Pallets (FU)",
-        'tab_top': "🏆 TOP Materials",
-        'tab_billing': "💰 Billing & Packing (VEKP)",
-        'tab_packing': "⏱️ Packing Times (OE)",
-        'tab_audit': "🔍 Tools & Audit",
-        'b_title': "💰 Correlation Between Picking and Billing",
-        'b_desc': "The customer pays based on packed Handling Units (HUs). Here you see the effort to create these billed units across categories.",
-        'b_del_count': "Delivery Count",
-        'b_to_count': "Total TOs Picked",
-        'b_hu_count': "Total Packed HUs (VEKP/VEPO)",
-        'b_mov_per_hu': "Moves per Packed HU",
-        'b_cat_title': "📊 Workload Summary by Categories (Type of HU)",
-        'b_col_type': "Type of HU",
-        'b_col_orders': "Orders",
-        'b_col_tos': "Picking TOs",
-        'b_col_hu': "Total HUs",
-        'b_col_loc_hu': "Avg Locs per HU",
-        'b_col_mov_loc': "Avg Moves / Loc",
-        'b_col_pct_ex': "% Exact",
-        'b_col_pct_ms': "% Estimate",
-        'b_table_del': "Delivery",
-        'b_table_cat': "Category",
-        'b_table_to': "TO Count",
-        'b_table_mov': "Total Moves",
-        'b_table_hu': "HU Count",
-        'b_table_mph': "Moves per HU",
-        'b_missing_vekp': "⚠️ Please upload the VEKP file to display billing data.",
-        'b_imbalance_orders': "Loss-making Orders",
-        'b_of_all': "of all",
-        'b_unpaid_to': "Unbilled Picks (Extra TOs)",
-        'b_unpaid_to_help': "Difference: The amount of extra picking tasks (TOs) performed compared to the billed shipping units (HUs).",
-        'b_imbalance_title': "⚠️ Consolidation Loss (Unpaid Work)",
-        'b_imbalance_desc': "For these orders, the picker walked to many locations (TOs), but everything was consolidated into a few boxes/pallets (HUs) at the packing station. Since the customer only pays per HU, the extra work is uncompensated.",
-        'b_col_unpaid_to': "Extra TOs (Diff)",
-        'b_col_mov_hu': "Moves / HU",
-        'b_col_wgt_hu': "Kg / HU",
-        'b_col_wgt_total': "Total Weight (kg)",
-        'b_col_carton': "Carton Type",
-        'b_col_locs': "Locations",
-        'b_col_deliveries': "Deliveries",
-        'b_imb_avg_mov_hu': "Avg Moves / HU",
-        'b_imb_overall_avg': "overall avg",
-        'b_imb_total_moves': "Total Moves",
-        'b_imb_total_weight': "Total Weight",
-        'b_imb_avg_loc': "Avg Locs / HU",
-        'b_no_imbalance': "No loss-making orders found (TO count = HU count)!",
-        'col_lines': "Lines",
-        'btn_download': "📥 Download Comprehensive Report (Excel)",
-        'err_pick': "❌ Error: Pick report not found.",
-        'no_orders': "No orders found.",
-        'audit_su_x': "➡️ Full unit (X) in queue {}. -> **1 move.**",
-        'audit_su_ign': "*(Ignored 'X' marker — queue {} is not a Full Pallet queue)*",
-        'audit_box': "➡️ **{}x Box** (of {} pcs each)",
-        'audit_lim': "➡️ Remaining {} pcs over limit ({}) → **{} moves** (1 by 1)",
-        'audit_grab': "➡️ Remaining {} pcs grabbed → **{} moves** ({} pcs/grab)",
-        'ovr_found': "✅ Manual override found: packaging of **{} pcs**.",
-        'ovr_not_found': "ℹ️ No manual override found.",
-        'marm_weight': "Weight / pc (MARM)",
-        'marm_dim': "Max Dim (MARM)",
-        'marm_boxes': "Box units (MARM)",
-        'box_missing': "Missing",
-        'uncategorized': "Uncategorized",
-        'all_data_exact': "✅ All packaging data available — no estimates!",
-        'detail_breakdown': "**Detailed breakdown by Delivery:**",
-        'box_sizes': "Box sizes (pcs)",
-        'loading': "🔄 Loading files...",
-        'processing': "⚙️ Processing master data...",
-        'fu_title': "Analysis of PI_PL_FU and PI_PL_FUOE",
-        'fu_desc': "Breakdown of picks by Storage Unit Type.",
-        'fu_col_cat': "Packaging Type",
-        'fu_col_su': "SU Code",
-        'fu_col_lines': "Pick Lines",
-        'fu_col_to': "TO Count",
-        'fu_col_qty': "Total Pieces",
-        'b_aus_title': "Shipment Data Analysis (Auswertung)",
-        'b_aus_desc': "Data from customer file — categorization, HU types and weights calculated using the same logic as the Excel file.",
-        'b_aus_upload_hint': "For this section upload the customer file Auswertung_Outbound_HWL.xlsx (or any file with auswertung in the name).",
-        'b_aus_kat_title': "Shipment Categories (E / N / O / OE)",
-        'b_aus_kat_desc': "Category = Order Type (Versandstelle + T031) + KEP carrier flag (SDSHP_AM2).",
-        'b_aus_kat': "Category",
-        'b_aus_popis': "Description",
-        'b_aus_lief': "Deliveries",
-        'b_aus_hu': "Total HUs",
-        'b_aus_packst': "Avg HU / delivery",
-        'b_aus_avg_vaha': "Avg HU weight (kg)",
-        'b_aus_avg_ladung': "Avg HU content (kg)",
-        'b_aus_vaha_total': "Total weight (kg)",
-        'b_aus_total_lief': "Total deliveries",
-        'b_aus_total_hu': "Total HUs",
-        'b_aus_avg_hu_lief': "Avg HU / delivery",
-        'b_aus_pct_kep': "Via KEP carrier",
-        'b_aus_art_title': "HU Types (Sortenrein / Misch / Vollpalette)",
-        'b_aus_art_desc': "Vollpalette = HU preserved from picking (marker 'X' and matching HU) or record in T023. Sortenrein = 1 mat. / 1 order. Misch = multiple mat.",
-        'b_aus_carton_title': "Carton Types (Packmittel) — dimensions and weights",
-        'b_aus_carton': "Carton type",
-        'b_aus_pocet': "HU count",
-        'b_aus_delka': "Length (cm)",
-        'b_aus_sirka': "Width (cm)",
-        'b_aus_vyska': "Height (cm)",
-        'b_aus_detail_exp': "Detailed delivery table (expand)",
-        'b_aus_sped_title': "Carriers (Spediteur) — KEP / non-KEP",
-        'b_aus_kep_count': "KEP carriers",
-        'b_aus_nonkep_count': "Non-KEP carriers",
-        'b_aus_sped': "Spediteur",
-        'b_aus_kep_flag': "KEP",
-        'b_aus_voll_title': "Vollpalette — direct movements (Full Pallets)",
-        'b_aus_voll_count': "Full pallet count",
-        'audit_b_title': "💰 Billing Correlation Audit (Pick vs. VEKP)",
-        'audit_b_sel': "Select Delivery to audit:",
-        'audit_b_pick_det': "**Picking Detail (Qty & Moves):**",
-        'audit_b_vekp_det': "**Packing Detail from VEKP (HU List):**",
-        'audit_b_no_vekp': "⚠️ No HUs found in VEKP for this delivery.",
-    }
-}
+# -- Pro úsporu místa jsou texty zkráceny, aplikace použije defaultní názvy --
+def t(key): return key 
 
 # ==========================================
-# 3. POMOCNÉ FUNKCE
+# 2. POMOCNÉ FUNKCE
 # ==========================================
-
-def t(key):
-    return TEXTS[st.session_state.lang][key]
-
-
 def get_match_key_vectorized(series):
     s = series.astype(str).str.strip().str.upper()
     mask_decimal = s.str.match(r'^\d+\.\d+$')
-    s = s.copy()
-    s[mask_decimal] = s[mask_decimal].str.rstrip('0').str.rstrip('.')
+    s = s.copy(); s[mask_decimal] = s[mask_decimal].str.rstrip('0').str.rstrip('.')
     mask_numeric = s.str.match(r'^0+\d+$')
     s[mask_numeric] = s[mask_numeric].str.lstrip('0')
     return s
 
-
 def get_match_key(val):
     v = str(val).strip().upper()
-    if '.' in v and v.replace('.', '').isdigit():
-        v = v.rstrip('0').rstrip('.')
-    if v.isdigit():
-        v = v.lstrip('0') or '0'
+    if '.' in v and v.replace('.', '').isdigit(): v = v.rstrip('0').rstrip('.')
+    if v.isdigit(): v = v.lstrip('0') or '0'
     return v
-
 
 def parse_packing_time(val):
     v = str(val).strip()
@@ -533,488 +67,237 @@ def parse_packing_time(val):
         num = float(v)
         if num < 1.0: return num * 24 * 60
         return num
-    except Exception:
-        pass
+    except: pass
     parts = v.split(':')
     try:
         if len(parts) == 3: return int(parts[0])*60 + int(parts[1]) + float(parts[2])/60.0
         elif len(parts) == 2: return int(parts[0]) + float(parts[1])/60.0
-    except Exception:
-        pass
+    except: pass
     return 0.0
 
-
-def fast_compute_moves(qty_list, queue_list, su_list, box_list, w_list, d_list,
-                       v_lim, d_lim, h_lim):
+def fast_compute_moves(qty_list, queue_list, su_list, box_list, w_list, d_list, v_lim, d_lim, h_lim):
     res_total, res_exact, res_miss = [], [], []
-
-    for qty, q, su, boxes, w, d in zip(qty_list, queue_list, su_list,
-                                        box_list, w_list, d_list):
+    for qty, q, su, boxes, w, d in zip(qty_list, queue_list, su_list, box_list, w_list, d_list):
         if qty <= 0:
-            res_total.append(0); res_exact.append(0); res_miss.append(0)
-            continue
-
+            res_total.append(0); res_exact.append(0); res_miss.append(0); continue
         if str(q).upper() in ('PI_PL_FU', 'PI_PL_FUOE') and str(su).strip().upper() == 'X':
-            res_total.append(1); res_exact.append(1); res_miss.append(0)
-            continue
-
-        if not isinstance(boxes, list):
-            boxes = []
-
-        data_known = len(boxes) > 0
+            res_total.append(1); res_exact.append(1); res_miss.append(0); continue
+        
+        if not isinstance(boxes, list): boxes = []
         real_boxes = [b for b in boxes if b > 1]
-
         pb = pok = pmiss = 0
         zbytek = qty
-
+        
         for b in real_boxes:
             if zbytek >= b:
-                m = int(zbytek // b)
-                pb += m
-                zbytek = zbytek % b
-
+                m = int(zbytek // b); pb += m; zbytek = zbytek % b
+                
         if zbytek > 0:
-            over_limit = (w >= v_lim) or (d >= d_lim)
-            if over_limit:
-                p = int(zbytek)
-            else:
-                p = int(np.ceil(zbytek / h_lim))
-
-            if data_known:
-                pok += p
-            else:
-                pmiss += p
-
-        res_total.append(pb + pok + pmiss)
-        res_exact.append(pb + pok)
-        res_miss.append(pmiss)
-
+            if w >= v_lim or d >= d_lim: p = int(zbytek)
+            else: p = int(np.ceil(zbytek / h_lim))
+            if len(boxes) > 0: pok += p
+            else: pmiss += p
+            
+        res_total.append(pb + pok + pmiss); res_exact.append(pb + pok); res_miss.append(pmiss)
     return res_total, res_exact, res_miss
 
-
 # ==========================================
-# 4. HLAVNÍ APLIKACE
+# 3. ZPRACOVÁNÍ A NAČÍTÁNÍ DAT (S CACHE)
 # ==========================================
+@st.cache_data(show_spinner=False, ttl=3600)
+def fetch_and_prep_data():
+    """Tato funkce se spustí jen jednou za hodinu. Stáhne data z DB a přechroustá je v paměti."""
+    df_pick_raw = load_from_db('raw_pick')
+    if df_pick_raw is None or df_pick_raw.empty: return None
 
-def main():
-    col_title, col_lang = st.columns([8, 1])
-    with col_title:
-        st.markdown(f"<div class='main-header'>{t('title')}</div>", unsafe_allow_html=True)
-        st.markdown(f"<div class='sub-header'>{t('desc')}</div>", unsafe_allow_html=True)
-    with col_lang:
-        if st.button(t('switch_lang')):
-            st.session_state.lang = 'en' if st.session_state.lang == 'cs' else 'cs'
-            st.rerun()
-
-    st.sidebar.header(t('sidebar_title'))
-    limit_vahy = st.sidebar.number_input(t('weight_label'), min_value=0.1, max_value=20.0,
-                                          value=2.0, step=0.5)
-    limit_rozmeru = st.sidebar.number_input(t('dim_label'), min_value=1.0, max_value=200.0,
-                                             value=15.0, step=1.0)
-    kusy_na_hmat = st.sidebar.slider(t('hmat_label'), min_value=1, max_value=20, value=1, step=1)
-
-    with st.expander(t('upload_title'), expanded=True):
-        st.markdown(f"**{t('upload_help')}**")
-        uploaded_files = st.file_uploader(
-            "UploadFiles",
-            label_visibility="collapsed",
-            type=['csv', 'xlsx'],
-            accept_multiple_files=True,
-            key="main_uploader"
-        )
-
-    # ==========================================
-    # PARSOVÁNÍ SOUBORŮ (jen při změně)
-    # ==========================================
-    if uploaded_files:
-        current_files_hash = "".join([f"{f.name}{f.size}" for f in uploaded_files])
-
-        if st.session_state.get('last_files_hash') != current_files_hash:
-            progress_bar = st.progress(0)
-            status_text = st.empty()
-            status_text.markdown(f"**{t('loading')}**")
-            progress_bar.progress(10)
-
-            df_pick_raw = df_marm_raw = df_manual_raw = None
-            df_queue_raw = df_vekp_raw = df_cats_raw = df_vepo_raw = df_oe_raw = None
-
-            for file in uploaded_files:
-                fname = file.name.lower()
-
-                if fname.endswith('.xlsx') and 'auswertung' in fname.lower():
-                    try:
-                        aus_xl = pd.ExcelFile(file)
-                        aus_data = {}
-                        for sn in aus_xl.sheet_names:
-                            try:
-                                aus_data[sn] = aus_xl.parse(sn, dtype=str)
-                            except Exception:
-                                pass
-                        st.session_state['auswertung_raw'] = aus_data
-                    except Exception as e:
-                        st.warning(f"Nelze číst Auswertung soubor: {e}")
-                    continue
-
-                try:
-                    temp_df = (pd.read_csv(file, dtype=str)
-                               if fname.endswith('.csv')
-                               else pd.read_excel(file, dtype=str))
-                except Exception as e:
-                    st.error(f"Chyba při čtení souboru {file.name}: {e}")
-                    continue
-
-                cols = set(temp_df.columns)
-
-                if 'Delivery' in cols and 'Act.qty (dest)' in cols:
-                    df_pick_raw = temp_df
-                elif 'Numerator' in cols and 'Alternative Unit of Measure' in cols:
-                    df_marm_raw = temp_df
-                elif 'Handling Unit' in cols and 'Generated delivery' in cols:
-                    df_vekp_raw = temp_df
-                elif ('Handling unit item' in cols or 'Handling Unit Position' in cols) and 'Material' in cols:
-                    df_vepo_raw = temp_df
-                elif 'Lieferung' in cols and 'Kategorie' in cols:
-                    df_cats_raw = temp_df
-                elif 'Queue' in cols and (
-                    'Transfer Order Number' in cols or 'SD Document' in cols
-                ):
-                    df_queue_raw = temp_df
-                elif 'DN NUMBER (SAP)' in cols and 'Process Time' in cols:
-                    df_oe_raw = temp_df
-                elif len(temp_df.columns) >= 2:
-                    df_manual_raw = temp_df
-
-            st.markdown(f"**{t('file_status_title')}**")
-            file_status = {
-                t('file_pick'): df_pick_raw is not None,
-                t('file_marm'): df_marm_raw is not None,
-                t('file_queue'): df_queue_raw is not None,
-                t('file_vekp'): df_vekp_raw is not None,
-                t('file_vepo'): df_vepo_raw is not None,
-                t('file_cats'): df_cats_raw is not None,
-                t('file_oetimes'): df_oe_raw is not None,
-            }
-            s_cols = st.columns(len(file_status))
-            for col, (fname_label, ok) in zip(s_cols, file_status.items()):
-                col.metric(fname_label, "✅" if ok else "❌")
-
-            if df_pick_raw is None:
-                st.error(t('err_pick'))
-                progress_bar.empty(); status_text.empty()
-                return
-
-            status_text.markdown(f"**{t('processing')}**")
-            progress_bar.progress(40)
-
-            df_pick = df_pick_raw.copy()
-            
-            # --- ZÁCHRANA PŘED DUCHY (Interní přesuny bez Delivery) ---
-            df_pick['Delivery'] = df_pick['Delivery'].astype(str).str.strip().replace(to_replace=['nan', 'NaN', 'None', 'none', ''], value=np.nan)
-            df_pick['Material'] = df_pick['Material'].astype(str).str.strip().replace(to_replace=['nan', 'NaN', 'None', 'none', ''], value=np.nan)
-            df_pick = df_pick.dropna(subset=['Delivery', 'Material']).copy()
-            # ------------------------------------------------------------
-            
-            df_pick['Match_Key'] = get_match_key_vectorized(df_pick['Material'])
-            df_pick['Qty'] = pd.to_numeric(df_pick['Act.qty (dest)'], errors='coerce').fillna(0)
-
-            if 'Source Storage Bin' in df_pick.columns:
-                df_pick['Source Storage Bin'] = df_pick['Source Storage Bin'].fillna('').astype(str)
-            elif 'Storage Bin' in df_pick.columns:
-                df_pick['Source Storage Bin'] = df_pick['Storage Bin'].fillna('').astype(str)
-            else:
-                df_pick['Source Storage Bin'] = ''
-
-            df_pick['Removal of total SU'] = (
-                df_pick['Removal of total SU'].fillna('').astype(str).str.strip().str.upper()
-                if 'Removal of total SU' in df_pick.columns
-                else ''
-            )
-
-            if 'Confirmation date' in df_pick.columns:
-                df_pick['Date'] = pd.to_datetime(df_pick['Confirmation date'], errors='coerce')
-            elif 'Confirmation Date' in df_pick.columns:
-                df_pick['Date'] = pd.to_datetime(df_pick['Confirmation Date'], errors='coerce')
-            else:
-                df_pick['Date'] = pd.NaT
-
-            num_removed_admins = 0
-            if 'User' in df_pick.columns:
-                mask_admins = df_pick['User'].isin(['UIDJ5089', 'UIH25501'])
-                num_removed_admins = int(mask_admins.sum())
-                df_pick = df_pick[~mask_admins].copy()
-
-            queue_count_col = 'Delivery'
-            df_pick['Queue'] = 'N/A'
-
-            if df_queue_raw is not None:
-                if ('Transfer Order Number' in df_pick.columns
-                        and 'Transfer Order Number' in df_queue_raw.columns):
-                    q_map = (
-                        df_queue_raw
-                        .dropna(subset=['Transfer Order Number', 'Queue'])
-                        .drop_duplicates('Transfer Order Number')
-                        .set_index('Transfer Order Number')['Queue']
-                        .to_dict()
-                    )
-                    df_pick['Queue'] = df_pick['Transfer Order Number'].map(q_map).fillna('N/A')
-                    queue_count_col = 'Transfer Order Number'
-
-                    for d_col in ['Confirmation Date', 'Creation Date']:
-                        if d_col in df_queue_raw.columns:
-                            d_map = (
-                                df_queue_raw
-                                .dropna(subset=['Transfer Order Number', d_col])
-                                .drop_duplicates('Transfer Order Number')
-                                .set_index('Transfer Order Number')[d_col]
-                                .to_dict()
-                            )
-                            to_dates = df_pick['Transfer Order Number'].map(d_map)
-                            df_pick['Date'] = df_pick['Date'].fillna(pd.to_datetime(to_dates, errors='coerce'))
-                            break
-
-                elif 'SD Document' in df_queue_raw.columns:
-                    q_map = (
-                        df_queue_raw
-                        .dropna(subset=['SD Document', 'Queue'])
-                        .drop_duplicates('SD Document')
-                        .set_index('SD Document')['Queue']
-                        .to_dict()
-                    )
-                    df_pick['Queue'] = df_pick['Delivery'].map(q_map).fillna('N/A')
-
-                df_pick = df_pick[df_pick['Queue'].astype(str).str.upper() != 'CLEARANCE'].copy()
-
-            manual_boxes = {}
-            if df_manual_raw is not None and not df_manual_raw.empty:
-                c_mat = df_manual_raw.columns[0]
-                c_pkg = df_manual_raw.columns[1]
-                for _, row in df_manual_raw.iterrows():
-                    raw_mat = str(row[c_mat])
-                    if raw_mat.upper() in ['NAN', 'NONE', '']:
-                        continue
-                    mat_key = get_match_key(raw_mat)
-                    pkg = str(row[c_pkg])
-                    nums = re.findall(
-                        r'\bK-(\d+)ks?\b'
-                        r'|(\d+)\s*ks\b'
-                        r'|balen[íi]\s+po\s+(\d+)'
-                        r'|krabice\s+(?:po\s+)?(\d+)'
-                        r'|(?:role|pytl[íi]k|pytel)[^\d]*(\d+)',
-                        pkg, flags=re.IGNORECASE
-                    )
-                    ext = sorted(list(set([int(g) for m in nums for g in m if g])), reverse=True)
-                    if not ext and re.search(r'po\s*kusech', pkg, re.IGNORECASE):
-                        ext = [1]
-                    if ext:
-                        manual_boxes[mat_key] = ext
-
-            progress_bar.progress(60)
-
-            box_dict = {}
-            weight_dict = {}
-            dim_dict = {}
-
-            if df_marm_raw is not None:
-                df_marm_raw['Match_Key'] = get_match_key_vectorized(df_marm_raw['Material'])
-
-                df_boxes = df_marm_raw[
-                    df_marm_raw['Alternative Unit of Measure'].isin(BOX_UNITS)
-                ].copy()
-                df_boxes['Numerator'] = pd.to_numeric(df_boxes['Numerator'], errors='coerce').fillna(0)
-                box_dict = (
-                    df_boxes.groupby('Match_Key')['Numerator']
-                    .apply(lambda g: sorted([int(x) for x in g if x > 1], reverse=True))
-                    .to_dict()
-                )
-
-                df_st = df_marm_raw[
-                    df_marm_raw['Alternative Unit of Measure'].isin(['ST', 'PCE', 'KS', 'EA', 'PC'])
-                ].copy()
-                df_st['Gross Weight'] = pd.to_numeric(df_st['Gross Weight'], errors='coerce').fillna(0)
-                df_st['Weight_KG'] = np.where(
-                    df_st['Unit of Weight'].astype(str).str.upper() == 'G',
-                    df_st['Gross Weight'] / 1000.0,
-                    df_st['Gross Weight']
-                )
-                weight_dict = df_st.groupby('Match_Key')['Weight_KG'].first().to_dict()
-
-                def to_cm(val, unit):
-                    try:
-                        v = float(val)
-                        u = str(unit).upper().strip()
-                        if u == 'MM': return v / 10.0
-                        if u == 'M':  return v * 100.0
-                        return v
-                    except Exception:
-                        return 0.0
-
-                for dim_col, short in [('Length', 'L'), ('Width', 'W'), ('Height', 'H')]:
-                    if dim_col in df_st.columns:
-                        df_st[short] = df_st.apply(
-                            lambda r, dc=dim_col: to_cm(r[dc], r.get('Unit of Dimension', 'CM')),
-                            axis=1
-                        )
-                    else:
-                        df_st[short] = 0.0
-
-                dim_dict = df_st.set_index('Match_Key')[['L', 'W', 'H']].max(axis=1).to_dict()
-
-            progress_bar.progress(80)
-
-            df_pick['Box_Sizes_List'] = df_pick['Match_Key'].apply(
-                lambda m: manual_boxes.get(m, box_dict.get(m, []))
-            )
-            df_pick['Piece_Weight_KG'] = df_pick['Match_Key'].map(weight_dict).fillna(0.0)
-            df_pick['Piece_Max_Dim_CM'] = df_pick['Match_Key'].map(dim_dict).fillna(0.0)
-
-            if df_vekp_raw is not None:
-                df_vekp_raw['Generated delivery'] = df_vekp_raw['Generated delivery'].astype(str).str.strip()
-
-            if df_cats_raw is not None:
-                df_cats_raw['Lieferung'] = df_cats_raw['Lieferung'].astype(str).str.strip()
-                df_cats_raw['Category_Full'] = (
-                    df_cats_raw['Kategorie'].astype(str).str.strip()
-                    + " "
-                    + df_cats_raw['Art'].astype(str).str.strip()
-                )
-                df_cats_raw = df_cats_raw.drop_duplicates('Lieferung')
-
-            # Zpracování OE-Times
-            if df_oe_raw is not None:
-                df_oe_raw['Delivery'] = df_oe_raw['DN NUMBER (SAP)'].astype(str).str.strip()
-                df_oe_raw['Process_Time_Min'] = df_oe_raw['Process Time'].apply(parse_packing_time)
-                # Seskupení, pokud má zakázka více řádků
-                df_oe_raw = df_oe_raw.groupby('Delivery').agg(
-                    Process_Time_Min=('Process_Time_Min', 'sum'),
-                    CUSTOMER=('CUSTOMER', 'first'),
-                    Material=('Material', 'first'),
-                    KLT=('KLT', lambda x: '; '.join(x.dropna().astype(str))),
-                    Palety=('Palety', lambda x: '; '.join(x.dropna().astype(str))),
-                    Cartons=('Cartons', lambda x: '; '.join(x.dropna().astype(str))),
-                    Scan_SN=('Scanning serial numbers', 'first'),
-                    Reprint=('Reprinting labels ', 'first'),
-                    Diff_KLT=('Difficult KLTs', 'first'),
-                    Shift=('Shift', 'first'),
-                    Num_Items=('Number of item types', 'first')
-                ).reset_index()
-                df_oe_raw.rename(columns={'Scan_SN': 'Scanning serial numbers', 'Reprint': 'Reprinting labels ', 'Diff_KLT': 'Difficult KLTs'}, inplace=True)
-
-            st.session_state.update({
-                'last_files_hash': current_files_hash,
-                'df_pick_prep': df_pick,
-                'queue_count_col': queue_count_col,
-                'num_removed_admins': num_removed_admins,
-                'manual_boxes': manual_boxes,
-                'weight_dict': weight_dict,
-                'dim_dict': dim_dict,
-                'box_dict': box_dict,
-                'df_vekp': df_vekp_raw,
-                'df_vepo': df_vepo_raw,
-                'df_cats': df_cats_raw,
-                'df_oe': df_oe_raw
-            })
-
-            progress_bar.progress(100)
-            time.sleep(0.2)
-            progress_bar.empty()
-            status_text.empty()
-
-    else:
-        for key in ['last_files_hash', 'df_pick_prep', 'df_vekp', 'df_vepo', 'df_cats', 'df_oe', 'auto_voll_hus']:
-            st.session_state.pop(key, None)
-
-    if 'df_pick_prep' not in st.session_state or st.session_state['df_pick_prep'] is None:
-        return
-
-    df_pick = st.session_state['df_pick_prep'].copy()
-    queue_count_col = st.session_state['queue_count_col']
-    num_removed_admins = st.session_state['num_removed_admins']
-    manual_boxes = st.session_state['manual_boxes']
-    weight_dict = st.session_state['weight_dict']
-    dim_dict = st.session_state['dim_dict']
-    box_dict = st.session_state['box_dict']
-    df_vekp = st.session_state.get('df_vekp')
-    df_vepo = st.session_state.get('df_vepo')
-    df_cats = st.session_state.get('df_cats')
-    df_oe = st.session_state.get('df_oe')
-
-    df_pick['Month'] = df_pick['Date'].dt.to_period('M').astype(str).replace('NaT', t('unknown'))
-
-    # ==========================================
-    # GLOBÁLNÍ FILTRACE OBDOBÍ PRO VŠECHNY TABULKY
-    # ==========================================
-    st.sidebar.divider()
-    st.sidebar.header(t('filter_global_title'))
-    date_mode = st.sidebar.radio("Filtr období:", [t('filter_all'), t('filter_month'), t('filter_range')], label_visibility="collapsed")
+    df_marm_raw = load_from_db('raw_marm')
+    df_queue_raw = load_from_db('raw_queue')
+    df_vekp_raw = load_from_db('raw_vekp')
+    df_vepo_raw = load_from_db('raw_vepo')
+    df_cats_raw = load_from_db('raw_cats')
+    df_oe_raw = load_from_db('raw_oe')
+    df_manual_raw = load_from_db('raw_manual')
     
-    if date_mode == t('filter_month'):
-        known_months = sorted([m for m in df_pick['Month'].unique() if m not in [t('unknown'), 'NaT']])
-        months_opts = known_months + [t('unknown')] if t('unknown') in df_pick['Month'].unique() else known_months
-        sel_month = st.sidebar.selectbox(t('filter_month_sel'), options=months_opts)
-        df_pick = df_pick[df_pick['Month'] == sel_month].copy()
-    elif date_mode == t('filter_range'):
-        valid_dates = df_pick['Date'].dropna()
-        if not valid_dates.empty:
-            min_d = valid_dates.min().date()
-            max_d = valid_dates.max().date()
-        else:
-            min_d = pd.to_datetime('2020-01-01').date()
-            max_d = pd.to_datetime('2030-01-01').date()
-            
-        date_range = st.sidebar.date_input(t('filter_range_sel'), [min_d, max_d], min_value=min_d, max_value=max_d)
-        if isinstance(date_range, tuple) and len(date_range) == 2:
-            start_d, end_d = date_range
-            df_pick = df_pick[(df_pick['Date'].dt.date >= start_d) & (df_pick['Date'].dt.date <= end_d)].copy()
+    st.session_state['auswertung_raw'] = {}
+    for sheet in ["LIKP", "SDSHP_AM2", "T031", "VEKP", "VEPO", "LIPS", "T023"]:
+        aus_df = load_from_db(f'aus_{sheet.lower()}')
+        if aus_df is not None: st.session_state['auswertung_raw'][sheet] = aus_df
 
-    # Vyloučení materiálů
-    excluded_materials = st.sidebar.multiselect(
-        t('exclude_label'),
-        options=sorted(df_pick['Material'].unique()),
-        default=[]
-    )
-    if excluded_materials:
-        df_pick = df_pick[~df_pick['Material'].isin(excluded_materials)].copy()
+    # --- ČIŠTĚNÍ PICK REPORTU ---
+    df_pick = df_pick_raw.copy()
+    df_pick['Delivery'] = df_pick['Delivery'].astype(str).str.strip().replace(['nan', 'NaN', 'None', ''], np.nan)
+    df_pick['Material'] = df_pick['Material'].astype(str).str.strip().replace(['nan', 'NaN', 'None', ''], np.nan)
+    df_pick = df_pick.dropna(subset=['Delivery', 'Material']).copy()
+    df_pick['Match_Key'] = get_match_key_vectorized(df_pick['Material'])
+    df_pick['Qty'] = pd.to_numeric(df_pick['Act.qty (dest)'], errors='coerce').fillna(0)
+    df_pick['Source Storage Bin'] = df_pick.get('Source Storage Bin', df_pick.get('Storage Bin', '')).fillna('').astype(str)
+    df_pick['Removal of total SU'] = df_pick.get('Removal of total SU', '').fillna('').astype(str).str.strip().str.upper()
+    df_pick['Date'] = pd.to_datetime(df_pick.get('Confirmation date', df_pick.get('Confirmation Date')), errors='coerce')
 
-    # --- AUTOMATICKÁ DETEKCE VOLLPALET Z PICK REPORTU ---
+    if 'User' in df_pick.columns:
+        mask_admins = df_pick['User'].isin(['UIDJ5089', 'UIH25501'])
+        num_removed_admins = int(mask_admins.sum())
+        df_pick = df_pick[~mask_admins].copy()
+    else: num_removed_admins = 0
+
+    queue_count_col = 'Delivery'
+    df_pick['Queue'] = 'N/A'
+    if df_queue_raw is not None and not df_queue_raw.empty:
+        if 'Transfer Order Number' in df_pick.columns and 'Transfer Order Number' in df_queue_raw.columns:
+            q_map = df_queue_raw.dropna(subset=['Transfer Order Number', 'Queue']).drop_duplicates('Transfer Order Number').set_index('Transfer Order Number')['Queue'].to_dict()
+            df_pick['Queue'] = df_pick['Transfer Order Number'].map(q_map).fillna('N/A')
+            queue_count_col = 'Transfer Order Number'
+        elif 'SD Document' in df_queue_raw.columns:
+            q_map = df_queue_raw.dropna(subset=['SD Document', 'Queue']).drop_duplicates('SD Document').set_index('SD Document')['Queue'].to_dict()
+            df_pick['Queue'] = df_pick['Delivery'].map(q_map).fillna('N/A')
+        df_pick = df_pick[df_pick['Queue'].astype(str).str.upper() != 'CLEARANCE'].copy()
+
+    # --- BALENÍ A MASTER DATA ---
+    manual_boxes = {}
+    if df_manual_raw is not None and not df_manual_raw.empty:
+        c_mat, c_pkg = df_manual_raw.columns[0], df_manual_raw.columns[1]
+        for _, row in df_manual_raw.iterrows():
+            raw_mat = str(row[c_mat])
+            if raw_mat.upper() in ['NAN', 'NONE', '']: continue
+            mat_key = get_match_key(raw_mat)
+            pkg = str(row[c_pkg])
+            nums = re.findall(r'\bK-(\d+)ks?\b|(\d+)\s*ks\b|balen[íi]\s+po\s+(\d+)|krabice\s+(?:po\s+)?(\d+)|(?:role|pytl[íi]k|pytel)[^\d]*(\d+)', pkg, flags=re.IGNORECASE)
+            ext = sorted(list(set([int(g) for m in nums for g in m if g])), reverse=True)
+            if not ext and re.search(r'po\s*kusech', pkg, re.IGNORECASE): ext = [1]
+            if ext: manual_boxes[mat_key] = ext
+
+    box_dict, weight_dict, dim_dict = {}, {}, {}
+    if df_marm_raw is not None and not df_marm_raw.empty:
+        df_marm_raw['Match_Key'] = get_match_key_vectorized(df_marm_raw['Material'])
+        df_boxes = df_marm_raw[df_marm_raw['Alternative Unit of Measure'].isin(BOX_UNITS)].copy()
+        df_boxes['Numerator'] = pd.to_numeric(df_boxes['Numerator'], errors='coerce').fillna(0)
+        box_dict = df_boxes.groupby('Match_Key')['Numerator'].apply(lambda g: sorted([int(x) for x in g if x > 1], reverse=True)).to_dict()
+
+        df_st = df_marm_raw[df_marm_raw['Alternative Unit of Measure'].isin(['ST', 'PCE', 'KS', 'EA', 'PC'])].copy()
+        df_st['Gross Weight'] = pd.to_numeric(df_st['Gross Weight'], errors='coerce').fillna(0)
+        df_st['Weight_KG'] = np.where(df_st['Unit of Weight'].astype(str).str.upper() == 'G', df_st['Gross Weight'] / 1000.0, df_st['Gross Weight'])
+        weight_dict = df_st.groupby('Match_Key')['Weight_KG'].first().to_dict()
+
+        def to_cm(val, unit):
+            try:
+                v = float(val); u = str(unit).upper().strip()
+                return v / 10.0 if u == 'MM' else v * 100.0 if u == 'M' else v
+            except: return 0.0
+
+        for dim_col, short in [('Length', 'L'), ('Width', 'W'), ('Height', 'H')]:
+            if dim_col in df_st.columns: df_st[short] = df_st.apply(lambda r, dc=dim_col: to_cm(r[dc], r.get('Unit of Dimension', 'CM')), axis=1)
+            else: df_st[short] = 0.0
+        dim_dict = df_st.set_index('Match_Key')[['L', 'W', 'H']].max(axis=1).to_dict()
+
+    df_pick['Box_Sizes_List'] = df_pick['Match_Key'].apply(lambda m: manual_boxes.get(m, box_dict.get(m, [])))
+    df_pick['Piece_Weight_KG'] = df_pick['Match_Key'].map(weight_dict).fillna(0.0)
+    df_pick['Piece_Max_Dim_CM'] = df_pick['Match_Key'].map(dim_dict).fillna(0.0)
+
+    if df_vekp_raw is not None and not df_vekp_raw.empty: df_vekp_raw['Generated delivery'] = df_vekp_raw['Generated delivery'].astype(str).str.strip()
+    if df_cats_raw is not None and not df_cats_raw.empty:
+        df_cats_raw['Lieferung'] = df_cats_raw['Lieferung'].astype(str).str.strip()
+        df_cats_raw['Category_Full'] = df_cats_raw['Kategorie'].astype(str).str.strip() + " " + df_cats_raw['Art'].astype(str).str.strip()
+        df_cats_raw = df_cats_raw.drop_duplicates('Lieferung')
+
+    if df_oe_raw is not None and not df_oe_raw.empty:
+        df_oe_raw['Delivery'] = df_oe_raw['DN NUMBER (SAP)'].astype(str).str.strip()
+        df_oe_raw['Process_Time_Min'] = df_oe_raw['Process Time'].apply(parse_packing_time)
+        df_oe_raw = df_oe_raw.groupby('Delivery').agg(
+            Process_Time_Min=('Process_Time_Min', 'sum'), CUSTOMER=('CUSTOMER', 'first'), Material=('Material', 'first'),
+            KLT=('KLT', lambda x: '; '.join(x.dropna().astype(str))), Palety=('Palety', lambda x: '; '.join(x.dropna().astype(str))),
+            Cartons=('Cartons', lambda x: '; '.join(x.dropna().astype(str))), Scan_SN=('Scanning serial numbers', 'first'),
+            Reprint=('Reprinting labels ', 'first'), Diff_KLT=('Difficult KLTs', 'first'), Shift=('Shift', 'first'), Num_Items=('Number of item types', 'first')
+        ).reset_index()
+
     auto_voll_hus = set()
     mask_x = df_pick['Removal of total SU'] == 'X'
     for c_hu in ['Source storage unit', 'Handling Unit']:
-        if c_hu in df_pick.columns:
-            auto_voll_hus.update(df_pick.loc[mask_x, c_hu].dropna().astype(str).str.strip())
-    auto_voll_hus.discard("")
-    auto_voll_hus.discard("nan")
-    auto_voll_hus.discard("None")
-    st.session_state['auto_voll_hus'] = auto_voll_hus
-    # --------------------------------------------------
+        if c_hu in df_pick.columns: auto_voll_hus.update(df_pick.loc[mask_x, c_hu].dropna().astype(str).str.strip())
+    auto_voll_hus = {h for h in auto_voll_hus if h not in ["", "nan", "None"]}
 
-    t_total, t_exact, t_miss = fast_compute_moves(
-        qty_list=df_pick['Qty'].values,
-        queue_list=df_pick['Queue'].values,
-        su_list=df_pick['Removal of total SU'].values,
-        box_list=df_pick['Box_Sizes_List'].values,
-        w_list=df_pick['Piece_Weight_KG'].values,
-        d_list=df_pick['Piece_Max_Dim_CM'].values,
-        v_lim=limit_vahy,
-        d_lim=limit_rozmeru,
-        h_lim=kusy_na_hmat
-    )
+    return {
+        'df_pick': df_pick, 'queue_count_col': queue_count_col, 'num_removed_admins': num_removed_admins,
+        'manual_boxes': manual_boxes, 'df_vekp': df_vekp_raw, 'df_vepo': df_vepo_raw, 'df_cats': df_cats_raw,
+        'df_oe': df_oe_raw, 'auto_voll_hus': auto_voll_hus
+    }
 
-    df_pick['Pohyby_Rukou'] = t_total
-    df_pick['Pohyby_Exact'] = t_exact
-    df_pick['Pohyby_Loose_Miss'] = t_miss
+# ==========================================
+# 4. HLAVNÍ BĚH APLIKACE A ADMIN ZÓNA
+# ==========================================
+def main():
+    col_title, col_lang = st.columns([8, 1])
+    with col_title:
+        st.markdown(f"<div class='main-header'>🏢 Warehouse Control Tower</div>", unsafe_allow_html=True)
+        st.markdown(f"<div class='sub-header'>End-to-End analýza: Pickování -> Balení -> Fakturace</div>", unsafe_allow_html=True)
+
+    # --- LEVÝ PANEL (PARAMETRY A ADMIN ZÓNA) ---
+    st.sidebar.header("⚙️ Konfigurace")
+    limit_vahy = st.sidebar.number_input("Hranice váhy (kg)", min_value=0.1, max_value=20.0, value=2.0, step=0.5)
+    limit_rozmeru = st.sidebar.number_input("Hranice rozměru (cm)", min_value=1.0, max_value=200.0, value=15.0, step=1.0)
+    kusy_na_hmat = st.sidebar.slider("Ks do hrsti", min_value=1, max_value=20, value=1, step=1)
+
+    st.sidebar.divider()
+    with st.sidebar.expander("🛠️ Admin Zóna (Nahrát data do DB)"):
+        st.info("Nahrajte Excely sem. Zpracují se do databáze a aplikace poběží bleskově.")
+        admin_pwd = st.text_input("Heslo:", type="password")
+        if admin_pwd == "admin123":
+            uploaded_files = st.file_uploader("Nahrát CSV/Excel", accept_multiple_files=True)
+            if st.button("Uložit do databáze", type="primary") and uploaded_files:
+                with st.spinner("Zpracovávám a ukládám do Supabase..."):
+                    for file in uploaded_files:
+                        fname = file.name.lower()
+                        try:
+                            if fname.endswith('.xlsx') and 'auswertung' in fname:
+                                aus_xl = pd.ExcelFile(file)
+                                for sn in aus_xl.sheet_names:
+                                    save_to_db(aus_xl.parse(sn, dtype=str), f"aus_{sn.lower()}")
+                                continue
+                            temp_df = pd.read_csv(file, dtype=str) if fname.endswith('.csv') else pd.read_excel(file, dtype=str)
+                            cols = set(temp_df.columns)
+                            if 'Delivery' in cols and 'Act.qty (dest)' in cols: save_to_db(temp_df, 'raw_pick')
+                            elif 'Numerator' in cols and 'Alternative Unit of Measure' in cols: save_to_db(temp_df, 'raw_marm')
+                            elif 'Handling Unit' in cols and 'Generated delivery' in cols: save_to_db(temp_df, 'raw_vekp')
+                            elif ('Handling unit item' in cols or 'Handling Unit Position' in cols) and 'Material' in cols: save_to_db(temp_df, 'raw_vepo')
+                            elif 'Lieferung' in cols and 'Kategorie' in cols: save_to_db(temp_df, 'raw_cats')
+                            elif 'Queue' in cols and ('Transfer Order Number' in cols or 'SD Document' in cols): save_to_db(temp_df, 'raw_queue')
+                            elif 'DN NUMBER (SAP)' in cols and 'Process Time' in cols: save_to_db(temp_df, 'raw_oe')
+                            elif len(temp_df.columns) >= 2: save_to_db(temp_df, 'raw_manual')
+                        except Exception as e:
+                            st.error(f"Chyba u {file.name}: {e}")
+                    st.cache_data.clear() # Smažeme starou mezipaměť
+                    st.success("✅ Hotovo! Data jsou v databázi.")
+                    time.sleep(1.5)
+                    st.rerun()
+
+    # --- NAČTENÍ A VÝPOČET DAT Z DATABÁZE ---
+    with st.spinner("🔄 Načítám data z databáze... (Díky cache to trvá jen zlomek sekundy)"):
+        data_dict = fetch_and_prep_data()
+
+    if data_dict is None:
+        st.warning("🗄️ Databáze je zatím prázdná. Otevřete levé menu 'Admin Zóna', zadejte heslo 'admin123' a nahrajte Pick Report a další soubory.")
+        return
+
+    df_pick = data_dict['df_pick']
+    queue_count_col = data_dict['queue_count_col']
+    df_vekp = data_dict['df_vekp']
+    df_vepo = data_dict['df_vepo']
+    df_oe = data_dict['df_oe']
+    df_cats = data_dict['df_cats']
+    st.session_state['auto_voll_hus'] = data_dict['auto_voll_hus']
+
+    df_pick['Month'] = df_pick['Date'].dt.to_period('M').astype(str).replace('NaT', 'Neznámé')
+    st.sidebar.divider()
+    date_mode = st.sidebar.radio("Filtr období:", ['Celé období', 'Podle měsíce'], label_visibility="collapsed")
+    if date_mode == 'Podle měsíce':
+        sel_month = st.sidebar.selectbox("Vyberte měsíc:", options=sorted(df_pick['Month'].unique()))
+        df_pick = df_pick[df_pick['Month'] == sel_month].copy()
+
+    # Fyzické výpočty
+    tt, te, tm = fast_compute_moves(df_pick['Qty'].values, df_pick['Queue'].values, df_pick['Removal of total SU'].values,
+                                    df_pick['Box_Sizes_List'].values, df_pick['Piece_Weight_KG'].values, df_pick['Piece_Max_Dim_CM'].values,
+                                    limit_vahy, limit_rozmeru, kusy_na_hmat)
+    df_pick['Pohyby_Rukou'], df_pick['Pohyby_Exact'], df_pick['Pohyby_Loose_Miss'] = tt, te, tm
     df_pick['Celkova_Vaha_KG'] = df_pick['Qty'] * df_pick['Piece_Weight_KG']
-
-    c_i1, c_i2, c_i3 = st.columns(3)
-    if num_removed_admins > 0:
-        c_i1.info(t('info_users').format(num_removed_admins))
-    x_c = (
-        (df_pick['Removal of total SU'] == 'X')
-        & (df_pick['Queue'].astype(str).str.upper().isin(['PI_PL_FU', 'PI_PL_FUOE']))
-    ).sum()
-    if x_c > 0:
-        c_i2.warning(t('info_clean').format(x_c))
-    if manual_boxes:
-        c_i3.success(t('info_manual').format(len(manual_boxes)))
 
     tabs = st.tabs([t('tab_dashboard'), t('tab_pallets'), t('tab_fu'), t('tab_top'), t('tab_billing'), t('tab_packing'), t('tab_audit')])
 
