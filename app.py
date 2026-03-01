@@ -164,7 +164,7 @@ def main():
     kusy_na_hmat = st.sidebar.slider("Ks do hrsti", min_value=1, max_value=20, value=1, step=1)
 
     st.sidebar.divider()
-    with st.sidebar.expander("🛠️ Admin Zóna (Nahrát data do DB)"):
+with st.sidebar.expander("🛠️ Admin Zóna (Nahrát data do DB)"):
         st.info("Nahrajte Excely sem. Zpracují se do databáze a aplikace poběží bleskově.")
         admin_pwd = st.text_input("Heslo:", type="password")
         if admin_pwd == "admin123":
@@ -172,24 +172,34 @@ def main():
             if st.button("Uložit do databáze", type="primary") and uploaded_files:
                 with st.spinner("Zpracovávám a ukládám do Supabase..."):
                     for file in uploaded_files:
-                        fname = file.name.lower()
-                        if fname.endswith('.xlsx') and 'auswertung' in fname:
-                            aus_xl = pd.ExcelFile(file)
-                            for sn in aus_xl.sheet_names: save_to_db(aus_xl.parse(sn, dtype=str), f"aus_{sn.lower()}")
-                            continue
-                        temp_df = pd.read_csv(file, dtype=str) if fname.endswith('.csv') else pd.read_excel(file, dtype=str)
-                        cols = set(temp_df.columns)
-                        if 'Delivery' in cols and 'Act.qty (dest)' in cols: save_to_db(temp_df, 'raw_pick')
-                        elif 'Numerator' in cols and 'Alternative Unit of Measure' in cols: save_to_db(temp_df, 'raw_marm')
-                        elif 'Handling Unit' in cols and 'Generated delivery' in cols: save_to_db(temp_df, 'raw_vekp')
-                        elif ('Handling unit item' in cols or 'Handling Unit Position' in cols) and 'Material' in cols: save_to_db(temp_df, 'raw_vepo')
-                        elif 'Lieferung' in cols and 'Kategorie' in cols: save_to_db(temp_df, 'raw_cats')
-                        elif 'Queue' in cols and ('Transfer Order Number' in cols or 'SD Document' in cols): save_to_db(temp_df, 'raw_queue')
-                        elif 'DN NUMBER (SAP)' in cols and 'Process Time' in cols: save_to_db(temp_df, 'raw_oe')
-                        elif len(temp_df.columns) >= 2: save_to_db(temp_df, 'raw_manual')
+                        try:
+                            fname = file.name.lower()
+                            if fname.endswith('.xlsx') and 'auswertung' in fname:
+                                aus_xl = pd.ExcelFile(file)
+                                for sn in aus_xl.sheet_names: 
+                                    save_to_db(aus_xl.parse(sn, dtype=str), f"aus_{sn.lower()}")
+                                st.success(f"✅ Uloženo: {file.name}")
+                                continue
+
+                            # Vylepšené čtení (automaticky pozná i CSV oddělené středníkem)
+                            temp_df = pd.read_csv(file, dtype=str, sep=None, engine='python') if fname.endswith('.csv') else pd.read_excel(file, dtype=str)
+                            cols = set(temp_df.columns)
+                            
+                            if 'Delivery' in cols and 'Act.qty (dest)' in cols: save_to_db(temp_df, 'raw_pick')
+                            elif 'Numerator' in cols and 'Alternative Unit of Measure' in cols: save_to_db(temp_df, 'raw_marm')
+                            elif 'Handling Unit' in cols and 'Generated delivery' in cols: save_to_db(temp_df, 'raw_vekp')
+                            elif ('Handling unit item' in cols or 'Handling Unit Position' in cols) and 'Material' in cols: save_to_db(temp_df, 'raw_vepo')
+                            elif 'Lieferung' in cols and 'Kategorie' in cols: save_to_db(temp_df, 'raw_cats')
+                            elif 'Queue' in cols and ('Transfer Order Number' in cols or 'SD Document' in cols): save_to_db(temp_df, 'raw_queue')
+                            elif 'DN NUMBER (SAP)' in cols and 'Process Time' in cols: save_to_db(temp_df, 'raw_oe')
+                            elif len(temp_df.columns) >= 2: save_to_db(temp_df, 'raw_manual')
+                            
+                            st.success(f"✅ Uloženo: {file.name}")
+                        except Exception as e:
+                            st.error(f"❌ Chyba u souboru {file.name}: {e}")
+                            
                     st.cache_data.clear()
-                    st.success("✅ Hotovo! Data jsou v databázi.")
-                    time.sleep(1.5)
+                    time.sleep(2.0)
                     st.rerun()
 
     with st.spinner("🔄 Načítám data z databáze..."):
