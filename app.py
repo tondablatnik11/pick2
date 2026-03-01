@@ -662,7 +662,7 @@ def main():
             if 'Source Storage Bin' in df_pick.columns:
                 df_pick['Source Storage Bin'] = df_pick['Source Storage Bin'].fillna('').astype(str)
             elif 'Storage Bin' in df_pick.columns:
-                df_pick['Source Storage Bin'] = df_pick['Storage Bin'].fillna('').astype(str)
+                df_pick['Source Storage Bin'] = df_pick['Source Storage Bin'].fillna('').astype(str)
             else:
                 df_pick['Source Storage Bin'] = ''
 
@@ -1271,7 +1271,6 @@ def main():
     # ==========================================
     with tab_billing:
         
-        # --- GLOBÁLNÍ AUSWERTUNG MAPOVÁNÍ PRO KATEGORIE (O vs OE a KEP logiky) ---
         aus_category_map = {}
         aus_data = st.session_state.get("auswertung_raw", {})
         if aus_data:
@@ -1322,12 +1321,31 @@ def main():
         if df_vekp is not None and not df_vekp.empty:
             vekp_clean = df_vekp.dropna(subset=["Handling Unit", "Generated delivery"]).copy()
             
+            # --- ZPŘESNĚNÍ POMOCÍ VEPO S PROPAGACÍ HIERARCHIE ---
             if df_vepo is not None and not df_vepo.empty:
                 vepo_hu_col = next((c for c in df_vepo.columns if "Internal HU" in str(c) or "HU-Nummer intern" in str(c)), df_vepo.columns[0])
                 vekp_hu_col = next((c for c in vekp_clean.columns if "Internal HU" in str(c) or "HU-Nummer intern" in str(c)), vekp_clean.columns[0])
-                
+                parent_col_vepo = next((c for c in vekp_clean.columns if "higher-level" in str(c).lower() or "übergeordn" in str(c).lower() or "superordinate" in str(c).lower()), None)
+
+                # Najdeme všechny HU, které mají přímo v sobě nějaký materiál
                 valid_hus = set(df_vepo[vepo_hu_col].astype(str).str.strip())
+
+                # Záchrana nadřazených palet (pokud má paleta uvnitř platnou krabici, paleta se nevymaže!)
+                if parent_col_vepo:
+                    new_parents_found = True
+                    while new_parents_found:
+                        current_valid_df = vekp_clean[vekp_clean[vekp_hu_col].astype(str).str.strip().isin(valid_hus)]
+                        parents = set(current_valid_df[parent_col_vepo].dropna().astype(str).str.strip())
+                        parents = {p for p in parents if str(p).lower() not in ["", "0", "nan", "none"]}
+
+                        prev_len = len(valid_hus)
+                        valid_hus.update(parents)
+                        if len(valid_hus) == prev_len:
+                            new_parents_found = False
+
+                # Vyfiltrování VEKP (ponecháme plné krabice + jejich palety)
                 vekp_clean = vekp_clean[vekp_clean[vekp_hu_col].astype(str).str.strip().isin(valid_hus)].copy()
+            # --------------------------------------------------------
 
             valid_deliveries = df_pick["Delivery"].dropna().unique()
             vekp_filtered = vekp_clean[vekp_clean["Generated delivery"].isin(valid_deliveries)].copy()
@@ -1580,7 +1598,6 @@ def main():
                         if nc in df_lf.columns:
                             df_lf[nc] = pd.to_numeric(df_lf[nc], errors="coerce").fillna(0)
 
-                # Definice Vollpalet z T023 + z našich automatických výpočtů Pick reportu
                 vollpalette_lager = set()
                 if not df_t023.empty:
                     vollpalette_lager.update(df_t023.iloc[:, 0].astype(str).str.strip())
@@ -1682,7 +1699,6 @@ def main():
                             df_vk["pocet_lief"] = 1
 
                         def _calc_art(row):
-                            # TADY JE APLIKOVÁNO NOVÉ PRAVIDLO!
                             if str(row.get("Handling_Unit_Ext", "")).strip() in vollpalette_lager:
                                 return "Vollpalette"
                                 
@@ -2228,6 +2244,7 @@ def main():
                 vekp_del = df_vekp[df_vekp['Generated delivery'] == sel_del].copy()
                 
                 sel_del_kat = "N"
+                # Bezpečné vytáhnutí kategorie
                 if 'billing_df' in locals() and not billing_df.empty:
                     cat_row = billing_df[billing_df['Delivery'] == sel_del]
                     if not cat_row.empty:
@@ -2251,11 +2268,24 @@ def main():
                     vekp_del['Je_Leaf'] = True
                     vekp_del['Status pro fakturaci'] = "✅ Účtuje se"
 
+                # Zobrazení detekce z VEPO a záchrana hierarchie
                 if df_vepo is not None and not df_vepo.empty:
                     vepo_hu_col_aud = next((c for c in df_vepo.columns if "Internal HU" in str(c) or "HU-Nummer intern" in str(c)), df_vepo.columns[0])
                     valid_hus_aud = set(df_vepo[vepo_hu_col_aud].astype(str).str.strip())
                     vekp_hu_col_aud = next((c for c in vekp_del.columns if "Internal HU" in str(c) or "HU-Nummer intern" in str(c)), vekp_del.columns[0])
                     
+                    if parent_col_aud:
+                        new_parents_found = True
+                        while new_parents_found:
+                            current_valid_df = vekp_del[vekp_del[vekp_hu_col_aud].astype(str).str.strip().isin(valid_hus_aud)]
+                            parents = set(current_valid_df[parent_col_aud].dropna().astype(str).str.strip())
+                            parents = {p for p in parents if str(p).lower() not in ["", "0", "nan", "none"]}
+
+                            prev_len = len(valid_hus_aud)
+                            valid_hus_aud.update(parents)
+                            if len(valid_hus_aud) == prev_len:
+                                new_parents_found = False
+
                     vekp_del['Obsahuje_Material (VEPO)'] = vekp_del[vekp_hu_col_aud].astype(str).str.strip().isin(valid_hus_aud)
                     
                     vekp_del['Status pro fakturaci'] = vekp_del.apply(
