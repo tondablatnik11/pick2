@@ -118,17 +118,26 @@ def fetch_and_prep_data():
     if 'Handling Unit' in df_pick.columns: auto_voll_hus.update(df_pick.loc[mask_x, 'Handling Unit'].dropna().astype(str).str.strip())
     auto_voll_hus = {h for h in auto_voll_hus if h not in ["", "nan", "None"]}
 
-    # --- ZCELA OPRAVENÉ NAČÍTÁNÍ OE-TIMES ---
+    # --- OPRAVENÉ NAČÍTÁNÍ OE-TIMES ---
     df_oe = load_from_db('raw_oe')
     if df_oe is not None and not df_oe.empty:
         cols_up = [str(c).upper() for c in df_oe.columns]
         rename_map = {}
-        for orig, up in zip(df_oe.columns, cols_up):
-            if 'DN NUMBER' in up or 'DELIVERY' in up or 'DODAVKA' in up: rename_map[orig] = 'DN NUMBER (SAP)'
-            if 'PROCESS' in up or 'CAS' in up or 'ČAS' in up or 'TIME' in up: rename_map[orig] = 'Process Time'
-        df_oe.rename(columns=rename_map, inplace=True)
+        has_dn = False
+        has_time = False
         
-        # Pojistka: Pokud se najdou správné sloupce, pokračujeme, jinak data přeskočíme
+        for orig, up in zip(df_oe.columns, cols_up):
+            if not has_dn and ('DN NUMBER' in up or 'DELIVERY' in up or 'DODAVKA' in up): 
+                rename_map[orig] = 'DN NUMBER (SAP)'
+                has_dn = True
+            elif not has_time and ('PROCESS' in up or 'CAS' in up or 'ČAS' in up or 'TIME' in up): 
+                rename_map[orig] = 'Process Time'
+                has_time = True
+                
+        df_oe.rename(columns=rename_map, inplace=True)
+        # Pojistka: zahození duplicitních sloupců, pokud by k nim došlo
+        df_oe = df_oe.loc[:, ~df_oe.columns.duplicated()].copy()
+        
         if 'DN NUMBER (SAP)' in df_oe.columns and 'Process Time' in df_oe.columns:
             df_oe['Delivery'] = df_oe['DN NUMBER (SAP)'].astype(str).str.strip()
             df_oe['Process_Time_Min'] = df_oe['Process Time'].apply(parse_packing_time)
@@ -141,7 +150,7 @@ def fetch_and_prep_data():
                 
             df_oe = df_oe.groupby('Delivery').agg(agg_dict).reset_index()
         else:
-            df_oe = None # Tabulka je příliš poškozená a bude čekat na nový upload
+            df_oe = None
 
     df_cats = load_from_db('raw_cats')
     if df_cats is not None and not df_cats.empty:
@@ -200,7 +209,6 @@ def main():
                             cols = temp_df.columns.tolist()
                             cols_up = [str(c).upper() for c in cols]
                             
-                            # Vylepšené nahrávání
                             if any('DELIVERY' in c for c in cols_up) and any('ACT.QTY' in c for c in cols_up):
                                 save_to_db(temp_df, 'raw_pick')
                                 st.success(f"✅ Uloženo jako Pick Report: {file.name}")
@@ -220,7 +228,6 @@ def main():
                                 save_to_db(temp_df, 'raw_queue')
                                 st.success(f"✅ Uloženo jako Queue: {file.name}")
                                 
-                            # TVRDÁ DETEKCE PODLE NÁZVU PRO OE-TIMES
                             elif 'oe-times' in fname or any('PROCESS' in c for c in cols_up) or any('TIME' in c for c in cols_up):
                                 rename_map = {}
                                 has_dn = False
@@ -235,9 +242,7 @@ def main():
                                         has_time = True
                                         
                                 temp_df.rename(columns=rename_map, inplace=True)
-                                # Odstranění jakýchkoliv duplicitních sloupců
                                 temp_df = temp_df.loc[:, ~temp_df.columns.duplicated()]
-                                
                                 save_to_db(temp_df, 'raw_oe')
                                 st.success(f"✅ Uloženo jako OE-Times: {file.name}")
                                 
@@ -284,7 +289,6 @@ def main():
     with tabs[5]: render_packing(billing_df if 'billing_df' in locals() else pd.DataFrame(), data_dict['df_oe'])
     with tabs[6]: render_audit(df_pick, data_dict['df_vekp'], data_dict['df_vepo'], data_dict['df_oe'], data_dict['queue_count_col'], billing_df if 'billing_df' in locals() else pd.DataFrame(), data_dict['manual_boxes'], data_dict['weight_dict'], data_dict['dim_dict'], data_dict['box_dict'], limit_vahy, limit_rozmeru, kusy_na_hmat)
 
-    # --- EXPORT DO EXCELU ---
     st.divider()
     buffer = io.BytesIO()
     with pd.ExcelWriter(buffer, engine='openpyxl') as writer:
