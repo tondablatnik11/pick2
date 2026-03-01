@@ -1318,12 +1318,13 @@ def main():
             valid_deliveries = df_pick["Delivery"].dropna().unique()
             vekp_filtered = vekp_clean[vekp_clean["Generated delivery"].isin(valid_deliveries)].copy()
 
-            # Detekce parent/child hierarchie ve VEKP
+            # Detekce parent/child hierarchie ve VEKP (OPRAVENO: bezpečné použití isin pro řetězce)
             parent_col = next((c for c in vekp_filtered.columns if "higher-level" in str(c).lower() or "übergeordn" in str(c).lower() or "superordinate" in str(c).lower()), None)
             
             if parent_col:
                 parent_hus = set(vekp_filtered[parent_col].dropna().astype(str).str.strip())
-                vekp_filtered['is_top_level'] = vekp_filtered[parent_col].isna() | (vekp_filtered[parent_col].astype(str).str.strip() == "") | (vekp_filtered[parent_col].astype(str).str.strip() == "0") | (vekp_filtered[parent_col].astype(str).str.strip().lower() == "nan")
+                # OPRAVA ATTRIBUTE ERRORU: nahrazeno .str.strip().str.lower().isin()
+                vekp_filtered['is_top_level'] = vekp_filtered[parent_col].isna() | vekp_filtered[parent_col].astype(str).str.strip().str.lower().isin(["", "0", "nan", "none"])
                 vekp_filtered['is_leaf'] = ~vekp_filtered['Handling Unit'].astype(str).str.strip().isin(parent_hus)
                 
                 hu_agg = vekp_filtered.groupby("Generated delivery").agg(
@@ -1637,16 +1638,16 @@ def main():
                                 df_vk.loc[mask_zero, "Eigengewicht"] +
                                 df_vk.loc[mask_zero, "Ladungsgewicht"])
                                 
-                    # Získání Kategorie pro aplikaci pravidla Leaf vs Top-Level
                     if not df_lf.empty and "Lieferung" in df_lf.columns:
                         cat_map_vk = df_lf.set_index("Lieferung")["Kategorie"].to_dict()
                         df_vk["Kategorie"] = df_vk["Lieferung"].map(cat_map_vk).fillna("N")
                     else:
                         df_vk["Kategorie"] = "N"
 
+                    # OPRAVA ATTRIBUTE ERRORU PRO VÝPOČET KATEGORIÍ
                     if "Parent_HU" in df_vk.columns:
                         parent_hus_vk = set(df_vk["Parent_HU"].dropna().astype(str).str.strip())
-                        df_vk["is_top_level"] = df_vk["Parent_HU"].isna() | (df_vk["Parent_HU"].astype(str).str.strip() == "") | (df_vk["Parent_HU"].astype(str).str.strip() == "0") | (df_vk["Parent_HU"].astype(str).str.strip().lower() == "nan")
+                        df_vk["is_top_level"] = df_vk["Parent_HU"].isna() | df_vk["Parent_HU"].astype(str).str.strip().str.lower().isin(["", "0", "nan", "none"])
                         df_vk["is_leaf"] = ~df_vk["Handling_Unit_Ext"].astype(str).str.strip().isin(parent_hus_vk)
                     else:
                         df_vk["is_top_level"] = True
@@ -2215,7 +2216,8 @@ def main():
                 vekp_del = df_vekp[df_vekp['Generated delivery'] == sel_del].copy()
                 
                 sel_del_kat = "N"
-                if not billing_df.empty:
+                # Bezpečné vytáhnutí kategorie
+                if 'billing_df' in locals() and not billing_df.empty:
                     cat_row = billing_df[billing_df['Delivery'] == sel_del]
                     if not cat_row.empty:
                         sel_del_kat = str(cat_row.iloc[0]['Category_Full']).upper()
@@ -2224,16 +2226,19 @@ def main():
                 
                 if parent_col_aud:
                     parent_hus_aud = set(vekp_del[parent_col_aud].dropna().astype(str).str.strip())
+                    # OPRAVA ATTRIBUTE ERRORU: bezpečné overeni
                     vekp_del['Typ'] = vekp_del.apply(
-                        lambda r: "Top-Level" if (str(r[parent_col_aud]).strip() in ["", "nan", "0", "None"]) else "Inner (Vnořená)", axis=1
+                        lambda r: "Top-Level" if (str(r.get(parent_col_aud, "")).strip().lower() in ["", "nan", "0", "none"]) else "Inner (Vnořená)", axis=1
                     )
                     vekp_del['Je_Leaf'] = ~vekp_del['Handling Unit'].astype(str).str.strip().isin(parent_hus_aud)
                     vekp_del['Status pro fakturaci'] = vekp_del.apply(
                         lambda r: "✅ Účtuje se (Paket)" if (sel_del_kat.startswith("E") or sel_del_kat.startswith("OE")) and r['Je_Leaf'] 
-                        else ("✅ Účtuje se (Paleta)" if (sel_del_kat.startswith("N") or sel_del_kat.startswith("O")) and r['Typ'] == "Top-Level" 
+                        else ("✅ Účtuje se (Paleta)" if (not sel_del_kat.startswith("E") and not sel_del_kat.startswith("OE")) and r['Typ'] == "Top-Level" 
                         else "❌ Neúčtuje se (Obalová hierarchie)"), axis=1
                     )
                 else:
+                    vekp_del['Typ'] = "Top-Level"
+                    vekp_del['Je_Leaf'] = True
                     vekp_del['Status pro fakturaci'] = "✅ Účtuje se"
 
                 hu_count = len(vekp_del[vekp_del['Status pro fakturaci'].str.contains('✅')])
