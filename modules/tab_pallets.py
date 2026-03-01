@@ -5,7 +5,8 @@ import plotly.graph_objects as go
 from modules.utils import t
 
 def render_pallets(df_pick):
-    st.markdown(f"<div class='section-header'><h3>🎯 Analýza paletových zakázek (Mix Pallet)</h3><p>*(Počítáno výhradně z front PI_PL a PI_PL_OE)*</p></div>", unsafe_allow_html=True)
+    # OPRAVENÝ NADPIS NA SINGLE SKU PALLET
+    st.markdown(f"<div class='section-header'><h3>🎯 Analýza paletových zakázek (Single SKU Pallet)</h3><p>*(Jednodruhové palety, počítáno výhradně z front PI_PL a PI_PL_OE)*</p></div>", unsafe_allow_html=True)
 
     df_pallets_clean = df_pick[df_pick['Queue'].astype(str).str.upper().isin(['PI_PL', 'PI_PL_OE'])].copy()
     
@@ -21,6 +22,8 @@ def render_pallets(df_pick):
             pohyby_miss=('Pohyby_Loose_Miss', 'sum'), vaha_zakazky=('Celkova_Vaha_KG', 'sum'),
             max_rozmer=('Piece_Max_Dim_CM', 'first'), Month=('Month', 'first')
         )
+        
+        # FILTR PRO SINGLE SKU (1 materiál na zakázku)
         filtered_orders = grouped_orders[grouped_orders['num_materials'] == 1].copy()
 
         if not filtered_orders.empty:
@@ -60,7 +63,7 @@ def render_pallets(df_pick):
                 c_p1.metric("Přesně (Krabice / Palety / Volné)", f"{filtered_orders['pohyby_exact'].sum() / tot_p_pal * 100:.1f} %")
                 c_p2.metric("Odhady (Chybí balení)", f"{filtered_orders['pohyby_miss'].sum() / tot_p_pal * 100:.1f} %", delta_color="inverse")
 
-            with st.expander("Zobrazit tabulku zakázek (1 materiál)"):
+            with st.expander("Zobrazit tabulku zakázek (Single SKU)"):
                 display_df = filtered_orders[['material', 'total_qty', 'celkem_pohybu', 'pohyby_exact', 'pohyby_miss', 'vaha_zakazky', 'max_rozmer', 'certs']].copy()
                 display_df.columns = ["Materiál", "Kusů celkem", "Celkem pohybů", "Pohyby (Přesně)", "Pohyby (Odhady)", "Hmotnost (kg)", "Rozměr (cm)", "Certifikát"]
                 st.dataframe(display_df, use_container_width=True, hide_index=True)
