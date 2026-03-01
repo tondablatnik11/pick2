@@ -1322,36 +1322,47 @@ def main():
             vekp_clean = df_vekp.dropna(subset=["Handling Unit", "Generated delivery"]).copy()
             
             vekp_hu_col = next((c for c in vekp_clean.columns if "Internal HU" in str(c) or "HU-Nummer intern" in str(c)), vekp_clean.columns[0])
+            vekp_ext_col = vekp_clean.columns[1]
             vekp_clean['Clean_HU_Int'] = vekp_clean[vekp_hu_col].astype(str).str.strip().str.lstrip('0')
-            
+            vekp_clean['Clean_HU_Ext'] = vekp_clean[vekp_ext_col].astype(str).str.strip().str.lstrip('0')
+
             parent_col_vepo = next((c for c in vekp_clean.columns if "higher-level" in str(c).lower() or "übergeordn" in str(c).lower() or "superordinate" in str(c).lower()), None)
+            
             if parent_col_vepo:
                 vekp_clean['Clean_Parent'] = vekp_clean[parent_col_vepo].astype(str).str.strip().str.lstrip('0')
-                vekp_clean['Clean_Parent'] = vekp_clean['Clean_Parent'].replace({'nan': '', 'none': '', '0': ''})
+                vekp_clean['Clean_Parent'] = vekp_clean['Clean_Parent'].replace({'nan': '', 'none': ''})
+                
+                # NORMALIZACE RODIČŮ (Křížový slovník pro bezpečné spárování)
+                id_to_int = {}
+                for _, r in vekp_clean.iterrows():
+                    internal = r['Clean_HU_Int']
+                    id_to_int[internal] = internal
+                    external = r['Clean_HU_Ext']
+                    if external and external != 'nan':
+                        id_to_int[external] = internal
+                        
+                vekp_clean['Normalized_Parent_Int'] = vekp_clean['Clean_Parent'].apply(lambda p: id_to_int.get(p, ""))
             else:
-                vekp_clean['Clean_Parent'] = ''
+                vekp_clean['Normalized_Parent_Int'] = ""
 
             # --- ZPŘESNĚNÍ POMOCÍ VEPO S PROPAGACÍ HIERARCHIE ---
             if df_vepo is not None and not df_vepo.empty:
                 vepo_hu_col = next((c for c in df_vepo.columns if "Internal HU" in str(c) or "HU-Nummer intern" in str(c)), df_vepo.columns[0])
                 
-                # Získáme všechny HU, ve kterých je přímo materiál
                 valid_hus = set(df_vepo[vepo_hu_col].astype(str).str.strip().str.lstrip('0'))
 
-                # ZÁCHRANA HIERARCHIE: Projdeme krabice a zjistíme, jestli nestojí na paletách. 
-                # Pokud ano, přidáme tyto palety do "platných", aby je systém nesmazal!
                 if parent_col_vepo:
                     new_parents_found = True
                     while new_parents_found:
                         current_valid_df = vekp_clean[vekp_clean['Clean_HU_Int'].isin(valid_hus)]
-                        parents = set(current_valid_df['Clean_Parent'].dropna())
+                        parents = set(current_valid_df['Normalized_Parent_Int'].dropna())
                         parents = {p for p in parents if p != ""}
-
+                        
                         prev_len = len(valid_hus)
                         valid_hus.update(parents)
                         if len(valid_hus) == prev_len:
                             new_parents_found = False
-
+                
                 vekp_clean = vekp_clean[vekp_clean['Clean_HU_Int'].isin(valid_hus)].copy()
             # --------------------------------------------------------
 
@@ -1359,10 +1370,10 @@ def main():
             vekp_filtered = vekp_clean[vekp_clean["Generated delivery"].isin(valid_deliveries)].copy()
 
             if parent_col_vepo:
-                parent_hus = set(vekp_filtered['Clean_Parent'].dropna())
+                parent_hus = set(vekp_filtered['Normalized_Parent_Int'].dropna())
                 parent_hus = {p for p in parent_hus if p != ""}
                 
-                vekp_filtered['is_top_level'] = vekp_filtered['Clean_Parent'] == ""
+                vekp_filtered['is_top_level'] = vekp_filtered['Normalized_Parent_Int'] == ""
                 vekp_filtered['is_leaf'] = ~vekp_filtered['Clean_HU_Int'].isin(parent_hus)
                 
                 hu_agg = vekp_filtered.groupby("Generated delivery").agg(
@@ -1660,6 +1671,7 @@ def main():
                     df_vk["HU_intern"] = df_vk["HU_intern"].astype(str).str.strip()
                     df_vk["Handling_Unit_Ext"] = df_vk["Handling_Unit_Ext"].astype(str).str.strip()
                     df_vk['Clean_HU_Int'] = df_vk['HU_intern'].astype(str).str.strip().str.lstrip('0')
+                    df_vk['Clean_HU_Ext'] = df_vk['Handling_Unit_Ext'].astype(str).str.strip().str.lstrip('0')
                     
                     if "Lieferung" in df_vk.columns:
                         df_vk["Lieferung"] = df_vk["Lieferung"].astype(str).str.strip()
@@ -1684,12 +1696,22 @@ def main():
 
                     if "Parent_HU" in df_vk.columns:
                         df_vk['Clean_Parent'] = df_vk["Parent_HU"].astype(str).str.strip().str.lstrip('0')
-                        df_vk['Clean_Parent'] = df_vk['Clean_Parent'].replace({'nan': '', 'none': '', '0': ''})
+                        df_vk['Clean_Parent'] = df_vk['Clean_Parent'].replace({'nan': '', 'none': ''})
                         
-                        parent_hus_vk = set(df_vk['Clean_Parent'].dropna())
+                        id_to_int_vk = {}
+                        for _, r in df_vk.iterrows():
+                            internal = str(r['Clean_HU_Int'])
+                            id_to_int_vk[internal] = internal
+                            external = str(r['Clean_HU_Ext'])
+                            if external and external != 'nan':
+                                id_to_int_vk[external] = internal
+                                
+                        df_vk['Normalized_Parent_Int'] = df_vk['Clean_Parent'].apply(lambda p: id_to_int_vk.get(p, ""))
+
+                        parent_hus_vk = set(df_vk['Normalized_Parent_Int'].dropna())
                         parent_hus_vk = {p for p in parent_hus_vk if p != ""}
                         
-                        df_vk["is_top_level"] = df_vk['Clean_Parent'] == ""
+                        df_vk["is_top_level"] = df_vk['Normalized_Parent_Int'] == ""
                         df_vk["is_leaf"] = ~df_vk['Clean_HU_Int'].isin(parent_hus_vk)
                     else:
                         df_vk["is_top_level"] = True
@@ -2264,19 +2286,31 @@ def main():
                         sel_del_kat = str(cat_row.iloc[0]['Category_Full']).upper()
                 
                 vekp_hu_col_aud = next((c for c in vekp_del.columns if "Internal HU" in str(c) or "HU-Nummer intern" in str(c)), vekp_del.columns[0])
+                c_hu_ext_aud = vekp_del.columns[1]
                 parent_col_aud = next((c for c in vekp_del.columns if "higher-level" in str(c).lower() or "übergeordn" in str(c).lower() or "superordinate" in str(c).lower()), None)
                 
                 vekp_del['Clean_HU_Int'] = vekp_del[vekp_hu_col_aud].astype(str).str.strip().str.lstrip('0')
+                vekp_del['Clean_HU_Ext'] = vekp_del[c_hu_ext_aud].astype(str).str.strip().str.lstrip('0')
 
                 if parent_col_aud:
                     vekp_del['Clean_Parent'] = vekp_del[parent_col_aud].astype(str).str.strip().str.lstrip('0')
-                    vekp_del['Clean_Parent'] = vekp_del['Clean_Parent'].replace({'nan': '', 'none': '', '0': ''})
+                    vekp_del['Clean_Parent'] = vekp_del['Clean_Parent'].replace({'nan': '', 'none': ''})
                     
-                    parent_hus_aud = set(vekp_del['Clean_Parent'].dropna())
+                    id_to_int_aud = {}
+                    for _, r in vekp_del.iterrows():
+                        internal = str(r['Clean_HU_Int'])
+                        id_to_int_aud[internal] = internal
+                        external = str(r['Clean_HU_Ext'])
+                        if external and external != 'nan':
+                            id_to_int_aud[external] = internal
+                            
+                    vekp_del['Normalized_Parent_Int'] = vekp_del['Clean_Parent'].apply(lambda p: id_to_int_aud.get(p, ""))
+                    
+                    parent_hus_aud = set(vekp_del['Normalized_Parent_Int'].dropna())
                     parent_hus_aud = {p for p in parent_hus_aud if p != ""}
                     
                     vekp_del['Typ'] = vekp_del.apply(
-                        lambda r: "Top-Level" if r['Clean_Parent'] == "" else "Inner (Vnořená)", axis=1
+                        lambda r: "Top-Level" if r['Normalized_Parent_Int'] == "" else "Inner (Vnořená)", axis=1
                     )
                     vekp_del['Je_Leaf'] = ~vekp_del['Clean_HU_Int'].isin(parent_hus_aud)
                     
@@ -2286,7 +2320,7 @@ def main():
                         else "❌ Neúčtuje se (Obalová hierarchie)"), axis=1
                     )
                 else:
-                    vekp_del['Clean_Parent'] = ""
+                    vekp_del['Normalized_Parent_Int'] = ""
                     vekp_del['Typ'] = "Top-Level"
                     vekp_del['Je_Leaf'] = True
                     vekp_del['Status pro fakturaci'] = "✅ Účtuje se"
@@ -2300,7 +2334,7 @@ def main():
                         new_parents_found = True
                         while new_parents_found:
                             current_valid_df = vekp_del[vekp_del['Clean_HU_Int'].isin(valid_hus_aud)]
-                            parents = set(current_valid_df['Clean_Parent'].dropna())
+                            parents = set(current_valid_df['Normalized_Parent_Int'].dropna())
                             parents = {p for p in parents if p != ""}
 
                             prev_len = len(valid_hus_aud)
@@ -2317,7 +2351,6 @@ def main():
 
                 # Speciální označení, pokud je to Vollpalette
                 auto_voll_hus_aud = st.session_state.get('auto_voll_hus', set())
-                c_hu_ext_aud = next((c for c in vekp_del.columns if "Handling Unit" in str(c)), "")
                 if c_hu_ext_aud:
                     vekp_del['Status pro fakturaci'] = vekp_del.apply(
                         lambda r: "🏭 Účtuje se (Vollpalette)" if str(r[c_hu_ext_aud]).strip() in auto_voll_hus_aud else r['Status pro fakturaci'], axis=1
@@ -2339,7 +2372,7 @@ def main():
             with col_d2:
                 st.markdown(t('audit_b_vekp_det'))
                 if not vekp_del.empty:
-                    disp_cols = ['Handling Unit', 'Packaging materials', 'Total Weight', 'Status pro fakturaci']
+                    disp_cols = [c_hu_ext_aud, 'Packaging materials', 'Total Weight', 'Status pro fakturaci']
                     if 'Typ' in vekp_del.columns:
                         disp_cols.insert(2, 'Typ')
                     disp_v = vekp_del[[c for c in disp_cols if c in vekp_del.columns]].copy()
