@@ -58,7 +58,6 @@ QUEUE_DESC = {
     'PI_PL_FUOE': 'Full Pallet OE'
 }
 
-# Jednotky míry ze SAPu, které reprezentují krabici/karton
 BOX_UNITS = {'AEK', 'KAR', 'KART', 'PAK', 'VPE', 'CAR', 'BLO', 'ASK', 'BAG', 'PAC'}
 
 TEXTS = {
@@ -83,6 +82,12 @@ TEXTS = {
         'dim_label': "Hranice rozměru pro 1 ks (cm)",
         'hmat_label': "Max ks lehkých dílů do hrsti",
         'exclude_label': "Vyloučit materiály z výpočtů:",
+        'filter_global_title': "📅 Období dat",
+        'filter_all': "Celé období",
+        'filter_month': "Podle měsíce",
+        'filter_range': "Vlastní rozsah",
+        'filter_month_sel': "Vyberte měsíc:",
+        'filter_range_sel': "Od - Do:",
         'sec_ratio': "🎯 Spolehlivost dat a zdroj výpočtů",
         'ratio_desc': "Z jakých podkladů aplikace vycházela (Ukazatel kvality dat ze SAPu):",
         'logic_explain_title': "ℹ️ Podrobná metodika: Jak aplikace vypočítává výsledná data?",
@@ -109,8 +114,6 @@ Pokud v SAPu ani ručním ověření chybí data o balení, systém aplikuje bez
         'ratio_miss': "Odhady (Chybí balení)",
         'exp_missing_data': "Materiály s chybějícími daty o balení (Žebříček odhadů)",
         'sec_queue_title': "📊 Průměrná náročnost dle typu pickování (Queue)",
-        'filter_month': "📅 Filtrovat podle měsíce:",
-        'all_months': "Všechny měsíce",
         'all_queues': "Všechny Queue dohromady",
         'unknown': "Neznámé",
         'q_col_queue': "Queue",
@@ -282,6 +285,12 @@ Pokud v SAPu ani ručním ověření chybí data o balení, systém aplikuje bez
         'dim_label': "Dimension limit for 1-by-1 (cm)",
         'hmat_label': "Max pieces per grab",
         'exclude_label': "Exclude materials:",
+        'filter_global_title': "📅 Date Range",
+        'filter_all': "All time",
+        'filter_month': "By month",
+        'filter_range': "Custom range",
+        'filter_month_sel': "Select month:",
+        'filter_range_sel': "From - To:",
         'sec_ratio': "🎯 Data Reliability & Source",
         'ratio_desc': "Data foundation (SAP Data Quality indicator):",
         'logic_explain_title': "ℹ️ Detailed Methodology: How does the app calculate results?",
@@ -308,8 +317,6 @@ If SAP and manual override both lack packaging data, a safety estimate is applie
         'ratio_miss': "Estimates (Missing packaging)",
         'exp_missing_data': "Materials with missing box data (Estimates leaderboard)",
         'sec_queue_title': "📊 Average Workload by Queue",
-        'filter_month': "📅 Filter by month:",
-        'all_months': "All months",
         'all_queues': "All Queues combined",
         'unknown': "Unknown",
         'q_col_queue': "Queue",
@@ -469,24 +476,16 @@ def t(key):
 
 
 def get_match_key_vectorized(series):
-    """
-    Vektorizovaná Match_Key funkce.
-    Odstraňuje leading zeros u číselných materiálů (SAP formát)
-    a desetinné přípony (např. '123.0' -> '123').
-    """
     s = series.astype(str).str.strip().str.upper()
-    # Případ 1: číslo s desetinnou tečkou -> odstraň .0 příponu
     mask_decimal = s.str.match(r'^\d+\.\d+$')
     s = s.copy()
     s[mask_decimal] = s[mask_decimal].str.rstrip('0').str.rstrip('.')
-    # Případ 2: čistě číselné -> odstraň leading zeros (SAP přidává leading zeros)
     mask_numeric = s.str.match(r'^0+\d+$')
     s[mask_numeric] = s[mask_numeric].str.lstrip('0')
     return s
 
 
 def get_match_key(val):
-    """Skalární verze Match_Key pro jednotlivé hodnoty."""
     v = str(val).strip().upper()
     if '.' in v and v.replace('.', '').isdigit():
         v = v.rstrip('0').rstrip('.')
@@ -497,16 +496,6 @@ def get_match_key(val):
 
 def fast_compute_moves(qty_list, queue_list, su_list, box_list, w_list, d_list,
                        v_lim, d_lim, h_lim):
-    """
-    Vektorizovaná funkce pomocí zip pro výpočet pohybů.
-    Nepouží iterrows() ani apply().
-    Vrací trojici listů: (total_moves, exact_moves, estimate_moves).
-
-    Klíčová logika pro 'data_known' flag:
-      boxes=[]   → data CHYBÍ → zbytek jde do pmiss (ODHAD)
-      boxes=[1]  → 'po kusech' z ručního ověření → data JSOU → pok (PŘESNĚ)
-      boxes=[6]  → krabice → krabice přesně + zbytek přesně
-    """
     res_total, res_exact, res_miss = [], [], []
 
     for qty, q, su, boxes, w, d in zip(qty_list, queue_list, su_list,
@@ -515,29 +504,25 @@ def fast_compute_moves(qty_list, queue_list, su_list, box_list, w_list, d_list,
             res_total.append(0); res_exact.append(0); res_miss.append(0)
             continue
 
-        # Celá paleta: pouze pro FU fronty s X značkou
         if str(q).upper() in ('PI_PL_FU', 'PI_PL_FUOE') and str(su).strip().upper() == 'X':
             res_total.append(1); res_exact.append(1); res_miss.append(0)
             continue
 
-        # Zajistit že boxes je list (pandas může serializovat list->string)
         if not isinstance(boxes, list):
             boxes = []
 
-        data_known = len(boxes) > 0          # True pokud máme JAKÁKOLI data (včetně [1])
-        real_boxes = [b for b in boxes if b > 1]  # krabice s více než 1 ks
+        data_known = len(boxes) > 0
+        real_boxes = [b for b in boxes if b > 1]
 
         pb = pok = pmiss = 0
         zbytek = qty
 
-        # Krabice: greedy od největší
         for b in real_boxes:
             if zbytek >= b:
                 m = int(zbytek // b)
                 pb += m
                 zbytek = zbytek % b
 
-        # Zbylé volné kusy
         if zbytek > 0:
             over_limit = (w >= v_lim) or (d >= d_lim)
             if over_limit:
@@ -546,10 +531,8 @@ def fast_compute_moves(qty_list, queue_list, su_list, box_list, w_list, d_list,
                 p = int(np.ceil(zbytek / h_lim))
 
             if data_known:
-                # Data existují (krabice nebo "po kusech") → přesně
                 pok += p
             else:
-                # Žádná data o balení → odhad
                 pmiss += p
 
         res_total.append(pb + pok + pmiss)
@@ -564,7 +547,6 @@ def fast_compute_moves(qty_list, queue_list, su_list, box_list, w_list, d_list,
 # ==========================================
 
 def main():
-    # --- HEADER ---
     col_title, col_lang = st.columns([8, 1])
     with col_title:
         st.markdown(f"<div class='main-header'>{t('title')}</div>", unsafe_allow_html=True)
@@ -574,7 +556,6 @@ def main():
             st.session_state.lang = 'en' if st.session_state.lang == 'cs' else 'cs'
             st.rerun()
 
-    # --- SIDEBAR ---
     st.sidebar.header(t('sidebar_title'))
     limit_vahy = st.sidebar.number_input(t('weight_label'), min_value=0.1, max_value=20.0,
                                           value=2.0, step=0.5)
@@ -582,7 +563,6 @@ def main():
                                              value=15.0, step=1.0)
     kusy_na_hmat = st.sidebar.slider(t('hmat_label'), min_value=1, max_value=20, value=1, step=1)
 
-    # --- UPLOAD ---
     with st.expander(t('upload_title'), expanded=True):
         st.markdown(f"**{t('upload_help')}**")
         uploaded_files = st.file_uploader(
@@ -671,7 +651,6 @@ def main():
             status_text.markdown(f"**{t('processing')}**")
             progress_bar.progress(40)
 
-            # --- ZPRACOVÁNÍ PICK REPORTU ---
             df_pick = df_pick_raw.copy()
             df_pick['Material'] = df_pick['Material'].astype(str).str.strip()
             df_pick['Match_Key'] = get_match_key_vectorized(df_pick['Material'])
@@ -877,13 +856,35 @@ def main():
     df_vekp = st.session_state.get('df_vekp')
     df_cats = st.session_state.get('df_cats')
 
-    df_pick['Month'] = (
-        pd.to_datetime(df_pick['Date'], errors='coerce')
-        .dt.to_period('M')
-        .astype(str)
-        .replace('NaT', t('unknown'))
-    )
+    df_pick['Month'] = df_pick['Date'].dt.to_period('M').astype(str).replace('NaT', t('unknown'))
 
+    # ==========================================
+    # GLOBÁLNÍ FILTRACE OBDOBÍ PRO VŠECHNY TABULKY
+    # ==========================================
+    st.sidebar.divider()
+    st.sidebar.header(t('filter_global_title'))
+    date_mode = st.sidebar.radio("Filtr období:", [t('filter_all'), t('filter_month'), t('filter_range')], label_visibility="collapsed")
+    
+    if date_mode == t('filter_month'):
+        known_months = sorted([m for m in df_pick['Month'].unique() if m not in [t('unknown'), 'NaT']])
+        months_opts = known_months + [t('unknown')] if t('unknown') in df_pick['Month'].unique() else known_months
+        sel_month = st.sidebar.selectbox(t('filter_month_sel'), options=months_opts)
+        df_pick = df_pick[df_pick['Month'] == sel_month].copy()
+    elif date_mode == t('filter_range'):
+        valid_dates = df_pick['Date'].dropna()
+        if not valid_dates.empty:
+            min_d = valid_dates.min().date()
+            max_d = valid_dates.max().date()
+        else:
+            min_d = pd.to_datetime('2020-01-01').date()
+            max_d = pd.to_datetime('2030-01-01').date()
+            
+        date_range = st.sidebar.date_input(t('filter_range_sel'), [min_d, max_d], min_value=min_d, max_value=max_d)
+        if isinstance(date_range, tuple) and len(date_range) == 2:
+            start_d, end_d = date_range
+            df_pick = df_pick[(df_pick['Date'].dt.date >= start_d) & (df_pick['Date'].dt.date <= end_d)].copy()
+
+    # Vyloučení materiálů
     excluded_materials = st.sidebar.multiselect(
         t('exclude_label'),
         options=sorted(df_pick['Material'].unique()),
@@ -956,17 +957,8 @@ def main():
             st.divider()
             st.subheader(t('sec_queue_title'))
 
-            known_months = sorted([m for m in df_pick['Month'].unique() if m not in [t('unknown'), 'NaT']])
-            months_opts = [t('all_months')] + known_months
-            if t('unknown') in df_pick['Month'].unique():
-                months_opts.append(t('unknown'))
-
-            sel_month = st.selectbox(t('filter_month'), options=months_opts)
-            df_q_filter = (
-                df_pick[df_pick['Month'] == sel_month].copy()
-                if sel_month != t('all_months')
-                else df_pick.copy()
-            )
+            # Protože máme globální filtr, tabulka rovnou pracuje se zfiltrovaným df_pick
+            df_q_filter = df_pick.copy()
 
             if not df_q_filter.empty:
                 queue_agg_raw = df_q_filter.groupby(
@@ -1263,6 +1255,54 @@ def main():
     # TAB 5: ÚČTOVÁNÍ A BALENÍ (VEKP)
     # ==========================================
     with tab_billing:
+        
+        # --- GLOBÁLNÍ AUSWERTUNG MAPOVÁNÍ PRO KATEGORIE (O vs OE a KEP logiky) ---
+        aus_category_map = {}
+        aus_data = st.session_state.get("auswertung_raw", {})
+        if aus_data:
+            df_likp_tmp  = aus_data.get("LIKP",  pd.DataFrame())
+            df_sdshp_tmp = aus_data.get("SDSHP_AM2", pd.DataFrame())
+            df_t031_tmp  = aus_data.get("T031",  pd.DataFrame())
+            
+            # KEP dopravci
+            kep_set = set()
+            if not df_sdshp_tmp.empty:
+                col_s = df_sdshp_tmp.columns[0]
+                col_k = next((c for c in df_sdshp_tmp.columns if "KEP" in str(c).upper() or "FÄHIG" in str(c).upper()), None)
+                if col_k:
+                    kep_set = set(df_sdshp_tmp.loc[df_sdshp_tmp[col_k].astype(str).str.strip() == "X", col_s].astype(str).str.strip())
+            
+            # Order type mapování
+            order_type_map = {}
+            if not df_t031_tmp.empty:
+                order_type_map = dict(zip(df_t031_tmp.iloc[:, 0].astype(str).str.strip(), df_t031_tmp.iloc[:, 1].astype(str).str.strip()))
+
+            if not df_likp_tmp.empty:
+                c_lief = df_likp_tmp.columns[0]
+                c_vs   = next((c for c in df_likp_tmp.columns if "Versandstelle" in str(c) or "Shipping" in str(c)), None)
+                c_sped = next((c for c in df_likp_tmp.columns if "pediteur" in str(c) or "Transp" in str(c)), None)
+                
+                tmp_lf = df_likp_tmp[[c_lief]].copy()
+                tmp_lf.columns = ["Lieferung"]
+                tmp_lf["Lieferung"] = tmp_lf["Lieferung"].astype(str).str.strip()
+                
+                if c_vs:
+                    tmp_lf["Order_Type"] = df_likp_tmp[c_vs].astype(str).str.strip().map(order_type_map).fillna("N")
+                else:
+                    tmp_lf["Order_Type"] = "N"
+                    
+                if c_sped:
+                    tmp_lf["is_KEP"] = df_likp_tmp[c_sped].astype(str).str.strip().isin(kep_set)
+                else:
+                    tmp_lf["is_KEP"] = False
+                    
+                # 100% spolehlivé rozdělení O a OE z logiky zákazníka
+                tmp_lf["Kategorie"] = np.where(
+                    tmp_lf["is_KEP"],
+                    np.where(tmp_lf["Order_Type"] == "O", "OE", "E"),
+                    np.where(tmp_lf["Order_Type"] == "O", "O",  "N")
+                )
+                aus_category_map = tmp_lf.set_index("Lieferung")["Kategorie"].to_dict()
 
         billing_df = pd.DataFrame()
         pick_per_delivery = pd.DataFrame()
@@ -1272,7 +1312,6 @@ def main():
             valid_deliveries = df_pick["Delivery"].dropna().unique()
             vekp_filtered = vekp_clean[vekp_clean["Generated delivery"].isin(valid_deliveries)]
 
-            # [NOVINKA]: Přidáno vyhledání "hlavni_fronta" a "pocet_mat" pro přesné zatřídění Kategorie a Art (Sortenrein/Misch)
             pick_agg = df_pick.groupby("Delivery").agg(
                 pocet_to=(queue_count_col, "nunique"),
                 pohyby_celkem=("Pohyby_Rukou", "sum"),
@@ -1300,7 +1339,7 @@ def main():
                 billing_df["pocet_lokaci"] > 0,
                 billing_df["pohyby_celkem"] / billing_df["pocet_lokaci"], 0)
 
-            # --- NAPOJENÍ A AUTOMATICKÉ URČENÍ KATEGORIE ---
+            # Napojení Deliveries.xlsx pokud je nahrán
             if df_cats is not None:
                 billing_df = pd.merge(
                     billing_df, df_cats[["Lieferung", "Category_Full"]],
@@ -1308,26 +1347,27 @@ def main():
             else:
                 billing_df["Category_Full"] = pd.NA
 
-            # Aplikace našeho Reverzního Inženýrství
+            # Fallback pomocí Reverse Engineeringu logiky
             def odvod_kategorii(row):
-                # 1. Zkusíme zjistit, jestli kategorii nenajdeme v Deliveries.xlsx
                 cat_full = row.get('Category_Full')
                 if pd.notna(cat_full) and str(cat_full).strip() not in ["", "nan", t("uncategorized")]:
                     return cat_full
                 
-                # 2. Pokud ne, odvodíme "Kategorii" (E / N / O / OE) podle dominantní Fronty (Queue)
-                q = str(row.get('hlavni_fronta', '')).upper()
-                kat = None
-                if 'PI_PA_OE' in q:
-                    kat = "OE"
-                elif 'PI_PA' in q:
-                    kat = "E"
-                elif 'PI_PL_FUOE' in q or 'PI_PL_OE' in q:
-                    kat = "O"
-                elif 'PI_PL' in q:
-                    kat = "N"
-                    
-                # 3. Odvodíme "Art" (Sortenrein / Misch) podle počtu pickovaných materiálů v zakázce
+                # 1. Primárně zkusí přiřadit Kategorii (E/N/O/OE) dle LIKP a KEP Logiky Auswertungu
+                kat = aus_category_map.get(row["Delivery"])
+                
+                # 2. Pokud chybí data, použije náš ověřený odhad z Queue
+                if not kat:
+                    q = str(row.get('hlavni_fronta', '')).upper()
+                    if 'PI_PA_OE' in q:
+                        kat = "OE"
+                    elif 'PI_PA' in q:
+                        kat = "E"
+                    elif 'PI_PL_FUOE' in q or 'PI_PL_OE' in q:
+                        kat = "O"
+                    elif 'PI_PL' in q:
+                        kat = "N"
+                        
                 art = "Sortenrein" if row.get('pocet_mat', 1) <= 1 else "Misch"
                 
                 if kat:
@@ -1395,7 +1435,9 @@ def main():
                     subset=[t("b_col_type"), t("b_col_mov_loc")], **{"font-weight": "bold"}),
                     use_container_width=True, hide_index=True)
             with cb2:
-                st.bar_chart(cat_summary.set_index("Category_Full")["avg_mov_per_loc"])
+                # Ošetření: V grafu skryjeme prázdné "bez kategorie", aby to nerozbilo vizuál měřítka
+                chart_data = cat_summary[cat_summary["Category_Full"] != t("uncategorized")].set_index("Category_Full")["avg_mov_per_loc"]
+                st.bar_chart(chart_data)
 
             st.divider()
             st.markdown(t("detail_breakdown"))
@@ -1416,7 +1458,6 @@ def main():
         st.subheader("📊 " + t("b_aus_title"))
         st.markdown(t("b_aus_desc"))
 
-        aus_data = st.session_state.get("auswertung_raw", {})
         if not aus_data:
             st.info(t("b_aus_upload_hint"))
         else:
@@ -1689,6 +1730,8 @@ def main():
                     if has_pick_data:
                         agg_k["sum_pohyby"]  = ("pohyby_celkem",  "sum")
                         agg_k["sum_lokaci"]  = ("pocet_lokaci",   "sum")
+                        # PŘIDÁN SOUČET TO PRO AUSWERTUNG TABULKU
+                        agg_k["sum_to"]      = ("pocet_to",       "sum")
 
                     kat_grp = aus_lief.groupby("Kategorie").agg(**agg_k).reset_index()
                     kat_grp["prumer_hu"] = kat_grp["celk_hu"] / kat_grp["pocet_lief"]
@@ -1707,6 +1750,8 @@ def main():
                     if "prumer_gew" in kat_grp.columns:
                         disp_cols.append("prumer_gew"); disp_names.append(t("b_aus_avg_vaha"))
                     if has_pick_data:
+                        disp_cols.append("sum_to")
+                        disp_names.append("Pick TO celkem")
                         disp_cols.append("avg_mov_per_loc")
                         disp_names.append("Prům. pohybů / lokaci")
                     for ac in art_cols_avail:
@@ -1722,6 +1767,8 @@ def main():
                         fmt_kat[t("b_aus_avg_vaha")] = "{:.1f}"
                     if "Prům. pohybů / lokaci" in disp_kat.columns:
                         fmt_kat["Prům. pohybů / lokaci"] = "{:.2f}"
+                    if "Pick TO celkem" in disp_kat.columns:
+                        fmt_kat["Pick TO celkem"] = "{:,.0f}"
 
                     ck1, ck2 = st.columns([2.5, 1])
                     with ck1:
