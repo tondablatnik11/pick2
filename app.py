@@ -262,6 +262,11 @@ Pokud v SAPu ani ručním ověření chybí data o balení, systém aplikuje bez
         'b_aus_zone': "Zóna přípravy",
         'b_aus_voll_title': "Vollpalette — přímé pohyby (T023)",
         'b_aus_voll_count': "Pohybů celých palet",
+        'audit_b_title': "💰 Ověření korelací (Pick vs. VEKP)",
+        'audit_b_sel': "Zadejte nebo vyberte Delivery pro ověření:",
+        'audit_b_pick_det': "**Detail pickování (Kusy a Pohyby):**",
+        'audit_b_vekp_det': "**Detail balení z VEKP (Seznam HU):**",
+        'audit_b_no_vekp': "⚠️ Pro tuto zakázku nebyly ve VEKP nalezeny žádné HU.",
     },
 
     'en': {
@@ -464,6 +469,11 @@ If SAP and manual override both lack packaging data, a safety estimate is applie
         'b_aus_zone': "Staging zone",
         'b_aus_voll_title': "Vollpalette — direct movements (T023)",
         'b_aus_voll_count': "Full pallet movements",
+        'audit_b_title': "💰 Billing Correlation Audit (Pick vs. VEKP)",
+        'audit_b_sel': "Select Delivery to audit:",
+        'audit_b_pick_det': "**Picking Detail (Qty & Moves):**",
+        'audit_b_vekp_det': "**Packing Detail from VEKP (HU List):**",
+        'audit_b_no_vekp': "⚠️ No HUs found in VEKP for this delivery.",
     }
 }
 
@@ -1255,7 +1265,6 @@ def main():
     # ==========================================
     with tab_billing:
         
-        # --- GLOBÁLNÍ AUSWERTUNG MAPOVÁNÍ PRO KATEGORIE (O vs OE a KEP logiky) ---
         aus_category_map = {}
         aus_data = st.session_state.get("auswertung_raw", {})
         if aus_data:
@@ -1552,7 +1561,6 @@ def main():
                 df_vk = pd.DataFrame()
                 if not df_vekp2.empty:
                     c_hu_int = df_vekp2.columns[0]
-                    # FIX: Získáváme SPRÁVNÉ EXTERNÍ ČÍSLO HU pro porovnání s T023
                     c_hu_ext = df_vekp2.columns[1]
                     c_gen_d  = next((c for c in df_vekp2.columns if "generierte Lieferung" in str(c)
                                      or "Generated delivery" in str(c)), None)
@@ -1569,7 +1577,6 @@ def main():
                     c_art  = next((c for c in df_vekp2.columns if str(c).strip() == "Art"), None)
                     c_kat  = next((c for c in df_vekp2.columns if str(c).strip() == "Kategorie"), None)
 
-                    # Přidali jsme c_hu_ext do slovníku
                     col_map = {c_hu_int: "HU_intern", c_hu_ext: "Handling_Unit_Ext"}
                     for alias, col in [("Lieferung", c_gen_d), ("Packmittel", c_pm),
                                        ("Packmittelart", c_pma), ("Gesamtgewicht", c_gew),
@@ -1606,12 +1613,9 @@ def main():
                             df_vk["pocet_lief"] = 1
 
                         def _calc_art(row):
-                            # FIX: Správné porovnání přes DLOUHÉ číslo z VEKP do T023 tabulky
                             if str(row.get("Handling_Unit_Ext", "")).strip() in vollpalette_lager:
                                 return "Vollpalette"
                                 
-                            # FIX: Falešné odhadovací pravidlo "Packmittelart == 1000" je PRYČ!
-                            # Počítáme čistě Misch vs Sortenrein podle počtu materiálů a zásilek.
                             mat = row.get("pocet_mat", 1)
                             lief = row.get("pocet_lief", 1)
                             mat  = 1 if pd.isna(mat)  else int(mat)
@@ -2136,6 +2140,42 @@ def main():
                     st.metric(t('marm_boxes'), str(marm_boxes))
                 else:
                     st.metric(t('marm_boxes'), f"*{t('box_missing')}*")
+
+        # --- NOVÝ AUDIT ÚČTOVÁNÍ (PICK vs VEKP) ---
+        st.divider()
+        st.subheader(t('audit_b_title'))
+        avail_dels = sorted(df_pick['Delivery'].dropna().unique())
+        sel_del = st.selectbox(t('audit_b_sel'), options=[""] + avail_dels)
+        
+        if sel_del:
+            pick_del = df_pick[df_pick['Delivery'] == sel_del]
+            to_count = pick_del[queue_count_col].nunique()
+            moves_count = pick_del['Pohyby_Rukou'].sum()
+            
+            hu_count = 0
+            vekp_del = pd.DataFrame()
+            if df_vekp is not None and not df_vekp.empty:
+                vekp_del = df_vekp[df_vekp['Generated delivery'] == sel_del]
+                hu_count = vekp_del['Handling Unit'].nunique()
+                
+            c_a1, c_a2, c_a3, c_a4 = st.columns(4)
+            c_a1.metric("Počet Pickovacích TO", to_count)
+            c_a2.metric("Fyzických pohybů", f"{int(moves_count):,}")
+            c_a3.metric("Zabalených HU (VEKP)", hu_count)
+            c_a4.metric("Pohybů na 1 HU", f"{moves_count / hu_count:.2f}" if hu_count > 0 else "Chybí HU")
+            
+            col_d1, col_d2 = st.columns(2)
+            with col_d1:
+                st.markdown(t('audit_b_pick_det'))
+                disp_p = pick_del[[queue_count_col, 'Material', 'Qty', 'Pohyby_Rukou']].copy()
+                st.dataframe(disp_p, hide_index=True, use_container_width=True)
+            with col_d2:
+                st.markdown(t('audit_b_vekp_det'))
+                if not vekp_del.empty:
+                    disp_v = vekp_del[['Handling Unit', 'Packaging materials', 'Total Weight']].copy()
+                    st.dataframe(disp_v, hide_index=True, use_container_width=True)
+                else:
+                    st.warning(t('audit_b_no_vekp'))
 
         # ==========================================
         # EXPORT DO EXCELU
