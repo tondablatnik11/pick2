@@ -1265,6 +1265,7 @@ def main():
     # ==========================================
     with tab_billing:
         
+        # --- GLOBÁLNÍ AUSWERTUNG MAPOVÁNÍ PRO KATEGORIE (O vs OE a KEP logiky) ---
         aus_category_map = {}
         aus_data = st.session_state.get("auswertung_raw", {})
         if aus_data:
@@ -1315,7 +1316,27 @@ def main():
         if df_vekp is not None and not df_vekp.empty:
             vekp_clean = df_vekp.dropna(subset=["Handling Unit", "Generated delivery"]).copy()
             valid_deliveries = df_pick["Delivery"].dropna().unique()
-            vekp_filtered = vekp_clean[vekp_clean["Generated delivery"].isin(valid_deliveries)]
+            vekp_filtered = vekp_clean[vekp_clean["Generated delivery"].isin(valid_deliveries)].copy()
+
+            # Detekce parent/child hierarchie ve VEKP
+            parent_col = next((c for c in vekp_filtered.columns if "higher-level" in str(c).lower() or "übergeordn" in str(c).lower() or "superordinate" in str(c).lower()), None)
+            
+            if parent_col:
+                parent_hus = set(vekp_filtered[parent_col].dropna().astype(str).str.strip())
+                vekp_filtered['is_top_level'] = vekp_filtered[parent_col].isna() | (vekp_filtered[parent_col].astype(str).str.strip() == "") | (vekp_filtered[parent_col].astype(str).str.strip() == "0") | (vekp_filtered[parent_col].astype(str).str.strip().lower() == "nan")
+                vekp_filtered['is_leaf'] = ~vekp_filtered['Handling Unit'].astype(str).str.strip().isin(parent_hus)
+                
+                hu_agg = vekp_filtered.groupby("Generated delivery").agg(
+                    hu_top_level=("is_top_level", "sum"),
+                    hu_leaf=("is_leaf", "sum"),
+                    hu_total=("Handling Unit", "nunique")
+                ).reset_index()
+            else:
+                hu_agg = vekp_filtered.groupby("Generated delivery").agg(
+                    hu_top_level=("Handling Unit", "nunique"),
+                    hu_leaf=("Handling Unit", "nunique"),
+                    hu_total=("Handling Unit", "nunique")
+                ).reset_index()
 
             pick_agg = df_pick.groupby("Delivery").agg(
                 pocet_to=(queue_count_col, "nunique"),
@@ -1328,21 +1349,8 @@ def main():
             ).reset_index()
             pick_per_delivery = pick_agg.copy()
 
-            hu_agg = vekp_filtered.groupby("Generated delivery").agg(
-                pocet_hu=("Handling Unit", "nunique")
-            ).reset_index()
-
             billing_df = pd.merge(pick_agg, hu_agg,
                                   left_on="Delivery", right_on="Generated delivery", how="left")
-            billing_df["pocet_hu"] = billing_df["pocet_hu"].fillna(0).astype(int)
-            billing_df["pohybu_na_hu"] = np.where(
-                billing_df["pocet_hu"] > 0,
-                billing_df["pohyby_celkem"] / billing_df["pocet_hu"], 0)
-            billing_df["nepokryte_to"] = (
-                billing_df["pocet_to"] - billing_df["pocet_hu"]).clip(lower=0).astype(int)
-            billing_df["avg_mov_per_loc"] = np.where(
-                billing_df["pocet_lokaci"] > 0,
-                billing_df["pohyby_celkem"] / billing_df["pocet_lokaci"], 0)
 
             if df_cats is not None:
                 billing_df = pd.merge(
@@ -1377,6 +1385,24 @@ def main():
 
             billing_df["Category_Full"] = billing_df.apply(odvod_kategorii, axis=1)
 
+            # Výpočet přesného počtu HU podle logiky KEP (Leaf) vs Paleta (Top-Level)
+            def urci_konecnou_hu(row):
+                kat = str(row.get('Category_Full', '')).upper()
+                if kat.startswith('E') or kat.startswith('OE'):
+                    return row.get('hu_leaf', row.get('hu_total', 0))
+                else:
+                    return row.get('hu_top_level', row.get('hu_total', 0))
+
+            billing_df["pocet_hu"] = billing_df.apply(urci_konecnou_hu, axis=1).fillna(0).astype(int)
+            billing_df["pohybu_na_hu"] = np.where(
+                billing_df["pocet_hu"] > 0,
+                billing_df["pohyby_celkem"] / billing_df["pocet_hu"], 0)
+            billing_df["nepokryte_to"] = (
+                billing_df["pocet_to"] - billing_df["pocet_hu"]).clip(lower=0).astype(int)
+            billing_df["avg_mov_per_loc"] = np.where(
+                billing_df["pocet_lokaci"] > 0,
+                billing_df["pohyby_celkem"] / billing_df["pocet_lokaci"], 0)
+
         # ═══════════════════════════════════════════════════════════════
         # SEKCE A: PICK ↔ HU KORELACE
         # ═══════════════════════════════════════════════════════════════
@@ -1385,15 +1411,17 @@ def main():
 
         if not billing_df.empty:
             total_deliveries = len(df_pick["Delivery"].dropna().unique())
-            total_hus = vekp_filtered["Handling Unit"].nunique()
             total_pick_moves = int(df_pick["Pohyby_Rukou"].sum())
             total_tos = df_pick[queue_count_col].nunique()
+            
+            # Celkový počet reálně fakturovaných HU
+            total_hus = billing_df["pocet_hu"].sum()
             moves_per_hu = total_pick_moves / total_hus if total_hus > 0 else 0
 
             c1, c2, c3, c4, c5, c6 = st.columns(6)
             c1.metric(t("b_del_count"), f"{total_deliveries:,}".replace(",", " "))
             c2.metric(t("b_to_count"), f"{total_tos:,}".replace(",", " "))
-            c3.metric(t("b_hu_count"), f"{total_hus:,}".replace(",", " "))
+            c3.metric(t("b_hu_count"), f"{int(total_hus):,}".replace(",", " "))
             c4.metric(t("b_mov_per_hu"), f"{moves_per_hu:.1f}")
             nerov_count = int((billing_df["nepokryte_to"] > 0).sum())
             nepokr_to_sum = int(billing_df["nepokryte_to"].sum())
@@ -1576,8 +1604,12 @@ def main():
                     c_hei  = next((c for c in df_vekp2.columns if str(c).strip() in ("Höhe", "Height")), None)
                     c_art  = next((c for c in df_vekp2.columns if str(c).strip() == "Art"), None)
                     c_kat  = next((c for c in df_vekp2.columns if str(c).strip() == "Kategorie"), None)
+                    c_parent = next((c for c in df_vekp2.columns if "higher-level" in str(c).lower() or "übergeordn" in str(c).lower() or "superordinate" in str(c).lower()), None)
 
                     col_map = {c_hu_int: "HU_intern", c_hu_ext: "Handling_Unit_Ext"}
+                    if c_parent:
+                        col_map[c_parent] = "Parent_HU"
+                    
                     for alias, col in [("Lieferung", c_gen_d), ("Packmittel", c_pm),
                                        ("Packmittelart", c_pma), ("Gesamtgewicht", c_gew),
                                        ("Ladungsgewicht", c_lgew), ("Eigengewicht", c_egew),
@@ -1604,6 +1636,31 @@ def main():
                             df_vk.loc[mask_zero, "Gesamtgewicht"] = (
                                 df_vk.loc[mask_zero, "Eigengewicht"] +
                                 df_vk.loc[mask_zero, "Ladungsgewicht"])
+                                
+                    # Získání Kategorie pro aplikaci pravidla Leaf vs Top-Level
+                    if not df_lf.empty and "Lieferung" in df_lf.columns:
+                        cat_map_vk = df_lf.set_index("Lieferung")["Kategorie"].to_dict()
+                        df_vk["Kategorie"] = df_vk["Lieferung"].map(cat_map_vk).fillna("N")
+                    else:
+                        df_vk["Kategorie"] = "N"
+
+                    if "Parent_HU" in df_vk.columns:
+                        parent_hus_vk = set(df_vk["Parent_HU"].dropna().astype(str).str.strip())
+                        df_vk["is_top_level"] = df_vk["Parent_HU"].isna() | (df_vk["Parent_HU"].astype(str).str.strip() == "") | (df_vk["Parent_HU"].astype(str).str.strip() == "0") | (df_vk["Parent_HU"].astype(str).str.strip().lower() == "nan")
+                        df_vk["is_leaf"] = ~df_vk["Handling_Unit_Ext"].astype(str).str.strip().isin(parent_hus_vk)
+                    else:
+                        df_vk["is_top_level"] = True
+                        df_vk["is_leaf"] = True
+                        
+                    def is_billable_vk(row):
+                        kat = str(row.get("Kategorie", "")).upper()
+                        if kat.startswith("E") or kat.startswith("OE"):
+                            return row.get("is_leaf", True)
+                        else:
+                            return row.get("is_top_level", True)
+
+                    df_vk["is_billable_hu"] = df_vk.apply(is_billable_vk, axis=1)
+                    df_vk = df_vk[df_vk["is_billable_hu"]].copy()
 
                     if "Art_vekp" not in df_vk.columns:
                         if not hu_mat_agg.empty:
@@ -2155,8 +2212,31 @@ def main():
             hu_count = 0
             vekp_del = pd.DataFrame()
             if df_vekp is not None and not df_vekp.empty:
-                vekp_del = df_vekp[df_vekp['Generated delivery'] == sel_del]
-                hu_count = vekp_del['Handling Unit'].nunique()
+                vekp_del = df_vekp[df_vekp['Generated delivery'] == sel_del].copy()
+                
+                sel_del_kat = "N"
+                if not billing_df.empty:
+                    cat_row = billing_df[billing_df['Delivery'] == sel_del]
+                    if not cat_row.empty:
+                        sel_del_kat = str(cat_row.iloc[0]['Category_Full']).upper()
+                
+                parent_col_aud = next((c for c in vekp_del.columns if "higher-level" in str(c).lower() or "übergeordn" in str(c).lower() or "superordinate" in str(c).lower()), None)
+                
+                if parent_col_aud:
+                    parent_hus_aud = set(vekp_del[parent_col_aud].dropna().astype(str).str.strip())
+                    vekp_del['Typ'] = vekp_del.apply(
+                        lambda r: "Top-Level" if (str(r[parent_col_aud]).strip() in ["", "nan", "0", "None"]) else "Inner (Vnořená)", axis=1
+                    )
+                    vekp_del['Je_Leaf'] = ~vekp_del['Handling Unit'].astype(str).str.strip().isin(parent_hus_aud)
+                    vekp_del['Status pro fakturaci'] = vekp_del.apply(
+                        lambda r: "✅ Účtuje se (Paket)" if (sel_del_kat.startswith("E") or sel_del_kat.startswith("OE")) and r['Je_Leaf'] 
+                        else ("✅ Účtuje se (Paleta)" if (sel_del_kat.startswith("N") or sel_del_kat.startswith("O")) and r['Typ'] == "Top-Level" 
+                        else "❌ Neúčtuje se (Obalová hierarchie)"), axis=1
+                    )
+                else:
+                    vekp_del['Status pro fakturaci'] = "✅ Účtuje se"
+
+                hu_count = len(vekp_del[vekp_del['Status pro fakturaci'].str.contains('✅')])
                 
             c_a1, c_a2, c_a3, c_a4 = st.columns(4)
             c_a1.metric("Počet Pickovacích TO", to_count)
@@ -2172,8 +2252,17 @@ def main():
             with col_d2:
                 st.markdown(t('audit_b_vekp_det'))
                 if not vekp_del.empty:
-                    disp_v = vekp_del[['Handling Unit', 'Packaging materials', 'Total Weight']].copy()
-                    st.dataframe(disp_v, hide_index=True, use_container_width=True)
+                    disp_cols = ['Handling Unit', 'Packaging materials', 'Total Weight', 'Status pro fakturaci']
+                    if 'Typ' in vekp_del.columns:
+                        disp_cols.insert(2, 'Typ')
+                    disp_v = vekp_del[[c for c in disp_cols if c in vekp_del.columns]].copy()
+                    
+                    def color_status(val):
+                        if '✅' in str(val): return 'color: green; font-weight: bold'
+                        if '❌' in str(val): return 'color: #d62728; text-decoration: line-through'
+                        return ''
+                    
+                    st.dataframe(disp_v.style.applymap(color_status, subset=['Status pro fakturaci']), hide_index=True, use_container_width=True)
                 else:
                     st.warning(t('audit_b_no_vekp'))
 
