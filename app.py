@@ -66,12 +66,13 @@ TEXTS = {
         'title': "📦 Analýza pickování",
         'desc': "Nástroj pro modelování fyzické zátěže pickování",
         'upload_title': "📁 Nahrání vstupních dat (Klikněte pro sbalení/rozbalení)",
-        'upload_help': "Nahrajte Pick report, MARM report, TO details (Queue), VEKP (Balení), Kategorie zakázek (Deliveries) a volitelně ruční ověření.",
+        'upload_help': "Nahrajte Pick report, MARM report, TO details (Queue), VEKP (Hlavičky HU), VEPO (Položky HU), Deliveries a volitelně ruční ověření.",
         'file_status_title': "📋 Stav detekce souborů:",
         'file_pick': "Pick report",
         'file_marm': "MARM",
         'file_queue': "Queue (TO)",
         'file_vekp': "VEKP",
+        'file_vepo': "VEPO",
         'file_cats': "Deliveries",
         'file_manual': "Ruční ověření",
         'info_users': "💡 Vyloučeno **{} systémových řádků** (UIDJ5089, UIH25501).",
@@ -95,10 +96,10 @@ TEXTS = {
 
 **1. Vstupní soubory:**
 * **Pick report:** Hlavní soubor se seznamem vychystaných položek.
-* **MARM report:** Kmenová data o materiálech ze SAPu (jednotky AEK, CAR, ASK, BLO...).
-* **TO details (Queue):** Dodává informace o frontě a datu potvrzení úkolů.
-* **VEKP:** Dodává informace o zabalených jednotkách (HU) pro korelaci s účtováním zákazníkovi.
-* **Deliveries:** Mapuje zakázky do kategorií (N Sortenrein, N Misch atd.).
+* **MARM report:** Kmenová data o materiálech ze SAPu.
+* **TO details (Queue):** Dodává informace o frontě.
+* **VEKP / VEPO:** Dodává informace o zabalených jednotkách (HU). Pomocí VEPO aplikace vyřazuje prázdné systémové palety.
+* **Deliveries:** Mapuje zakázky do kategorií.
 * **Ruční ověření (volitelně):** Excel pro ruční přepis velikosti balení (formát K-XXks).
 
 **2. Dekompozice na celá balení (Krabice)**
@@ -108,7 +109,7 @@ Systém matematicky rozdělí množství na plné krabice od největší. Co kra
 Zbylé rozbalené kusy podléhají kontrole ergonomických limitů. Každý těžký/velký kus = **1 pohyb**, lehké kusy se berou do hrsti.
 
 **4. Bezpečnostní odhady (Chybějící data)**
-Pokud v SAPu ani ručním ověření chybí data o balení, systém aplikuje bezpečnostní odhad na základě váhy a rozměru.""",
+Pokud chybí data o balení, systém aplikuje bezpečnostní odhad na základě váhy a rozměru.""",
         'ratio_moves': "Podíl z celkového počtu POHYBŮ:",
         'ratio_exact': "Přesně (Krabice / Palety / Volné)",
         'ratio_miss': "Odhady (Chybí balení)",
@@ -159,7 +160,7 @@ Pokud v SAPu ani ručním ověření chybí data o balení, systém aplikuje bez
         'b_desc': "Zákazník platí podle počtu výsledných balících jednotek (HU). Zde vidíte náročnost vytvoření těchto zpoplatněných jednotek napříč fakturačními kategoriemi.",
         'b_del_count': "Počet Deliveries",
         'b_to_count': "Pickovacích TO celkem",
-        'b_hu_count': "Celkem balících HU (VEKP)",
+        'b_hu_count': "Celkem balících HU (VEKP/VEPO)",
         'b_mov_per_hu': "Pohybů na 1 zabalenou HU",
         'b_cat_title': "📊 Souhrn nákladnosti podle Kategorií (Type of HU)",
         'b_col_type': "Kategorie (Typ HU)",
@@ -213,8 +214,6 @@ Pokud v SAPu ani ručním ověření chybí data o balení, systém aplikuje bez
         'all_data_exact': "✅ Všechna data o baleních jsou k dispozici — žádné odhady!",
         'detail_breakdown': "**Detailní rozpad podle Delivery:**",
         'box_sizes': "Krabice (ks)",
-        'source_pick_date': "Datum (z Pick)",
-        'source_to_date': "Datum (z TO)",
         'loading': "🔄 Načítám soubory...",
         'processing': "⚙️ Zpracovávám master data...",
         'fu_title': "Analýza front PI_PL_FU a PI_PL_FUOE",
@@ -227,7 +226,6 @@ Pokud v SAPu ani ručním ověření chybí data o balení, systém aplikuje bez
         'b_aus_title': "Analýza zásilkových dat (Auswertung)",
         'b_aus_desc': "Data ze zákazníkova souboru — kategorizace, typy HU a váhy počítány stejnou logikou jako v Excelu.",
         'b_aus_upload_hint': "Pro tuto sekci nahrajte zákazníkův soubor Auswertung_Outbound_HWL.xlsx (nebo soubor s auswertung v názvu).",
-        'b_aus_no_vekp': "Soubor neobsahuje list VEKP/VEPO — nelze vypočítat typy HU.",
         'b_aus_kat_title': "Kategorie zásilek (E / N / O / OE)",
         'b_aus_kat_desc': "Kategorie = kombinace Order Type (Versandstelle + T031) + KEP příznak dopravce (SDSHP_AM2).",
         'b_aus_kat': "Kategorie",
@@ -241,7 +239,6 @@ Pokud v SAPu ani ručním ověření chybí data o balení, systém aplikuje bez
         'b_aus_total_lief': "Zásilky celkem",
         'b_aus_total_hu': "HU celkem",
         'b_aus_avg_hu_lief': "Prům. HU / zásilka",
-        'b_aus_total_vaha': "Celk. hmotnost (kg)",
         'b_aus_pct_kep': "Zásilek přes KEP",
         'b_aus_art_title': "Typy HU (Sortenrein / Misch / Vollpalette)",
         'b_aus_art_desc': "Vollpalette = Přímé pohyby celých palet zaznamenané v tabulce T023. Sortenrein = 1 materiál / 1 zakázka. Misch = víc materiálů nebo zakázek.",
@@ -257,9 +254,6 @@ Pokud v SAPu ani ručním ověření chybí data o balení, systém aplikuje bez
         'b_aus_nonkep_count': "Non-KEP dopravci",
         'b_aus_sped': "Spediteur",
         'b_aus_kep_flag': "KEP",
-        'b_aus_max_gew': "Max. hmotnost (kg)",
-        'b_aus_ladezeit': "Čas nakládky",
-        'b_aus_zone': "Zóna přípravy",
         'b_aus_voll_title': "Vollpalette — přímé pohyby (T023)",
         'b_aus_voll_count': "Pohybů celých palet",
         'audit_b_title': "💰 Ověření korelací (Pick vs. VEKP)",
@@ -274,12 +268,13 @@ Pokud v SAPu ani ručním ověření chybí data o balení, systém aplikuje bez
         'title': "📦 Picking Analysis",
         'desc': "Tool for modeling physical picking workload.",
         'upload_title': "📁 Upload Input Data (Click to expand/collapse)",
-        'upload_help': "Upload Pick report, MARM report, TO details (Queue), VEKP (Packing), Deliveries Categories, and optional Manual Override.",
+        'upload_help': "Upload Pick report, MARM report, TO details (Queue), VEKP (Packing), VEPO (HU Items), Deliveries Categories, and optional Manual Override.",
         'file_status_title': "📋 File Detection Status:",
         'file_pick': "Pick report",
         'file_marm': "MARM",
         'file_queue': "Queue (TO)",
         'file_vekp': "VEKP",
+        'file_vepo': "VEPO",
         'file_cats': "Deliveries",
         'file_manual': "Manual Override",
         'info_users': "💡 Excluded **{} system lines** (UIDJ5089, UIH25501).",
@@ -305,7 +300,7 @@ Pokud v SAPu ani ručním ověření chybí data o balení, systém aplikuje bez
 * **Pick report:** Main file with picked items.
 * **MARM report:** SAP master data (units AEK, CAR, ASK, BLO...).
 * **TO details (Queue):** Provides Queue and confirmation dates.
-* **VEKP:** Packed Handling Units (HUs) for billing correlation.
+* **VEKP / VEPO:** Packed Handling Units (HUs) for billing correlation.
 * **Deliveries:** Maps deliveries to billing categories.
 * **Manual Override (optional):** Excel for manual packaging sizes (K-XXpcs format).
 
@@ -367,7 +362,7 @@ If SAP and manual override both lack packaging data, a safety estimate is applie
         'b_desc': "The customer pays based on packed Handling Units (HUs). Here you see the effort to create these billed units across categories.",
         'b_del_count': "Delivery Count",
         'b_to_count': "Total TOs Picked",
-        'b_hu_count': "Total Packed HUs (VEKP)",
+        'b_hu_count': "Total Packed HUs (VEKP/VEPO)",
         'b_mov_per_hu': "Moves per Packed HU",
         'b_cat_title': "📊 Workload Summary by Categories (Type of HU)",
         'b_col_type': "Type of HU",
@@ -404,7 +399,7 @@ If SAP and manual override both lack packaging data, a safety estimate is applie
         'b_no_imbalance': "No orders with TO > HU imbalance found!",
         'col_lines': "Lines",
         'btn_download': "📥 Download Comprehensive Report (Excel)",
-        'err_pick': "❌ Error: Pick report not found. Make sure the file contains 'Delivery' and 'Act.qty (dest)' columns.",
+        'err_pick': "❌ Error: Pick report not found.",
         'no_orders': "No orders found.",
         'audit_su_x': "➡️ Full unit (X) in queue {}. -> **1 move.**",
         'audit_su_ign': "*(Ignored 'X' marker — queue {} is not a Full Pallet queue)*",
@@ -421,8 +416,6 @@ If SAP and manual override both lack packaging data, a safety estimate is applie
         'all_data_exact': "✅ All packaging data available — no estimates!",
         'detail_breakdown': "**Detailed breakdown by Delivery:**",
         'box_sizes': "Box sizes (pcs)",
-        'source_pick_date': "Date (from Pick)",
-        'source_to_date': "Date (from TO)",
         'loading': "🔄 Loading files...",
         'processing': "⚙️ Processing master data...",
         'fu_title': "Analysis of PI_PL_FU and PI_PL_FUOE",
@@ -435,7 +428,6 @@ If SAP and manual override both lack packaging data, a safety estimate is applie
         'b_aus_title': "Shipment Data Analysis (Auswertung)",
         'b_aus_desc': "Data from customer file — categorization, HU types and weights calculated using the same logic as the Excel file.",
         'b_aus_upload_hint': "For this section upload the customer file Auswertung_Outbound_HWL.xlsx (or any file with auswertung in the name).",
-        'b_aus_no_vekp': "File does not contain VEKP/VEPO sheet — cannot calculate HU types.",
         'b_aus_kat_title': "Shipment Categories (E / N / O / OE)",
         'b_aus_kat_desc': "Category = Order Type (Versandstelle + T031) + KEP carrier flag (SDSHP_AM2).",
         'b_aus_kat': "Category",
@@ -464,9 +456,6 @@ If SAP and manual override both lack packaging data, a safety estimate is applie
         'b_aus_nonkep_count': "Non-KEP carriers",
         'b_aus_sped': "Spediteur",
         'b_aus_kep_flag': "KEP",
-        'b_aus_max_gew': "Max weight (kg)",
-        'b_aus_ladezeit': "Loading time",
-        'b_aus_zone': "Staging zone",
         'b_aus_voll_title': "Vollpalette — direct movements (T023)",
         'b_aus_voll_count': "Full pallet movements",
         'audit_b_title': "💰 Billing Correlation Audit (Pick vs. VEKP)",
@@ -596,7 +585,7 @@ def main():
             progress_bar.progress(10)
 
             df_pick_raw = df_marm_raw = df_manual_raw = None
-            df_queue_raw = df_vekp_raw = df_cats_raw = None
+            df_queue_raw = df_vekp_raw = df_cats_raw = df_vepo_raw = None
 
             for file in uploaded_files:
                 fname = file.name.lower()
@@ -631,6 +620,8 @@ def main():
                     df_marm_raw = temp_df
                 elif 'Handling Unit' in cols and 'Generated delivery' in cols:
                     df_vekp_raw = temp_df
+                elif ('Handling unit item' in cols or 'Handling Unit Position' in cols) and 'Material' in cols:
+                    df_vepo_raw = temp_df
                 elif 'Lieferung' in cols and 'Kategorie' in cols:
                     df_cats_raw = temp_df
                 elif 'Queue' in cols and (
@@ -646,10 +637,11 @@ def main():
                 t('file_marm'): df_marm_raw is not None,
                 t('file_queue'): df_queue_raw is not None,
                 t('file_vekp'): df_vekp_raw is not None,
+                t('file_vepo'): df_vepo_raw is not None,
                 t('file_cats'): df_cats_raw is not None,
                 t('file_manual'): df_manual_raw is not None,
             }
-            s_cols = st.columns(6)
+            s_cols = st.columns(7)
             for col, (fname_label, ok) in zip(s_cols, file_status.items()):
                 col.metric(fname_label, "✅" if ok else "❌")
 
@@ -841,6 +833,7 @@ def main():
                 'dim_dict': dim_dict,
                 'box_dict': box_dict,
                 'df_vekp': df_vekp_raw,
+                'df_vepo': df_vepo_raw,
                 'df_cats': df_cats_raw,
             })
 
@@ -850,7 +843,7 @@ def main():
             status_text.empty()
 
     else:
-        for key in ['last_files_hash', 'df_pick_prep', 'df_vekp', 'df_cats']:
+        for key in ['last_files_hash', 'df_pick_prep', 'df_vekp', 'df_vepo', 'df_cats']:
             st.session_state.pop(key, None)
 
     if 'df_pick_prep' not in st.session_state or st.session_state['df_pick_prep'] is None:
@@ -864,6 +857,7 @@ def main():
     dim_dict = st.session_state['dim_dict']
     box_dict = st.session_state['box_dict']
     df_vekp = st.session_state.get('df_vekp')
+    df_vepo = st.session_state.get('df_vepo')
     df_cats = st.session_state.get('df_cats')
 
     df_pick['Month'] = df_pick['Date'].dt.to_period('M').astype(str).replace('NaT', t('unknown'))
@@ -1315,15 +1309,23 @@ def main():
 
         if df_vekp is not None and not df_vekp.empty:
             vekp_clean = df_vekp.dropna(subset=["Handling Unit", "Generated delivery"]).copy()
+            
+            # --- ZPŘESNĚNÍ POMOCÍ VEPO (Odstranění prázdných HU) ---
+            if df_vepo is not None and not df_vepo.empty:
+                vepo_hu_col = next((c for c in df_vepo.columns if "Internal HU" in str(c) or "HU-Nummer intern" in str(c)), df_vepo.columns[0])
+                vekp_hu_col = next((c for c in vekp_clean.columns if "Internal HU" in str(c) or "HU-Nummer intern" in str(c)), vekp_clean.columns[0])
+                
+                valid_hus = set(df_vepo[vepo_hu_col].astype(str).str.strip())
+                vekp_clean = vekp_clean[vekp_clean[vekp_hu_col].astype(str).str.strip().isin(valid_hus)].copy()
+            # --------------------------------------------------------
+
             valid_deliveries = df_pick["Delivery"].dropna().unique()
             vekp_filtered = vekp_clean[vekp_clean["Generated delivery"].isin(valid_deliveries)].copy()
 
-            # Detekce parent/child hierarchie ve VEKP (OPRAVENO: bezpečné použití isin pro řetězce)
             parent_col = next((c for c in vekp_filtered.columns if "higher-level" in str(c).lower() or "übergeordn" in str(c).lower() or "superordinate" in str(c).lower()), None)
             
             if parent_col:
                 parent_hus = set(vekp_filtered[parent_col].dropna().astype(str).str.strip())
-                # OPRAVA ATTRIBUTE ERRORU: nahrazeno .str.strip().str.lower().isin()
                 vekp_filtered['is_top_level'] = vekp_filtered[parent_col].isna() | vekp_filtered[parent_col].astype(str).str.strip().str.lower().isin(["", "0", "nan", "none"])
                 vekp_filtered['is_leaf'] = ~vekp_filtered['Handling Unit'].astype(str).str.strip().isin(parent_hus)
                 
@@ -1386,7 +1388,6 @@ def main():
 
             billing_df["Category_Full"] = billing_df.apply(odvod_kategorii, axis=1)
 
-            # Výpočet přesného počtu HU podle logiky KEP (Leaf) vs Paleta (Top-Level)
             def urci_konecnou_hu(row):
                 kat = str(row.get('Category_Full', '')).upper()
                 if kat.startswith('E') or kat.startswith('OE'):
@@ -1415,7 +1416,6 @@ def main():
             total_pick_moves = int(df_pick["Pohyby_Rukou"].sum())
             total_tos = df_pick[queue_count_col].nunique()
             
-            # Celkový počet reálně fakturovaných HU
             total_hus = billing_df["pocet_hu"].sum()
             moves_per_hu = total_pick_moves / total_hus if total_hus > 0 else 0
 
@@ -1644,7 +1644,6 @@ def main():
                     else:
                         df_vk["Kategorie"] = "N"
 
-                    # OPRAVA ATTRIBUTE ERRORU PRO VÝPOČET KATEGORIÍ
                     if "Parent_HU" in df_vk.columns:
                         parent_hus_vk = set(df_vk["Parent_HU"].dropna().astype(str).str.strip())
                         df_vk["is_top_level"] = df_vk["Parent_HU"].isna() | df_vk["Parent_HU"].astype(str).str.strip().str.lower().isin(["", "0", "nan", "none"])
@@ -2216,7 +2215,6 @@ def main():
                 vekp_del = df_vekp[df_vekp['Generated delivery'] == sel_del].copy()
                 
                 sel_del_kat = "N"
-                # Bezpečné vytáhnutí kategorie
                 if 'billing_df' in locals() and not billing_df.empty:
                     cat_row = billing_df[billing_df['Delivery'] == sel_del]
                     if not cat_row.empty:
@@ -2226,7 +2224,6 @@ def main():
                 
                 if parent_col_aud:
                     parent_hus_aud = set(vekp_del[parent_col_aud].dropna().astype(str).str.strip())
-                    # OPRAVA ATTRIBUTE ERRORU: bezpečné overeni
                     vekp_del['Typ'] = vekp_del.apply(
                         lambda r: "Top-Level" if (str(r.get(parent_col_aud, "")).strip().lower() in ["", "nan", "0", "none"]) else "Inner (Vnořená)", axis=1
                     )
@@ -2240,6 +2237,19 @@ def main():
                     vekp_del['Typ'] = "Top-Level"
                     vekp_del['Je_Leaf'] = True
                     vekp_del['Status pro fakturaci'] = "✅ Účtuje se"
+
+                # Zobrazení detekce z VEPO
+                if df_vepo is not None and not df_vepo.empty:
+                    vepo_hu_col_aud = next((c for c in df_vepo.columns if "Internal HU" in str(c) or "HU-Nummer intern" in str(c)), df_vepo.columns[0])
+                    valid_hus_aud = set(df_vepo[vepo_hu_col_aud].astype(str).str.strip())
+                    vekp_hu_col_aud = next((c for c in vekp_del.columns if "Internal HU" in str(c) or "HU-Nummer intern" in str(c)), vekp_del.columns[0])
+                    
+                    vekp_del['Obsahuje_Material (VEPO)'] = vekp_del[vekp_hu_col_aud].astype(str).str.strip().isin(valid_hus_aud)
+                    
+                    vekp_del['Status pro fakturaci'] = vekp_del.apply(
+                        lambda r: "❌ Neúčtuje se (Prázdná HU dle VEPO)" if not r['Obsahuje_Material (VEPO)'] 
+                        else r['Status pro fakturaci'], axis=1
+                    )
 
                 hu_count = len(vekp_del[vekp_del['Status pro fakturaci'].str.contains('✅')])
                 
