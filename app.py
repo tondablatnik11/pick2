@@ -3,11 +3,12 @@ import pandas as pd
 import numpy as np
 import io
 import time
-import re
 
+# Databáze a výpočty
 from database import save_to_db, load_from_db
 from modules.utils import t, fast_compute_moves, get_match_key_vectorized, get_match_key, parse_packing_time, BOX_UNITS
 
+# Záložky (Tabs) z naší nové struktury
 from modules.tab_dashboard import render_dashboard
 from modules.tab_pallets import render_pallets
 from modules.tab_fu import render_fu
@@ -16,6 +17,9 @@ from modules.tab_billing import render_billing
 from modules.tab_packing import render_packing
 from modules.tab_audit import render_audit
 
+# ==========================================
+# 1. NASTAVENÍ STRÁNKY A STYLING
+# ==========================================
 st.set_page_config(page_title="Warehouse Control Tower", page_icon="🏢", layout="wide", initial_sidebar_state="expanded")
 st.markdown("""
     <style>
@@ -29,6 +33,9 @@ st.markdown("""
 
 if 'lang' not in st.session_state: st.session_state.lang = 'cs'
 
+# ==========================================
+# 2. CACHE PRO NAČTENÍ Z DATABÁZE
+# ==========================================
 @st.cache_data(show_spinner=False, ttl=3600)
 def fetch_and_prep_data():
     df_pick_raw = load_from_db('raw_pick')
@@ -73,6 +80,7 @@ def fetch_and_prep_data():
             df_pick['Queue'] = df_pick['Delivery'].map(q_map).fillna('N/A')
         df_pick = df_pick[df_pick['Queue'].astype(str).str.upper() != 'CLEARANCE'].copy()
 
+    import re
     manual_boxes = {}
     if df_manual_raw is not None and not df_manual_raw.empty:
         c_mat, c_pkg = df_manual_raw.columns[0], df_manual_raw.columns[1]
@@ -148,6 +156,9 @@ def fetch_and_prep_data():
         'weight_dict': weight_dict, 'dim_dict': dim_dict, 'box_dict': box_dict
     }
 
+# ==========================================
+# 3. HLAVNÍ BĚH APLIKACE A ADMIN ZÓNA
+# ==========================================
 def main():
     col_title, col_lang = st.columns([8, 1])
     with col_title:
@@ -164,7 +175,7 @@ def main():
     kusy_na_hmat = st.sidebar.slider("Ks do hrsti", min_value=1, max_value=20, value=1, step=1)
 
     st.sidebar.divider()
-with st.sidebar.expander("🛠️ Admin Zóna (Nahrát data do DB)"):
+    with st.sidebar.expander("🛠️ Admin Zóna (Nahrát data do DB)"):
         st.info("Nahrajte Excely sem. Zpracují se do databáze a aplikace poběží bleskově.")
         admin_pwd = st.text_input("Heslo:", type="password")
         if admin_pwd == "admin123":
@@ -181,7 +192,6 @@ with st.sidebar.expander("🛠️ Admin Zóna (Nahrát data do DB)"):
                                 st.success(f"✅ Uloženo: {file.name}")
                                 continue
 
-                            # Vylepšené čtení (automaticky pozná i CSV oddělené středníkem)
                             temp_df = pd.read_csv(file, dtype=str, sep=None, engine='python') if fname.endswith('.csv') else pd.read_excel(file, dtype=str)
                             cols = set(temp_df.columns)
                             
@@ -202,6 +212,7 @@ with st.sidebar.expander("🛠️ Admin Zóna (Nahrát data do DB)"):
                     time.sleep(2.0)
                     st.rerun()
 
+    # --- ZDE BYL CHYBNÝ INDENT (ODSAZENÍ), NYNÍ ZCELA OPRAVENO ---
     with st.spinner("🔄 Načítám data z databáze..."):
         data_dict = fetch_and_prep_data()
 
@@ -232,7 +243,7 @@ with st.sidebar.expander("🛠️ Admin Zóna (Nahrát data do DB)"):
     with tabs[5]: render_packing(billing_df if 'billing_df' in locals() else pd.DataFrame(), data_dict['df_oe'])
     with tabs[6]: render_audit(df_pick, data_dict['df_vekp'], data_dict['df_vepo'], data_dict['df_oe'], data_dict['queue_count_col'], billing_df if 'billing_df' in locals() else pd.DataFrame(), data_dict['manual_boxes'], data_dict['weight_dict'], data_dict['dim_dict'], data_dict['box_dict'], limit_vahy, limit_rozmeru, kusy_na_hmat)
 
-    # --- ZPĚT PŘIDÁN EXPORT DO EXCELU ---
+    # --- EXPORT DO EXCELU ---
     st.divider()
     buffer = io.BytesIO()
     with pd.ExcelWriter(buffer, engine='openpyxl') as writer:
