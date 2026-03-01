@@ -241,7 +241,7 @@ Pokud chybí data o balení, systém aplikuje bezpečnostní odhad na základě 
         'b_aus_avg_hu_lief': "Prům. HU / zásilka",
         'b_aus_pct_kep': "Zásilek přes KEP",
         'b_aus_art_title': "Typy HU (Sortenrein / Misch / Vollpalette)",
-        'b_aus_art_desc': "Vollpalette = Přímé pohyby celých palet zaznamenané v tabulce T023. Sortenrein = 1 materiál / 1 zakázka. Misch = víc materiálů nebo zakázek.",
+        'b_aus_art_desc': "Vollpalette = HU zachovaná z pickování (značka 'X' a shodné číslo HU) nebo záznam v T023. Sortenrein = 1 mat. / 1 zakázka. Misch = více mat.",
         'b_aus_carton_title': "Typy kartonů (Packmittel) — rozměry a váhy",
         'b_aus_carton': "Typ krabice",
         'b_aus_pocet': "Počet HU",
@@ -254,8 +254,8 @@ Pokud chybí data o balení, systém aplikuje bezpečnostní odhad na základě 
         'b_aus_nonkep_count': "Non-KEP dopravci",
         'b_aus_sped': "Spediteur",
         'b_aus_kep_flag': "KEP",
-        'b_aus_voll_title': "Vollpalette — přímé pohyby (T023)",
-        'b_aus_voll_count': "Pohybů celých palet",
+        'b_aus_voll_title': "Vollpalette — přímé pohyby (Celé palety)",
+        'b_aus_voll_count': "Počet Vollpalet",
         'audit_b_title': "💰 Ověření korelací (Pick vs. VEKP)",
         'audit_b_sel': "Zadejte nebo vyberte Delivery pro ověření:",
         'audit_b_pick_det': "**Detail pickování (Kusy a Pohyby):**",
@@ -443,7 +443,7 @@ If SAP and manual override both lack packaging data, a safety estimate is applie
         'b_aus_avg_hu_lief': "Avg HU / delivery",
         'b_aus_pct_kep': "Via KEP carrier",
         'b_aus_art_title': "HU Types (Sortenrein / Misch / Vollpalette)",
-        'b_aus_art_desc': "Vollpalette = Direct movements of full pallets as recorded in T023 table. Sortenrein = 1 material / 1 order. Misch = multiple materials or orders.",
+        'b_aus_art_desc': "Vollpalette = HU preserved from picking (marker 'X' and matching HU) or record in T023. Sortenrein = 1 mat. / 1 order. Misch = multiple mat.",
         'b_aus_carton_title': "Carton Types (Packmittel) — dimensions and weights",
         'b_aus_carton': "Carton type",
         'b_aus_pocet': "HU count",
@@ -456,8 +456,8 @@ If SAP and manual override both lack packaging data, a safety estimate is applie
         'b_aus_nonkep_count': "Non-KEP carriers",
         'b_aus_sped': "Spediteur",
         'b_aus_kep_flag': "KEP",
-        'b_aus_voll_title': "Vollpalette — direct movements (T023)",
-        'b_aus_voll_count': "Full pallet movements",
+        'b_aus_voll_title': "Vollpalette — direct movements (Full Pallets)",
+        'b_aus_voll_count': "Full pallet count",
         'audit_b_title': "💰 Billing Correlation Audit (Pick vs. VEKP)",
         'audit_b_sel': "Select Delivery to audit:",
         'audit_b_pick_det': "**Picking Detail (Qty & Moves):**",
@@ -843,7 +843,7 @@ def main():
             status_text.empty()
 
     else:
-        for key in ['last_files_hash', 'df_pick_prep', 'df_vekp', 'df_vepo', 'df_cats']:
+        for key in ['last_files_hash', 'df_pick_prep', 'df_vekp', 'df_vepo', 'df_cats', 'auto_voll_hus']:
             st.session_state.pop(key, None)
 
     if 'df_pick_prep' not in st.session_state or st.session_state['df_pick_prep'] is None:
@@ -896,6 +896,18 @@ def main():
     )
     if excluded_materials:
         df_pick = df_pick[~df_pick['Material'].isin(excluded_materials)].copy()
+
+    # --- AUTOMATICKÁ DETEKCE VOLLPALET Z PICK REPORTU ---
+    auto_voll_hus = set()
+    mask_x = df_pick['Removal of total SU'] == 'X'
+    for c_hu in ['Source storage unit', 'Handling Unit']:
+        if c_hu in df_pick.columns:
+            auto_voll_hus.update(df_pick.loc[mask_x, c_hu].dropna().astype(str).str.strip())
+    auto_voll_hus.discard("")
+    auto_voll_hus.discard("nan")
+    auto_voll_hus.discard("None")
+    st.session_state['auto_voll_hus'] = auto_voll_hus
+    # --------------------------------------------------
 
     t_total, t_exact, t_miss = fast_compute_moves(
         qty_list=df_pick['Qty'].values,
@@ -1310,14 +1322,12 @@ def main():
         if df_vekp is not None and not df_vekp.empty:
             vekp_clean = df_vekp.dropna(subset=["Handling Unit", "Generated delivery"]).copy()
             
-            # --- ZPŘESNĚNÍ POMOCÍ VEPO (Odstranění prázdných HU) ---
             if df_vepo is not None and not df_vepo.empty:
                 vepo_hu_col = next((c for c in df_vepo.columns if "Internal HU" in str(c) or "HU-Nummer intern" in str(c)), df_vepo.columns[0])
                 vekp_hu_col = next((c for c in vekp_clean.columns if "Internal HU" in str(c) or "HU-Nummer intern" in str(c)), vekp_clean.columns[0])
                 
                 valid_hus = set(df_vepo[vepo_hu_col].astype(str).str.strip())
                 vekp_clean = vekp_clean[vekp_clean[vekp_hu_col].astype(str).str.strip().isin(valid_hus)].copy()
-            # --------------------------------------------------------
 
             valid_deliveries = df_pick["Delivery"].dropna().unique()
             vekp_filtered = vekp_clean[vekp_clean["Generated delivery"].isin(valid_deliveries)].copy()
@@ -1570,9 +1580,11 @@ def main():
                         if nc in df_lf.columns:
                             df_lf[nc] = pd.to_numeric(df_lf[nc], errors="coerce").fillna(0)
 
+                # Definice Vollpalet z T023 + z našich automatických výpočtů Pick reportu
                 vollpalette_lager = set()
                 if not df_t023.empty:
-                    vollpalette_lager = set(df_t023.iloc[:, 0].astype(str).str.strip())
+                    vollpalette_lager.update(df_t023.iloc[:, 0].astype(str).str.strip())
+                vollpalette_lager.update(st.session_state.get('auto_voll_hus', set()))
 
                 hu_mat_agg = pd.DataFrame()
                 if not df_vepo.empty:
@@ -1670,6 +1682,7 @@ def main():
                             df_vk["pocet_lief"] = 1
 
                         def _calc_art(row):
+                            # TADY JE APLIKOVÁNO NOVÉ PRAVIDLO!
                             if str(row.get("Handling_Unit_Ext", "")).strip() in vollpalette_lager:
                                 return "Vollpalette"
                                 
@@ -2238,7 +2251,6 @@ def main():
                     vekp_del['Je_Leaf'] = True
                     vekp_del['Status pro fakturaci'] = "✅ Účtuje se"
 
-                # Zobrazení detekce z VEPO
                 if df_vepo is not None and not df_vepo.empty:
                     vepo_hu_col_aud = next((c for c in df_vepo.columns if "Internal HU" in str(c) or "HU-Nummer intern" in str(c)), df_vepo.columns[0])
                     valid_hus_aud = set(df_vepo[vepo_hu_col_aud].astype(str).str.strip())
@@ -2251,7 +2263,15 @@ def main():
                         else r['Status pro fakturaci'], axis=1
                     )
 
-                hu_count = len(vekp_del[vekp_del['Status pro fakturaci'].str.contains('✅')])
+                # Speciální označení, pokud je to Vollpalette
+                auto_voll_hus_aud = st.session_state.get('auto_voll_hus', set())
+                c_hu_ext_aud = next((c for c in vekp_del.columns if "Handling Unit" in str(c)), "")
+                if c_hu_ext_aud:
+                    vekp_del['Status pro fakturaci'] = vekp_del.apply(
+                        lambda r: "🏭 Účtuje se (Vollpalette)" if str(r[c_hu_ext_aud]).strip() in auto_voll_hus_aud else r['Status pro fakturaci'], axis=1
+                    )
+
+                hu_count = len(vekp_del[vekp_del['Status pro fakturaci'].str.contains('✅') | vekp_del['Status pro fakturaci'].str.contains('🏭')])
                 
             c_a1, c_a2, c_a3, c_a4 = st.columns(4)
             c_a1.metric("Počet Pickovacích TO", to_count)
@@ -2273,7 +2293,7 @@ def main():
                     disp_v = vekp_del[[c for c in disp_cols if c in vekp_del.columns]].copy()
                     
                     def color_status(val):
-                        if '✅' in str(val): return 'color: green; font-weight: bold'
+                        if '✅' in str(val) or '🏭' in str(val): return 'color: green; font-weight: bold'
                         if '❌' in str(val): return 'color: #d62728; text-decoration: line-through'
                         return ''
                     
