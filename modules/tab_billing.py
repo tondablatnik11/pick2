@@ -2,10 +2,37 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 import plotly.graph_objects as go
-from modules.utils import t
+
+# Kouzlo pro bleskové překreslování - "Fragment"
+# Izoluje graf od zbytku aplikace, takže se při změně filtru nenačítá celá záložka
+try:
+    fast_render = st.fragment
+except AttributeError:
+    fast_render = lambda f: f
+
+@fast_render
+def render_interactive_chart(billing_df):
+    cat_options = ["Všechny kategorie"] + sorted(billing_df["Category_Full"].dropna().unique().tolist())
+    selected_cat = st.selectbox("Vyberte kategorii pro graf:", options=cat_options, label_visibility="collapsed")
+    
+    if selected_cat == "Všechny kategorie":
+        plot_df = billing_df.copy()
+    else:
+        plot_df = billing_df[billing_df["Category_Full"] == selected_cat].copy()
+    
+    tr_df = plot_df.groupby("Month").agg(to_sum=("pocet_to", "sum"), hu_sum=("pocet_hu", "sum"), poh=("pohyby_celkem", "sum"), lok=("pocet_lokaci", "sum")).reset_index()
+    tr_df['prum_poh'] = np.where(tr_df['lok']>0, tr_df['poh']/tr_df['lok'], 0)
+    
+    fig = go.Figure()
+    fig.add_trace(go.Bar(x=tr_df['Month'], y=tr_df['to_sum'], name='Počet TO', marker_color='#38bdf8', text=tr_df['to_sum'], textposition='auto'))
+    fig.add_trace(go.Bar(x=tr_df['Month'], y=tr_df['hu_sum'], name='Počet HU', marker_color='#818cf8', text=tr_df['hu_sum'], textposition='auto'))
+    fig.add_trace(go.Scatter(x=tr_df['Month'], y=tr_df['prum_poh'], name='Pohyby na lokaci', yaxis='y2', mode='lines+markers+text', text=tr_df['prum_poh'].round(1), textposition='top center', textfont=dict(color='#f43f5e'), line=dict(color='#f43f5e', width=3)))
+    
+    fig.update_layout(yaxis2=dict(title="Pohyby", side="right", overlaying="y", showgrid=False), plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)", margin=dict(l=0, r=0, t=10, b=0), legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1))
+    st.plotly_chart(fig, use_container_width=True)
 
 def render_billing(df_pick, df_vekp, df_vepo, df_cats, queue_count_col, aus_data):
-    st.markdown(f"<div class='section-header'><h3>💰 Korelace mezi Pickováním a Účtováním</h3></div>", unsafe_allow_html=True)
+    st.markdown(f"<div class='section-header'><h3>💰 Korelace mezi Pickováním a Účtováním</h3><p>Zákazník platí podle počtu výsledných balících jednotek (HU). Zde vidíte náročnost vytvoření těchto zpoplatněných jednotek napříč fakturačními kategoriemi.</p></div>", unsafe_allow_html=True)
     
     aus_category_map = {}
     if aus_data:
@@ -124,27 +151,8 @@ def render_billing(df_pick, df_vekp, df_vepo, df_cats, queue_count_col, aus_data
             
         with col_t2:
             st.markdown("**Trend v čase (Měsíce)**")
-            
-            # --- PŘIDÁNA MOŽNOST FILTROVÁNÍ GRAFU ---
-            cat_options = ["Všechny kategorie"] + sorted(billing_df["Category_Full"].dropna().unique().tolist())
-            selected_cat = st.selectbox("Vyberte kategorii pro graf:", options=cat_options, label_visibility="collapsed")
-            
-            if selected_cat == "Všechny kategorie":
-                plot_df = billing_df.copy()
-            else:
-                plot_df = billing_df[billing_df["Category_Full"] == selected_cat].copy()
-            
-            tr_df = plot_df.groupby("Month").agg(to_sum=("pocet_to", "sum"), hu_sum=("pocet_hu", "sum"), poh=("pohyby_celkem", "sum"), lok=("pocet_lokaci", "sum")).reset_index()
-            tr_df['prum_poh'] = np.where(tr_df['lok']>0, tr_df['poh']/tr_df['lok'], 0)
-            
-            # --- GRAF S HODNOTAMI PŘÍMO VE SLOUPEČCÍCH ---
-            fig = go.Figure()
-            fig.add_trace(go.Bar(x=tr_df['Month'], y=tr_df['to_sum'], name='Počet TO', marker_color='#38bdf8', text=tr_df['to_sum'], textposition='auto'))
-            fig.add_trace(go.Bar(x=tr_df['Month'], y=tr_df['hu_sum'], name='Počet HU', marker_color='#818cf8', text=tr_df['hu_sum'], textposition='auto'))
-            fig.add_trace(go.Scatter(x=tr_df['Month'], y=tr_df['prum_poh'], name='Pohyby na lokaci', yaxis='y2', mode='lines+markers+text', text=tr_df['prum_poh'].round(1), textposition='top center', textfont=dict(color='#f43f5e'), line=dict(color='#f43f5e', width=3)))
-            
-            fig.update_layout(yaxis2=dict(title="Pohyby", side="right", overlaying="y", showgrid=False), plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)", margin=dict(l=0, r=0, t=10, b=0), legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1))
-            st.plotly_chart(fig, use_container_width=True)
+            # Volání izolovaného grafu
+            render_interactive_chart(billing_df)
 
         st.markdown(f"### ⚠️ Ztráta z konsolidace (Práce zdarma / Prodělek)")
         imb_df = billing_df[billing_df['TO_navic'] > 0].sort_values("TO_navic", ascending=False).head(50)
@@ -154,7 +162,6 @@ def render_billing(df_pick, df_vekp, df_vepo, df_cats, queue_count_col, aus_data
             st.dataframe(imb_disp, use_container_width=True, hide_index=True)
         else: st.success("Žádné zakázky s prodělkem nenalezeny!")
         
-        # --- ZCELA KOMPLETNÍ AUSWERTUNG SEKCE ---
         st.divider()
         st.subheader("📊 Analýza zásilkových dat (Auswertung)")
         if not aus_data: st.info("Pro tuto sekci nahrajte zákazníkův soubor Auswertung_Outbound_HWL.xlsx")
@@ -181,7 +188,7 @@ def render_billing(df_pick, df_vekp, df_vepo, df_cats, queue_count_col, aus_data
                 df_lf.columns = ["Lieferung"]
                 df_lf["Lieferung"] = df_lf["Lieferung"].astype(str).str.strip()
                 df_lf["is_KEP"] = df_likp[c_sped].astype(str).str.strip().isin(kep_set) if c_sped else False
-                df_lf["Order_Type"] = "O" if c_vs else "N" # Simplified mapping if T031 missing
+                df_lf["Order_Type"] = "O" if c_vs else "N"
                 df_lf["Kategorie"] = np.where(df_lf["is_KEP"], np.where(df_lf["Order_Type"] == "O", "OE", "E"), np.where(df_lf["Order_Type"] == "O", "O", "N"))
 
             df_vk = pd.DataFrame()
