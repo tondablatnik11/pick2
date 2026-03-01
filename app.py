@@ -1,14 +1,13 @@
 import streamlit as st
 import pandas as pd
 import numpy as np
+import io
 import time
 import re
 
-# Databáze a výpočty
 from database import save_to_db, load_from_db
-from modules.utils import fast_compute_moves, get_match_key_vectorized, get_match_key, parse_packing_time, BOX_UNITS
+from modules.utils import t, fast_compute_moves, get_match_key_vectorized, get_match_key, parse_packing_time, BOX_UNITS
 
-# Záložky (Tabs)
 from modules.tab_dashboard import render_dashboard
 from modules.tab_pallets import render_pallets
 from modules.tab_fu import render_fu
@@ -17,23 +16,19 @@ from modules.tab_billing import render_billing
 from modules.tab_packing import render_packing
 from modules.tab_audit import render_audit
 
-# ==========================================
-# 1. NASTAVENÍ STRÁNKY A STYLING
-# ==========================================
 st.set_page_config(page_title="Warehouse Control Tower", page_icon="🏢", layout="wide", initial_sidebar_state="expanded")
 st.markdown("""
     <style>
     .block-container { padding-top: 2rem; padding-bottom: 2rem; }
-    div[data-testid="metric-container"] { background-color: #ffffff; border: 1px solid #e2e8f0; padding: 1rem 1.5rem; border-radius: 0.75rem; box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1); }
+    div[data-testid="metric-container"] { background-color: #ffffff; border: 1px solid #e2e8f0; padding: 1rem 1.5rem; border-radius: 0.75rem; box-shadow: 0 4px 6px -1px rgba(0,0,0,0.1); }
     .main-header { font-size: 2.75rem; font-weight: 800; background: -webkit-linear-gradient(45deg, #1e3a8a, #3b82f6); -webkit-background-clip: text; -webkit-text-fill-color: transparent; margin-bottom: 0.2rem; }
     .sub-header { font-size: 1.1rem; color: #64748b; margin-bottom: 2rem; font-weight: 500; }
     .section-header { color: #0f172a; border-bottom: 2px solid #e2e8f0; padding-bottom: 0.5rem; margin-top: 2rem; margin-bottom: 1.5rem; }
     </style>
 """, unsafe_allow_html=True)
 
-# ==========================================
-# 2. CACHE PRO NAČTENÍ Z DATABÁZE
-# ==========================================
+if 'lang' not in st.session_state: st.session_state.lang = 'cs'
+
 @st.cache_data(show_spinner=False, ttl=3600)
 def fetch_and_prep_data():
     df_pick_raw = load_from_db('raw_pick')
@@ -43,13 +38,11 @@ def fetch_and_prep_data():
     df_queue_raw = load_from_db('raw_queue')
     df_manual_raw = load_from_db('raw_manual')
 
-    # Čištění pick reportu
     df_pick = df_pick_raw.copy()
     df_pick['Delivery'] = df_pick['Delivery'].astype(str).str.strip().replace(to_replace=['nan', 'NaN', 'None', 'none', ''], value=np.nan)
     df_pick['Material'] = df_pick['Material'].astype(str).str.strip().replace(to_replace=['nan', 'NaN', 'None', 'none', ''], value=np.nan)
     df_pick = df_pick.dropna(subset=['Delivery', 'Material']).copy()
     
-    # OPRAVA 1: CHYBĚJÍCÍ FILTR ADMINŮ
     num_removed_admins = 0
     if 'User' in df_pick.columns:
         mask_admins = df_pick['User'].isin(['UIDJ5089', 'UIH25501'])
@@ -69,8 +62,6 @@ def fetch_and_prep_data():
             q_map = df_queue_raw.dropna(subset=['Transfer Order Number', 'Queue']).drop_duplicates('Transfer Order Number').set_index('Transfer Order Number')['Queue'].to_dict()
             df_pick['Queue'] = df_pick['Transfer Order Number'].map(q_map).fillna('N/A')
             queue_count_col = 'Transfer Order Number'
-            
-            # OPRAVA 2: CHYBĚJÍCÍ DOPLŇOVÁNÍ DATUMŮ
             for d_col in ['Confirmation Date', 'Creation Date']:
                 if d_col in df_queue_raw.columns:
                     d_map = df_queue_raw.dropna(subset=['Transfer Order Number', d_col]).drop_duplicates('Transfer Order Number').set_index('Transfer Order Number')[d_col].to_dict()
@@ -80,11 +71,8 @@ def fetch_and_prep_data():
         elif 'SD Document' in df_queue_raw.columns:
             q_map = df_queue_raw.dropna(subset=['SD Document', 'Queue']).drop_duplicates('SD Document').set_index('SD Document')['Queue'].to_dict()
             df_pick['Queue'] = df_pick['Delivery'].map(q_map).fillna('N/A')
-
-        # OPRAVA 3: CHYBĚJÍCÍ FILTR CLEARANCE
         df_pick = df_pick[df_pick['Queue'].astype(str).str.upper() != 'CLEARANCE'].copy()
 
-    # Zpracování Master Dat (Obaly, váhy a rozměry)
     manual_boxes = {}
     if df_manual_raw is not None and not df_manual_raw.empty:
         c_mat, c_pkg = df_manual_raw.columns[0], df_manual_raw.columns[1]
@@ -125,37 +113,26 @@ def fetch_and_prep_data():
     df_pick['Piece_Weight_KG'] = df_pick['Match_Key'].map(weight_dict).fillna(0.0)
     df_pick['Piece_Max_Dim_CM'] = df_pick['Match_Key'].map(dim_dict).fillna(0.0)
 
-    # Vollpalety
     auto_voll_hus = set()
     mask_x = df_pick['Removal of total SU'] == 'X'
     if 'Handling Unit' in df_pick.columns: auto_voll_hus.update(df_pick.loc[mask_x, 'Handling Unit'].dropna().astype(str).str.strip())
     auto_voll_hus = {h for h in auto_voll_hus if h not in ["", "nan", "None"]}
 
-    # OE-Times úprava
     df_oe = load_from_db('raw_oe')
     if df_oe is not None and not df_oe.empty:
         df_oe['Delivery'] = df_oe['DN NUMBER (SAP)'].astype(str).str.strip()
         df_oe['Process_Time_Min'] = df_oe['Process Time'].apply(parse_packing_time)
-        
         agg_dict = {'Process_Time_Min': 'sum'}
-        if 'CUSTOMER' in df_oe.columns: agg_dict['CUSTOMER'] = 'first'
-        if 'Material' in df_oe.columns: agg_dict['Material'] = 'first'
-        if 'KLT' in df_oe.columns: agg_dict['KLT'] = lambda x: '; '.join(x.dropna().astype(str))
-        if 'Palety' in df_oe.columns: agg_dict['Palety'] = lambda x: '; '.join(x.dropna().astype(str))
-        if 'Cartons' in df_oe.columns: agg_dict['Cartons'] = lambda x: '; '.join(x.dropna().astype(str))
-        if 'Scanning serial numbers' in df_oe.columns: agg_dict['Scanning serial numbers'] = 'first'
-        if 'Reprinting labels ' in df_oe.columns: agg_dict['Reprinting labels '] = 'first'
-        if 'Difficult KLTs' in df_oe.columns: agg_dict['Difficult KLTs'] = 'first'
-        if 'Shift' in df_oe.columns: agg_dict['Shift'] = 'first'
-        if 'Number of item types' in df_oe.columns: agg_dict['Number of item types'] = 'first'
-        
+        for col in ['CUSTOMER', 'Material', 'Scanning serial numbers', 'Reprinting labels ', 'Difficult KLTs', 'Shift', 'Number of item types']:
+            if col in df_oe.columns: agg_dict[col] = 'first'
+        for col in ['KLT', 'Palety', 'Cartons']:
+            if col in df_oe.columns: agg_dict[col] = lambda x: '; '.join(x.dropna().astype(str))
         df_oe = df_oe.groupby('Delivery').agg(agg_dict).reset_index()
 
     df_cats = load_from_db('raw_cats')
     if df_cats is not None and not df_cats.empty:
         df_cats['Lieferung'] = df_cats['Lieferung'].astype(str).str.strip()
-        if 'Kategorie' in df_cats.columns and 'Art' in df_cats.columns:
-            df_cats['Category_Full'] = df_cats['Kategorie'].astype(str).str.strip() + " " + df_cats['Art'].astype(str).str.strip()
+        if 'Kategorie' in df_cats.columns and 'Art' in df_cats.columns: df_cats['Category_Full'] = df_cats['Kategorie'].astype(str).str.strip() + " " + df_cats['Art'].astype(str).str.strip()
         df_cats = df_cats.drop_duplicates('Lieferung')
 
     aus_data = {}
@@ -167,15 +144,19 @@ def fetch_and_prep_data():
         'df_pick': df_pick, 'queue_count_col': queue_count_col, 'auto_voll_hus': auto_voll_hus,
         'df_vekp': load_from_db('raw_vekp'), 'df_vepo': load_from_db('raw_vepo'),
         'df_cats': df_cats, 'df_oe': df_oe, 'aus_data': aus_data,
-        'num_removed_admins': num_removed_admins, 'manual_boxes_count': len(manual_boxes)
+        'num_removed_admins': num_removed_admins, 'manual_boxes': manual_boxes,
+        'weight_dict': weight_dict, 'dim_dict': dim_dict, 'box_dict': box_dict
     }
 
-# ==========================================
-# 3. HLAVNÍ BĚH APLIKACE
-# ==========================================
 def main():
-    st.markdown(f"<div class='main-header'>🏢 Warehouse Control Tower</div>", unsafe_allow_html=True)
-    st.markdown(f"<div class='sub-header'>End-to-End analýza (Modulární architektura)</div>", unsafe_allow_html=True)
+    col_title, col_lang = st.columns([8, 1])
+    with col_title:
+        st.markdown(f"<div class='main-header'>{t('title')}</div>", unsafe_allow_html=True)
+        st.markdown(f"<div class='sub-header'>{t('desc')}</div>", unsafe_allow_html=True)
+    with col_lang:
+        if st.button(t('switch_lang')):
+            st.session_state.lang = 'en' if st.session_state.lang == 'cs' else 'cs'
+            st.rerun()
 
     st.sidebar.header("⚙️ Konfigurace algoritmů")
     limit_vahy = st.sidebar.number_input("Hranice váhy (kg)", min_value=0.1, max_value=20.0, value=2.0, step=0.5)
@@ -220,8 +201,6 @@ def main():
 
     df_pick = data_dict['df_pick']
     st.session_state['auto_voll_hus'] = data_dict['auto_voll_hus']
-    num_removed_admins = data_dict['num_removed_admins']
-    manual_boxes_count = data_dict['manual_boxes_count']
 
     df_pick['Month'] = df_pick['Date'].dt.to_period('M').astype(str).replace('NaT', 'Neznámé')
     st.sidebar.divider()
@@ -233,25 +212,28 @@ def main():
     df_pick['Pohyby_Rukou'], df_pick['Pohyby_Exact'], df_pick['Pohyby_Loose_Miss'] = tt, te, tm
     df_pick['Celkova_Vaha_KG'] = df_pick['Qty'] * df_pick['Piece_Weight_KG']
 
-    # OPRAVA 4: CHYBĚJÍCÍ INFORMAČNÍ HLÁŠKY
-    c_i1, c_i2, c_i3 = st.columns(3)
-    if num_removed_admins > 0:
-        c_i1.info(f"💡 Vyloučeno **{num_removed_admins} systémových řádků** (UIDJ5089, UIH25501).")
-    x_c = ((df_pick['Removal of total SU'] == 'X') & (df_pick['Queue'].astype(str).str.upper().isin(['PI_PL_FU', 'PI_PL_FUOE']))).sum()
-    if x_c > 0:
-        c_i2.warning(f"💡 Započítán 1 pohyb pro **{x_c} řádků** 'X' (Platí POUZE pro Queue: PI_PL_FU, PI_PL_FUOE).")
-    if manual_boxes_count > 0:
-        c_i3.success(f"✅ Načteno ruční ověření pro **{manual_boxes_count} unikátních materiálů**.")
+    tabs = st.tabs([t('tab_dashboard'), t('tab_pallets'), t('tab_fu'), t('tab_top'), t('tab_billing'), t('tab_packing'), t('tab_audit')])
 
-    tabs = st.tabs(["📊 Dashboard & Queue", "📦 Palety", "🏭 Celé palety (FU)", "🏆 TOP Materiály", "💰 Fakturace (VEKP)", "⏱️ Časy Balení (OE)", "🔍 Detailní Audit"])
-
-    with tabs[0]: render_dashboard(df_pick, data_dict['queue_count_col'])
+    with tabs[0]: display_q = render_dashboard(df_pick, data_dict['queue_count_col'])
     with tabs[1]: render_pallets(df_pick)
     with tabs[2]: render_fu(df_pick, data_dict['queue_count_col'])
     with tabs[3]: render_top(df_pick)
     with tabs[4]: billing_df = render_billing(df_pick, data_dict['df_vekp'], data_dict['df_vepo'], data_dict['df_cats'], data_dict['queue_count_col'], data_dict['aus_data'])
     with tabs[5]: render_packing(billing_df if 'billing_df' in locals() else pd.DataFrame(), data_dict['df_oe'])
-    with tabs[6]: render_audit(df_pick, data_dict['df_vekp'], data_dict['df_vepo'], data_dict['df_oe'], data_dict['queue_count_col'], billing_df if 'billing_df' in locals() else pd.DataFrame())
+    with tabs[6]: render_audit(df_pick, data_dict['df_vekp'], data_dict['df_vepo'], data_dict['df_oe'], data_dict['queue_count_col'], billing_df if 'billing_df' in locals() else pd.DataFrame(), data_dict['manual_boxes'], data_dict['weight_dict'], data_dict['dim_dict'], data_dict['box_dict'], limit_vahy, limit_rozmeru, kusy_na_hmat)
+
+    # --- ZPĚT PŘIDÁN EXPORT DO EXCELU ---
+    st.divider()
+    buffer = io.BytesIO()
+    with pd.ExcelWriter(buffer, engine='openpyxl') as writer:
+        pd.DataFrame({"Parameter": ["Weight Limit", "Dim Limit", "Grab limit", "Admins Excluded"], "Value": [f"{limit_vahy} kg", f"{limit_rozmeru} cm", f"{kusy_na_hmat} pcs", data_dict['num_removed_admins']]}).to_excel(writer, index=False, sheet_name='Settings')
+        if display_q is not None and not display_q.empty: display_q.to_excel(writer, index=False, sheet_name='Queue_Analysis')
+        df_pal_exp = df_pick[df_pick['Queue'].astype(str).str.upper().isin(['PI_PL', 'PI_PL_OE'])].groupby('Delivery').agg(num_materials=('Material', 'nunique'), material=('Material', 'first'), total_qty=('Qty', 'sum'), celkem_pohybu=('Pohyby_Rukou', 'sum'), pohyby_exact=('Pohyby_Exact', 'sum'), pohyby_miss=('Pohyby_Loose_Miss', 'sum'), vaha_zakazky=('Celkova_Vaha_KG', 'sum'), max_rozmer=('Piece_Max_Dim_CM', 'first'))
+        df_pal_single = df_pal_exp[df_pal_exp['num_materials'] == 1].copy()
+        if not df_pal_single.empty: df_pal_single[['material', 'total_qty', 'celkem_pohybu', 'pohyby_exact', 'pohyby_miss', 'vaha_zakazky', 'max_rozmer']].rename(columns={'material': t('col_mat'), 'total_qty': t('col_qty'), 'celkem_pohybu': t('col_mov'), 'pohyby_exact': t('col_mov_exact'), 'pohyby_miss': t('col_mov_miss'), 'vaha_zakazky': t('col_wgt'), 'max_rozmer': t('col_max_dim')}).to_excel(writer, index=True, sheet_name='Single_Mat_Orders')
+        df_pick.groupby('Material').agg(Moves=('Pohyby_Rukou', 'sum'), Qty=('Qty', 'sum'), Exact=('Pohyby_Exact', 'sum'), Estimates=('Pohyby_Loose_Miss', 'sum'), Lines=('Material', 'count')).reset_index().sort_values('Moves', ascending=False).to_excel(writer, index=False, sheet_name='Material_Totals')
+
+    st.download_button(label=t('btn_download'), data=buffer.getvalue(), file_name=f"Warehouse_Control_Tower_{time.strftime('%Y%m%d_%H%M')}.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", type="primary")
 
 if __name__ == "__main__":
     main()
