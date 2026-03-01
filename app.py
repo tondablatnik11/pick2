@@ -16,14 +16,144 @@ from modules.tab_billing import render_billing
 from modules.tab_packing import render_packing
 from modules.tab_audit import render_audit
 
-st.set_page_config(page_title="Warehouse Control Tower", page_icon="🏢", layout="wide", initial_sidebar_state="expanded")
+# ==========================================
+# 1. NASTAVENÍ STRÁNKY A FUTURISTICKÉ CSS
+# ==========================================
+st.set_page_config(
+    page_title="Warehouse Control Tower",
+    page_icon="🚀",
+    layout="wide",
+    initial_sidebar_state="expanded"
+)
+
 st.markdown("""
     <style>
-    .block-container { padding-top: 2rem; padding-bottom: 2rem; }
-    div[data-testid="metric-container"] { background-color: #ffffff; border: 1px solid #e2e8f0; padding: 1rem 1.5rem; border-radius: 0.75rem; box-shadow: 0 4px 6px -1px rgba(0,0,0,0.1); }
-    .main-header { font-size: 2.75rem; font-weight: 800; background: -webkit-linear-gradient(45deg, #1e3a8a, #3b82f6); -webkit-background-clip: text; -webkit-text-fill-color: transparent; margin-bottom: 0.2rem; }
-    .sub-header { font-size: 1.1rem; color: #64748b; margin-bottom: 2rem; font-weight: 500; }
-    .section-header { color: #0f172a; border-bottom: 2px solid #e2e8f0; padding-bottom: 0.5rem; margin-top: 2rem; margin-bottom: 1.5rem; }
+    /* 1. Hlavní pozadí a celková animace (Dark Cyber Theme) */
+    .stApp {
+        background: radial-gradient(circle at top left, #0f172a, #020617) !important;
+        color: #e2e8f0;
+    }
+    
+    /* Plynulý nájezd aplikace odspodu */
+    @keyframes fadeIn {
+        from { opacity: 0; transform: translateY(30px); }
+        to { opacity: 1; transform: translateY(0); }
+    }
+    .block-container {
+        padding-top: 2rem;
+        padding-bottom: 2rem;
+        animation: fadeIn 1s cubic-bezier(0.16, 1, 0.3, 1);
+    }
+    
+    /* 2. Glassmorphism Karty (Metriky) + Neonový Hover */
+    div[data-testid="metric-container"] {
+        background: rgba(30, 41, 59, 0.4) !important;
+        backdrop-filter: blur(16px);
+        -webkit-backdrop-filter: blur(16px);
+        border: 1px solid rgba(56, 189, 248, 0.15) !important;
+        padding: 1.2rem 1.5rem;
+        border-radius: 1rem !important;
+        box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3), inset 0 0 10px rgba(56, 189, 248, 0.05);
+        transition: all 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+    }
+    div[data-testid="metric-container"]:hover {
+        transform: translateY(-8px) scale(1.03);
+        border-color: rgba(56, 189, 248, 0.8) !important;
+        box-shadow: 0 15px 35px rgba(56, 189, 248, 0.25), inset 0 0 20px rgba(56, 189, 248, 0.15);
+    }
+    div[data-testid="metric-container"] > div > div > div > div {
+        color: #f8fafc !important;
+        font-weight: 900 !important;
+        font-size: 2rem !important;
+        text-shadow: 0 0 10px rgba(255,255,255,0.2);
+    }
+    div[data-testid="metric-container"] label {
+        color: #94a3b8 !important;
+        font-weight: 700 !important;
+        text-transform: uppercase;
+        letter-spacing: 1px;
+    }
+    
+    /* 3. Zářící Nadpisy */
+    .main-header {
+        font-size: 3.2rem;
+        font-weight: 900;
+        background: linear-gradient(90deg, #38bdf8, #818cf8, #c084fc);
+        -webkit-background-clip: text;
+        -webkit-text-fill-color: transparent;
+        margin-bottom: 0.2rem;
+        animation: textGlow 3s ease-in-out infinite alternate;
+    }
+    @keyframes textGlow {
+        0% { text-shadow: 0 0 15px rgba(56,189,248,0.1); }
+        100% { text-shadow: 0 0 30px rgba(129,140,248,0.5), 0 0 50px rgba(192,132,252,0.3); }
+    }
+    
+    .sub-header {
+        font-size: 1.1rem;
+        color: #94a3b8;
+        margin-bottom: 2rem;
+        font-weight: 400;
+        letter-spacing: 0.5px;
+    }
+    
+    .section-header {
+        color: #f1f5f9;
+        border-bottom: 1px solid rgba(56, 189, 248, 0.3);
+        padding-bottom: 0.5rem;
+        margin-top: 2rem;
+        margin-bottom: 1.5rem;
+        text-transform: uppercase;
+        letter-spacing: 2px;
+        font-weight: 700;
+        text-shadow: 0 0 15px rgba(56,189,248,0.3);
+    }
+    
+    /* 4. Tabulky */
+    .stDataFrame {
+        border-radius: 0.8rem !important;
+        overflow: hidden !important;
+        border: 1px solid rgba(255,255,255,0.05);
+        box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5) !important;
+    }
+    
+    /* 5. Záložky (Tabs) k obrazu sci-fi */
+    .stTabs [data-baseweb="tab-list"] {
+        gap: 10px;
+        background-color: transparent;
+    }
+    .stTabs [data-baseweb="tab"] {
+        background-color: rgba(30, 41, 59, 0.3);
+        border: 1px solid rgba(255,255,255,0.05);
+        border-radius: 8px 8px 0 0;
+        padding: 10px 20px;
+        color: #94a3b8;
+        transition: all 0.3s ease;
+    }
+    .stTabs [aria-selected="true"] {
+        background-color: rgba(56, 189, 248, 0.1) !important;
+        border-bottom: 2px solid #38bdf8 !important;
+        color: #38bdf8 !important;
+        font-weight: bold;
+        box-shadow: inset 0 -15px 15px -15px rgba(56, 189, 248, 0.5);
+    }
+    
+    /* 6. Futuristická tlačítka */
+    .stButton > button {
+        background: linear-gradient(90deg, #3b82f6, #8b5cf6) !important;
+        color: white !important;
+        border: none !important;
+        border-radius: 0.5rem !important;
+        box-shadow: 0 4px 15px rgba(139, 92, 246, 0.4) !important;
+        transition: all 0.3s ease !important;
+        font-weight: bold;
+        letter-spacing: 1px;
+        text-transform: uppercase;
+    }
+    .stButton > button:hover {
+        transform: translateY(-2px) scale(1.02) !important;
+        box-shadow: 0 8px 25px rgba(139, 92, 246, 0.7) !important;
+    }
     </style>
 """, unsafe_allow_html=True)
 
