@@ -199,7 +199,7 @@ def main():
                             cols = temp_df.columns.tolist()
                             cols_up = [str(c).upper() for c in cols]
                             
-                            # Vylepšené, nerozbitné rozpoznávání (hledá jen části textu a ignoruje velikost písmen)
+                            # Vylepšené, nerozbitné rozpoznávání
                             if any('DELIVERY' in c for c in cols_up) and any('ACT.QTY' in c for c in cols_up):
                                 save_to_db(temp_df, 'raw_pick')
                                 st.success(f"✅ Uloženo jako Pick Report: {file.name}")
@@ -218,15 +218,19 @@ def main():
                             elif any('QUEUE' in c for c in cols_up) and (any('TRANSFER ORDER' in c for c in cols_up) or any('SD DOCUMENT' in c for c in cols_up)): 
                                 save_to_db(temp_df, 'raw_queue')
                                 st.success(f"✅ Uloženo jako Queue: {file.name}")
-                            elif any('DN NUMBER' in c for c in cols_up) and any('PROCESS TIME' in c for c in cols_up):
-                                # Jakmile to pozná OE-Times, sjednotí názvy sloupců, aby je pak aplikace bez problému našla
+                                
+                            # TVRDÁ DETEKCE PODLE NÁZVU SOUBORU PRO OE-TIMES
+                            elif 'oe-times' in fname or any('PROCESS TIME' in c for c in cols_up):
                                 rename_map = {}
                                 for orig, up in zip(cols, cols_up):
-                                    if 'DN NUMBER' in up: rename_map[orig] = 'DN NUMBER (SAP)'
-                                    if 'PROCESS TIME' in up: rename_map[orig] = 'Process Time'
+                                    if 'DN NUMBER' in up or 'DELIVERY' in up or 'DODAVKA' in up: 
+                                        rename_map[orig] = 'DN NUMBER (SAP)'
+                                    if 'PROCESS' in up or 'TIME' in up or 'CAS' in up or 'ČAS' in up: 
+                                        rename_map[orig] = 'Process Time'
                                 temp_df.rename(columns=rename_map, inplace=True)
                                 save_to_db(temp_df, 'raw_oe')
                                 st.success(f"✅ Uloženo jako OE-Times: {file.name}")
+                                
                             elif len(cols) >= 2 and (any('MATERIAL' in c for c in cols_up) or any('MATERIÁL' in c for c in cols_up)):
                                 save_to_db(temp_df, 'raw_manual')
                                 st.success(f"✅ Uloženo jako Ruční Master Data: {file.name}")
