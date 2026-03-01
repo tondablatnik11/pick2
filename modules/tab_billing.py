@@ -5,7 +5,7 @@ import plotly.graph_objects as go
 from modules.utils import t
 
 def render_billing(df_pick, df_vekp, df_vepo, df_cats, queue_count_col, aus_data):
-    st.markdown(f"<div class='section-header'><h3>💰 Korelace mezi Pickováním a Účtováním</h3><p>Zákazník platí podle počtu výsledných balících jednotek (HU). Zde vidíte náročnost vytvoření těchto zpoplatněných jednotek napříč fakturačními kategoriemi.</p></div>", unsafe_allow_html=True)
+    st.markdown(f"<div class='section-header'><h3>💰 Korelace mezi Pickováním a Účtováním</h3></div>", unsafe_allow_html=True)
     
     aus_category_map = {}
     if aus_data:
