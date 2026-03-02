@@ -255,7 +255,7 @@ def render_billing(df_pick, df_vekp, df_vepo, df_cats, queue_count_col, aus_data
             
             interactive_chart()
 
-        st.markdown(f"### ⚠️ Žebříček neefektivity z konsolidace (Práce zdarma)")
+        st.markdown(f"### ⚠️ Žebříček neefektivity z konsolidace")
         imb_df = billing_df[billing_df['TO_navic'] > 0].sort_values("TO_navic", ascending=False).head(50)
         if not imb_df.empty:
             imb_disp = imb_df[['Delivery', 'Category_Full', 'pocet_to', 'pohyby_celkem', 'pocet_hu', 'TO_navic']].copy()
