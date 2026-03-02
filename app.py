@@ -1,338 +1,307 @@
 import streamlit as st
 import pandas as pd
 import numpy as np
-import io
-import time
-import re
+import plotly.graph_objects as go
+from modules.utils import t
 
-from database import save_to_db, load_from_db
-from modules.utils import t, fast_compute_moves, get_match_key_vectorized, get_match_key, parse_packing_time, BOX_UNITS
+# Kouzlo pro bleskové překreslování grafu bez načítání celé stránky
+try:
+    fast_render = st.fragment
+except AttributeError:
+    fast_render = lambda f: f
 
-from modules.tab_dashboard import render_dashboard
-from modules.tab_pallets import render_pallets
-from modules.tab_fu import render_fu
-from modules.tab_top import render_top
-from modules.tab_billing import render_billing
-from modules.tab_packing import render_packing
-from modules.tab_audit import render_audit
-
-# ==========================================
-# 1. NASTAVENÍ STRÁNKY A UNIVERZÁLNÍ GLASSMORPHISM
-# ==========================================
-st.set_page_config(page_title="Warehouse Control Tower", page_icon="🚀", layout="wide", initial_sidebar_state="expanded")
-
-st.markdown("""
-    <style>
-    /* Plynulý nájezd aplikace */
-    @keyframes fadeIn {
-        from { opacity: 0; transform: translateY(20px); }
-        to { opacity: 1; transform: translateY(0); }
-    }
-    .block-container { animation: fadeIn 0.8s ease-out; }
+@fast_render
+def render_interactive_chart(billing_df):
+    cat_options = ["Všechny kategorie"] + sorted(billing_df["Category_Full"].dropna().unique().tolist())
+    selected_cat = st.selectbox("Vyberte kategorii pro graf:", options=cat_options, label_visibility="collapsed")
     
-    /* Univerzální Glassmorphism (Funguje v Light i Dark mode) */
-    div[data-testid="metric-container"] {
-        background: rgba(128, 128, 128, 0.05) !important;
-        backdrop-filter: blur(10px);
-        -webkit-backdrop-filter: blur(10px);
-        border: 1px solid rgba(128, 128, 128, 0.2) !important;
-        padding: 1.2rem 1.5rem;
-        border-radius: 1rem !important;
-        box-shadow: 0 4px 15px rgba(0, 0, 0, 0.05);
-        transition: all 0.3s cubic-bezier(0.25, 0.8, 0.25, 1);
-    }
-    div[data-testid="metric-container"]:hover {
-        transform: translateY(-5px);
-        border-color: rgba(56, 189, 248, 0.6) !important;
-        box-shadow: 0 10px 25px rgba(56, 189, 248, 0.15);
-    }
+    if selected_cat == "Všechny kategorie":
+        plot_df = billing_df.copy()
+    else:
+        plot_df = billing_df[billing_df["Category_Full"] == selected_cat].copy()
     
-    /* Styl pro datové rámce a grafy */
-    .stDataFrame, [data-testid="stPlotlyChart"] {
-        border-radius: 0.8rem !important;
-        border: 1px solid rgba(128, 128, 128, 0.2);
-        padding: 0.5rem;
-        background: rgba(128, 128, 128, 0.02);
-    }
+    tr_df = plot_df.groupby("Month").agg(to_sum=("pocet_to", "sum"), hu_sum=("pocet_hu", "sum"), poh=("pohyby_celkem", "sum"), lok=("pocet_lokaci", "sum")).reset_index()
+    tr_df['prum_poh'] = np.where(tr_df['lok']>0, tr_df['poh']/tr_df['lok'], 0)
     
-    .main-header { font-size: 3rem; font-weight: 900; background: linear-gradient(90deg, #0ea5e9, #6366f1); -webkit-background-clip: text; -webkit-text-fill-color: transparent; margin-bottom: 0.2rem; }
-    .sub-header { font-size: 1.1rem; color: gray; margin-bottom: 2rem; font-weight: 500; }
-    .section-header { border-bottom: 2px solid rgba(128, 128, 128, 0.2); padding-bottom: 0.5rem; margin-top: 2rem; margin-bottom: 1.5rem; font-weight: 700; text-transform: uppercase; letter-spacing: 1px;}
-    </style>
-""", unsafe_allow_html=True)
-if 'lang' not in st.session_state: st.session_state.lang = 'cs'
-
-@st.cache_data(show_spinner=False, ttl=3600)
-def fetch_and_prep_data():
-    df_pick_raw = load_from_db('raw_pick')
-    if df_pick_raw is None or df_pick_raw.empty: return None
-
-    df_marm_raw = load_from_db('raw_marm')
-    df_queue_raw = load_from_db('raw_queue')
-    df_manual_raw = load_from_db('raw_manual')
-
-    df_pick = df_pick_raw.copy()
-    df_pick['Delivery'] = df_pick['Delivery'].astype(str).str.strip().replace(to_replace=['nan', 'NaN', 'None', 'none', ''], value=np.nan)
-    df_pick['Material'] = df_pick['Material'].astype(str).str.strip().replace(to_replace=['nan', 'NaN', 'None', 'none', ''], value=np.nan)
-    df_pick = df_pick.dropna(subset=['Delivery', 'Material']).copy()
+    fig = go.Figure()
+    fig.add_trace(go.Bar(x=tr_df['Month'], y=tr_df['to_sum'], name='Počet TO', marker_color='#38bdf8', text=tr_df['to_sum'], textposition='auto'))
+    fig.add_trace(go.Bar(x=tr_df['Month'], y=tr_df['hu_sum'], name='Počet HU', marker_color='#818cf8', text=tr_df['hu_sum'], textposition='auto'))
+    fig.add_trace(go.Scatter(x=tr_df['Month'], y=tr_df['prum_poh'], name='Pohyby na lokaci', yaxis='y2', mode='lines+markers+text', text=tr_df['prum_poh'].round(1), textposition='top center', textfont=dict(color='#f43f5e'), line=dict(color='#f43f5e', width=3)))
     
-    num_removed_admins = 0
-    if 'User' in df_pick.columns:
-        mask_admins = df_pick['User'].isin(['UIDJ5089', 'UIH25501'])
-        num_removed_admins = int(mask_admins.sum())
-        df_pick = df_pick[~mask_admins].copy()
+    fig.update_layout(yaxis2=dict(title="Pohyby", side="right", overlaying="y", showgrid=False), plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)", margin=dict(l=0, r=0, t=10, b=0), legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1))
+    st.plotly_chart(fig, use_container_width=True)
 
-    df_pick['Match_Key'] = get_match_key_vectorized(df_pick['Material'])
-    df_pick['Qty'] = pd.to_numeric(df_pick['Act.qty (dest)'], errors='coerce').fillna(0)
-    df_pick['Source Storage Bin'] = df_pick.get('Source Storage Bin', df_pick.get('Storage Bin', '')).fillna('').astype(str)
-    df_pick['Removal of total SU'] = df_pick.get('Removal of total SU', '').fillna('').astype(str).str.strip().str.upper()
-    df_pick['Date'] = pd.to_datetime(df_pick.get('Confirmation date', df_pick.get('Confirmation Date')), errors='coerce')
-    
-    queue_count_col = 'Delivery'
-    df_pick['Queue'] = 'N/A'
-    if df_queue_raw is not None and not df_queue_raw.empty:
-        if 'Transfer Order Number' in df_pick.columns and 'Transfer Order Number' in df_queue_raw.columns:
-            q_map = df_queue_raw.dropna(subset=['Transfer Order Number', 'Queue']).drop_duplicates('Transfer Order Number').set_index('Transfer Order Number')['Queue'].to_dict()
-            df_pick['Queue'] = df_pick['Transfer Order Number'].map(q_map).fillna('N/A')
-            queue_count_col = 'Transfer Order Number'
-            for d_col in ['Confirmation Date', 'Creation Date']:
-                if d_col in df_queue_raw.columns:
-                    d_map = df_queue_raw.dropna(subset=['Transfer Order Number', d_col]).drop_duplicates('Transfer Order Number').set_index('Transfer Order Number')[d_col].to_dict()
-                    to_dates = df_pick['Transfer Order Number'].map(d_map)
-                    df_pick['Date'] = df_pick['Date'].fillna(pd.to_datetime(to_dates, errors='coerce'))
-                    break
-        elif 'SD Document' in df_queue_raw.columns:
-            q_map = df_queue_raw.dropna(subset=['SD Document', 'Queue']).drop_duplicates('SD Document').set_index('SD Document')['Queue'].to_dict()
-            df_pick['Queue'] = df_pick['Delivery'].map(q_map).fillna('N/A')
-        df_pick = df_pick[df_pick['Queue'].astype(str).str.upper() != 'CLEARANCE'].copy()
+def render_billing(df_pick, df_vekp, df_vepo, df_cats, queue_count_col, aus_data):
+    st.markdown(f"<div class='section-header'><h3>💰 Korelace mezi Pickováním a Účtováním</h3><p>Zákazník platí podle počtu výsledných balících jednotek (HU). Zde vidíte náročnost vytvoření těchto zpoplatněných jednotek napříč fakturačními kategoriemi.</p></div>", unsafe_allow_html=True)
 
-    manual_boxes = {}
-    if df_manual_raw is not None and not df_manual_raw.empty:
-        c_mat, c_pkg = df_manual_raw.columns[0], df_manual_raw.columns[1]
-        for _, row in df_manual_raw.iterrows():
-            raw_mat = str(row[c_mat])
-            if raw_mat.upper() in ['NAN', 'NONE', '']: continue
-            mat_key = get_match_key(raw_mat)
-            pkg = str(row[c_pkg])
-            nums = re.findall(r'\bK-(\d+)ks?\b|(\d+)\s*ks\b|balen[íi]\s+po\s+(\d+)|krabice\s+(?:po\s+)?(\d+)|(?:role|pytl[íi]k|pytel)[^\d]*(\d+)', pkg, flags=re.IGNORECASE)
-            ext = sorted(list(set([int(g) for m in nums for g in m if g])), reverse=True)
-            if not ext and re.search(r'po\s*kusech', pkg, re.IGNORECASE): ext = [1]
-            if ext: manual_boxes[mat_key] = ext
+    aus_category_map = {}
+    if aus_data:
+        df_likp_tmp = aus_data.get("LIKP", pd.DataFrame())
+        df_sdshp_tmp = aus_data.get("SDSHP_AM2", pd.DataFrame())
+        df_t031_tmp = aus_data.get("T031", pd.DataFrame())
+        kep_set = set()
+        if not df_sdshp_tmp.empty:
+            col_s = df_sdshp_tmp.columns[0]
+            col_k = next((c for c in df_sdshp_tmp.columns if "KEP" in str(c).upper() or "FÄHIG" in str(c).upper()), None)
+            if col_k: kep_set = set(df_sdshp_tmp.loc[df_sdshp_tmp[col_k].astype(str).str.strip() == "X", col_s].astype(str).str.strip().str.lstrip('0'))
+        order_type_map = {}
+        if not df_t031_tmp.empty: order_type_map = dict(zip(df_t031_tmp.iloc[:, 0].astype(str).str.strip(), df_t031_tmp.iloc[:, 1].astype(str).str.strip()))
+        if not df_likp_tmp.empty:
+            c_lief = df_likp_tmp.columns[0]
+            c_vs = next((c for c in df_likp_tmp.columns if "Versandstelle" in str(c) or "Shipping" in str(c)), None)
+            c_sped = next((c for c in df_likp_tmp.columns if "pediteur" in str(c) or "Transp" in str(c)), None)
+            tmp_lf = df_likp_tmp[[c_lief]].copy()
+            tmp_lf.columns = ["Lieferung"]
+            # OPRAVA 1: Extrémní ořezání nul pro dokonalé přiřazení z Auswertungu
+            tmp_lf["Lieferung"] = tmp_lf["Lieferung"].astype(str).str.strip().str.lstrip('0')
+            tmp_lf["Order_Type"] = df_likp_tmp[c_vs].astype(str).str.strip().map(order_type_map).fillna("N") if c_vs else "N"
+            tmp_lf["is_KEP"] = df_likp_tmp[c_sped].astype(str).str.strip().str.lstrip('0').isin(kep_set) if c_sped else False
+            tmp_lf["Kategorie"] = np.where(tmp_lf["is_KEP"], np.where(tmp_lf["Order_Type"] == "O", "OE", "E"), np.where(tmp_lf["Order_Type"] == "O", "O", "N"))
+            aus_category_map = tmp_lf.set_index("Lieferung")["Kategorie"].to_dict()
 
-    box_dict, weight_dict, dim_dict = {}, {}, {}
-    if df_marm_raw is not None and not df_marm_raw.empty:
-        df_marm_raw['Match_Key'] = get_match_key_vectorized(df_marm_raw['Material'])
-        df_boxes = df_marm_raw[df_marm_raw['Alternative Unit of Measure'].isin(BOX_UNITS)].copy()
-        df_boxes['Numerator'] = pd.to_numeric(df_boxes['Numerator'], errors='coerce').fillna(0)
-        box_dict = df_boxes.groupby('Match_Key')['Numerator'].apply(lambda g: sorted([int(x) for x in g if x > 1], reverse=True)).to_dict()
+    billing_df = pd.DataFrame()
 
-        df_st = df_marm_raw[df_marm_raw['Alternative Unit of Measure'].isin(['ST', 'PCE', 'KS', 'EA', 'PC'])].copy()
-        df_st['Gross Weight'] = pd.to_numeric(df_st['Gross Weight'], errors='coerce').fillna(0)
-        df_st['Weight_KG'] = np.where(df_st['Unit of Weight'].astype(str).str.upper() == 'G', df_st['Gross Weight'] / 1000.0, df_st['Gross Weight'])
-        weight_dict = df_st.groupby('Match_Key')['Weight_KG'].first().to_dict()
-
-        def to_cm(val, unit):
-            try:
-                v = float(val); u = str(unit).upper().strip()
-                return v / 10.0 if u == 'MM' else v * 100.0 if u == 'M' else v
-            except: return 0.0
-
-        for dim_col, short in [('Length', 'L'), ('Width', 'W'), ('Height', 'H')]:
-            if dim_col in df_st.columns: df_st[short] = df_st.apply(lambda r, dc=dim_col: to_cm(r[dc], r.get('Unit of Dimension', 'CM')), axis=1)
-            else: df_st[short] = 0.0
-        dim_dict = df_st.set_index('Match_Key')[['L', 'W', 'H']].max(axis=1).to_dict()
-
-    df_pick['Box_Sizes_List'] = df_pick['Match_Key'].apply(lambda m: manual_boxes.get(m, box_dict.get(m, [])))
-    df_pick['Piece_Weight_KG'] = df_pick['Match_Key'].map(weight_dict).fillna(0.0)
-    df_pick['Piece_Max_Dim_CM'] = df_pick['Match_Key'].map(dim_dict).fillna(0.0)
-
-    auto_voll_hus = set()
-    mask_x = df_pick['Removal of total SU'] == 'X'
-    if 'Handling Unit' in df_pick.columns: auto_voll_hus.update(df_pick.loc[mask_x, 'Handling Unit'].dropna().astype(str).str.strip())
-    auto_voll_hus = {h for h in auto_voll_hus if h not in ["", "nan", "None"]}
-
-    # --- OPRAVENÉ NAČÍTÁNÍ OE-TIMES ---
-    df_oe = load_from_db('raw_oe')
-    if df_oe is not None and not df_oe.empty:
-        cols_up = [str(c).upper() for c in df_oe.columns]
-        rename_map = {}
-        has_dn = False
-        has_time = False
+    if df_vekp is not None and not df_vekp.empty:
+        vekp_clean = df_vekp.dropna(subset=["Handling Unit", "Generated delivery"]).copy()
         
-        for orig, up in zip(df_oe.columns, cols_up):
-            if not has_dn and ('DN NUMBER' in up or 'DELIVERY' in up or 'DODAVKA' in up): 
-                rename_map[orig] = 'DN NUMBER (SAP)'
-                has_dn = True
-            elif not has_time and ('PROCESS' in up or 'CAS' in up or 'ČAS' in up or 'TIME' in up): 
-                rename_map[orig] = 'Process Time'
-                has_time = True
-                
-        df_oe.rename(columns=rename_map, inplace=True)
-        # Pojistka: zahození duplicitních sloupců, pokud by k nim došlo
-        df_oe = df_oe.loc[:, ~df_oe.columns.duplicated()].copy()
+        # OPRAVA 2: Párování Pick <-> VEKP přes čisté sloupce (spáruje všechny zakázky)
+        vekp_clean['Clean_Del'] = vekp_clean['Generated delivery'].astype(str).str.strip().str.lstrip('0')
+        df_pick['Clean_Del'] = df_pick['Delivery'].astype(str).str.strip().str.lstrip('0')
         
-        if 'DN NUMBER (SAP)' in df_oe.columns and 'Process Time' in df_oe.columns:
-            df_oe['Delivery'] = df_oe['DN NUMBER (SAP)'].astype(str).str.strip()
-            df_oe['Process_Time_Min'] = df_oe['Process Time'].apply(parse_packing_time)
-            
-            agg_dict = {'Process_Time_Min': 'sum'}
-            for col in ['CUSTOMER', 'Material', 'Scanning serial numbers', 'Reprinting labels ', 'Difficult KLTs', 'Shift', 'Number of item types']:
-                if col in df_oe.columns: agg_dict[col] = 'first'
-            for col in ['KLT', 'Palety', 'Cartons']:
-                if col in df_oe.columns: agg_dict[col] = lambda x: '; '.join(x.dropna().astype(str))
-                
-            df_oe = df_oe.groupby('Delivery').agg(agg_dict).reset_index()
+        valid_deliveries = df_pick["Clean_Del"].dropna().unique()
+        vekp_filtered = vekp_clean[vekp_clean["Clean_Del"].isin(valid_deliveries)].copy()
+        
+        vekp_hu_col = next((c for c in vekp_filtered.columns if "Internal HU" in str(c) or "HU-Nummer intern" in str(c)), vekp_filtered.columns[0])
+        vekp_ext_col = vekp_filtered.columns[1]
+        parent_col_vepo = next((c for c in vekp_filtered.columns if "higher-level" in str(c).lower() or "übergeordn" in str(c).lower() or "superordinate" in str(c).lower()), None)
+        
+        vekp_filtered['Clean_HU_Int'] = vekp_filtered[vekp_hu_col].astype(str).str.strip().str.lstrip('0')
+        vekp_filtered['Clean_HU_Ext'] = vekp_filtered[vekp_ext_col].astype(str).str.strip().str.lstrip('0')
+        
+        if parent_col_vepo:
+            vekp_filtered['Clean_Parent'] = vekp_filtered[parent_col_vepo].astype(str).str.strip().str.lstrip('0').replace({'nan': '', 'none': ''})
         else:
-            df_oe = None
+            vekp_filtered['Clean_Parent'] = ""
 
-    df_cats = load_from_db('raw_cats')
-    if df_cats is not None and not df_cats.empty:
-        df_cats['Lieferung'] = df_cats['Lieferung'].astype(str).str.strip()
-        if 'Kategorie' in df_cats.columns and 'Art' in df_cats.columns: df_cats['Category_Full'] = df_cats['Kategorie'].astype(str).str.strip() + " " + df_cats['Art'].astype(str).str.strip()
-        df_cats = df_cats.drop_duplicates('Lieferung')
+        valid_base_hus = set()
+        if df_vepo is not None and not df_vepo.empty:
+            vepo_hu_col = next((c for c in df_vepo.columns if "Internal HU" in str(c) or "HU-Nummer intern" in str(c)), df_vepo.columns[0])
+            vepo_lower_col = next((c for c in df_vepo.columns if "Lower-level" in str(c) or "untergeordn" in str(c).lower()), None)
+            
+            valid_base_hus = set(df_vepo[vepo_hu_col].astype(str).str.strip().str.lstrip('0'))
+            if vepo_lower_col:
+                valid_base_hus.update(set(df_vepo[vepo_lower_col].dropna().astype(str).str.strip().str.lstrip('0')))
+        else:
+            valid_base_hus = set(vekp_filtered['Clean_HU_Int'])
 
-    aus_data = {}
-    for sheet in ["LIKP", "SDSHP_AM2", "T031", "VEKP", "VEPO", "LIPS", "T023"]:
-        aus_df = load_from_db(f'aus_{sheet.lower()}')
-        if aus_df is not None: aus_data[sheet] = aus_df
+        # Ochrana Vollpalet
+        auto_voll_hus_clean = set()
+        mask_x = df_pick['Removal of total SU'] == 'X'
+        for c_hu in ['Source storage unit', 'Source Storage Bin', 'Handling Unit']:
+            if c_hu in df_pick.columns:
+                auto_voll_hus_clean.update(df_pick.loc[mask_x, c_hu].dropna().astype(str).str.strip().str.lstrip('0'))
+        auto_voll_hus_clean.discard("")
+        auto_voll_hus_clean.discard("nan")
+        auto_voll_hus_clean.discard("none")
 
-    return {
-        'df_pick': df_pick, 'queue_count_col': queue_count_col, 'auto_voll_hus': auto_voll_hus,
-        'df_vekp': load_from_db('raw_vekp'), 'df_vepo': load_from_db('raw_vepo'),
-        'df_cats': df_cats, 'df_oe': df_oe, 'aus_data': aus_data,
-        'num_removed_admins': num_removed_admins, 'manual_boxes': manual_boxes,
-        'weight_dict': weight_dict, 'dim_dict': dim_dict, 'box_dict': box_dict
-    }
+        hu_agg_list = []
+        for delivery, group in vekp_filtered.groupby("Clean_Del"):
+            ext_to_int = dict(zip(group['Clean_HU_Ext'], group['Clean_HU_Int']))
+            p_map = {}
+            for _, r in group.iterrows():
+                child = str(r['Clean_HU_Int'])
+                parent = str(r['Clean_Parent'])
+                if parent in ext_to_int:
+                    parent = ext_to_int[parent]
+                p_map[child] = parent
+                
+            # 1. KONTROLA VEPO: Listy = jednotky, ve kterých je fyzicky materiál
+            leaves = [h for h in group['Clean_HU_Int'] if h in valid_base_hus]
+            
+            roots = set()
+            voll_count = 0
+            
+            for leaf in leaves:
+                # Najdeme si externí ID, protože Vollpalety jsou v picku často pod externím ID
+                leaf_exts = group.loc[group['Clean_HU_Int'] == leaf, 'Clean_HU_Ext'].values
+                leaf_ext = leaf_exts[0] if len(leaf_exts) > 0 else ""
+                
+                # 2. OCHRANA VOLLPALET
+                if leaf in auto_voll_hus_clean or leaf_ext in auto_voll_hus_clean:
+                    voll_count += 1
+                else:
+                    curr = leaf
+                    visited = set()
+                    while curr in p_map and p_map[curr] != "" and curr not in visited:
+                        visited.add(curr)
+                        curr = p_map[curr]
+                    roots.add(curr)
+                    
+            hu_agg_list.append({
+                "Clean_Del": delivery,
+                "hu_leaf": len(leaves),
+                "hu_top_level": len(roots) + voll_count
+            })
+            
+        hu_agg = pd.DataFrame(hu_agg_list)
+        if hu_agg.empty:
+            hu_agg = pd.DataFrame(columns=["Clean_Del", "hu_leaf", "hu_top_level"])
 
-def main():
-    col_title, col_lang = st.columns([8, 1])
-    with col_title:
-        st.markdown(f"<div class='main-header'>{t('title')}</div>", unsafe_allow_html=True)
-        st.markdown(f"<div class='sub-header'>{t('desc')}</div>", unsafe_allow_html=True)
-    with col_lang:
-        if st.button(t('switch_lang')):
-            st.session_state.lang = 'en' if st.session_state.lang == 'cs' else 'cs'
-            st.rerun()
+        pick_agg = df_pick.groupby("Clean_Del").agg(
+            pocet_to=(queue_count_col, "nunique"),
+            pohyby_celkem=("Pohyby_Rukou", "sum"),
+            pocet_lokaci=("Source Storage Bin", "nunique"),
+            hlavni_fronta=("Queue", "first"),
+            pocet_mat=("Material", "nunique"),
+            Month=("Month", "first"),
+            Delivery=("Delivery", "first")
+        ).reset_index()
 
-    st.sidebar.header("⚙️ Konfigurace algoritmů")
-    limit_vahy = st.sidebar.number_input("Hranice váhy (kg)", min_value=0.1, max_value=20.0, value=2.0, step=0.5)
-    limit_rozmeru = st.sidebar.number_input("Hranice rozměru (cm)", min_value=1.0, max_value=200.0, value=15.0, step=1.0)
-    kusy_na_hmat = st.sidebar.slider("Ks do hrsti", min_value=1, max_value=20, value=1, step=1)
+        billing_df = pd.merge(pick_agg, hu_agg, on="Clean_Del", how="left")
 
-    st.sidebar.divider()
-    with st.sidebar.expander("🛠️ Admin Zóna (Nahrát data do DB)"):
-        st.info("Nahrajte Excely sem. Zpracují se do databáze a aplikace poběží bleskově.")
-        admin_pwd = st.text_input("Heslo:", type="password")
-        if admin_pwd == "admin123":
-            uploaded_files = st.file_uploader("Nahrát CSV/Excel", accept_multiple_files=True)
-            if st.button("Uložit do databáze", type="primary") and uploaded_files:
-                with st.spinner("Zpracovávám a ukládám do Supabase..."):
-                    for file in uploaded_files:
-                        try:
-                            fname = file.name.lower()
-                            if fname.endswith('.xlsx') and 'auswertung' in fname:
-                                aus_xl = pd.ExcelFile(file)
-                                for sn in aus_xl.sheet_names: 
-                                    save_to_db(aus_xl.parse(sn, dtype=str), f"aus_{sn.lower()}")
-                                st.success(f"✅ Uloženo (Auswertung): {file.name}")
-                                continue
+        if df_cats is not None:
+            df_cats["Lieferung_Clean"] = df_cats["Lieferung"].astype(str).str.strip().str.lstrip('0')
+            billing_df = pd.merge(
+                billing_df, df_cats[["Lieferung_Clean", "Category_Full"]],
+                left_on="Clean_Del", right_on="Lieferung_Clean", how="left")
+        else:
+            billing_df["Category_Full"] = pd.NA
 
-                            temp_df = pd.read_csv(file, dtype=str, sep=None, engine='python') if fname.endswith('.csv') else pd.read_excel(file, dtype=str)
-                            temp_df.columns = temp_df.columns.str.strip()
-                            cols = temp_df.columns.tolist()
-                            cols_up = [str(c).upper() for c in cols]
-                            
-                            if any('DELIVERY' in c for c in cols_up) and any('ACT.QTY' in c for c in cols_up):
-                                save_to_db(temp_df, 'raw_pick')
-                                st.success(f"✅ Uloženo jako Pick Report: {file.name}")
-                            elif any('NUMERATOR' in c for c in cols_up) and any('ALTERNATIVE UNIT' in c for c in cols_up): 
-                                save_to_db(temp_df, 'raw_marm')
-                                st.success(f"✅ Uloženo jako MARM: {file.name}")
-                            elif any('HANDLING UNIT' in c for c in cols_up) and any('GENERATED DELIVERY' in c for c in cols_up): 
-                                save_to_db(temp_df, 'raw_vekp')
-                                st.success(f"✅ Uloženo jako VEKP: {file.name}")
-                            elif (any('HANDLING UNIT ITEM' in c for c in cols_up) or any('HANDLING UNIT POSITION' in c for c in cols_up)) and any('MATERIAL' in c for c in cols_up): 
-                                save_to_db(temp_df, 'raw_vepo')
-                                st.success(f"✅ Uloženo jako VEPO: {file.name}")
-                            elif any('LIEFERUNG' in c for c in cols_up) and any('KATEGORIE' in c for c in cols_up): 
-                                save_to_db(temp_df, 'raw_cats')
-                                st.success(f"✅ Uloženo jako Kategorie: {file.name}")
-                            elif any('QUEUE' in c for c in cols_up) and (any('TRANSFER ORDER' in c for c in cols_up) or any('SD DOCUMENT' in c for c in cols_up)): 
-                                save_to_db(temp_df, 'raw_queue')
-                                st.success(f"✅ Uloženo jako Queue: {file.name}")
-                                
-                            elif 'oe-times' in fname or any('PROCESS' in c for c in cols_up) or any('TIME' in c for c in cols_up):
-                                rename_map = {}
-                                has_dn = False
-                                has_time = False
-                                
-                                for orig, up in zip(cols, cols_up):
-                                    if not has_dn and ('DN NUMBER' in up or 'DELIVERY' in up or 'DODAVKA' in up):
-                                        rename_map[orig] = 'DN NUMBER (SAP)'
-                                        has_dn = True
-                                    elif not has_time and ('PROCESS' in up or 'CAS' in up or 'ČAS' in up or 'TIME' in up):
-                                        rename_map[orig] = 'Process Time'
-                                        has_time = True
-                                        
-                                temp_df.rename(columns=rename_map, inplace=True)
-                                temp_df = temp_df.loc[:, ~temp_df.columns.duplicated()]
-                                save_to_db(temp_df, 'raw_oe')
-                                st.success(f"✅ Uloženo jako OE-Times: {file.name}")
-                                
-                            elif len(cols) >= 2 and (any('MATERIAL' in c for c in cols_up) or any('MATERIÁL' in c for c in cols_up)):
-                                save_to_db(temp_df, 'raw_manual')
-                                st.success(f"✅ Uloženo jako Ruční Master Data: {file.name}")
-                            else:
-                                st.warning(f"⚠️ Soubor '{file.name}' nebyl rozpoznán! Zkontrolujte názvy sloupců.")
-                            
-                        except Exception as e:
-                            st.error(f"❌ Chyba u souboru {file.name}: {e}")
-                            
-                    st.cache_data.clear()
-                    time.sleep(2.0)
-                    st.rerun()
+        def odvod_kategorii(row):
+            cat_full = row.get('Category_Full')
+            if pd.notna(cat_full) and str(cat_full).strip() not in ["", "nan", t("uncategorized")]:
+                return cat_full
+            
+            # 3. SPÁROVÁNÍ KATEGORIE: Bezpečné prohledání díky čistému Delivery (bez nul)
+            kat = aus_category_map.get(row["Clean_Del"])
+            
+            if not kat:
+                q = str(row.get('hlavni_fronta', '')).upper()
+                if 'PI_PA_OE' in q: kat = "OE"
+                elif 'PI_PA' in q: kat = "E"
+                elif 'PI_PL_FUOE' in q or 'PI_PL_OE' in q: kat = "O"
+                elif 'PI_PL' in q: kat = "N"
+                    
+            art = "Sortenrein" if row.get('pocet_mat', 1) <= 1 else "Misch"
+            
+            if kat: return f"{kat} {art}"
+            return t("uncategorized")
 
-    with st.spinner("🔄 Načítám data z databáze..."):
-        data_dict = fetch_and_prep_data()
+        billing_df["Category_Full"] = billing_df.apply(odvod_kategorii, axis=1)
 
-    if data_dict is None:
-        st.warning("🗄️ Databáze je zatím prázdná. Otevřete levé menu 'Admin Zóna', zadejte heslo 'admin123' a nahrajte Pick Report a další soubory.")
-        return
+        def urci_konecnou_hu(row):
+            kat = str(row.get('Category_Full', '')).upper()
+            if kat.startswith('E') or kat.startswith('OE'):
+                return row.get('hu_leaf', 0)
+            else:
+                return row.get('hu_top_level', 0)
 
-    df_pick = data_dict['df_pick']
-    st.session_state['auto_voll_hus'] = data_dict['auto_voll_hus']
+        billing_df["pocet_hu"] = billing_df.apply(urci_konecnou_hu, axis=1).fillna(0).astype(int)
+        billing_df["TO_navic"] = (billing_df["pocet_to"] - billing_df["pocet_hu"]).clip(lower=0).astype(int)
+        
+    if not billing_df.empty:
+        c1, c2, c3, c4 = st.columns(4)
+        with c1:
+            with st.container(border=True): st.metric("Zakázek celkem", f"{len(billing_df):,}")
+        with c2:
+            with st.container(border=True): st.metric("Fakturované palety/krabice (HU)", f"{int(billing_df['pocet_hu'].sum()):,}")
+        with c3:
+            with st.container(border=True): st.metric("Fyzických Pick TO", f"{int(billing_df['pocet_to'].sum()):,}")
+        with c4:
+            with st.container(border=True): st.metric("Nefakturované Picky (TO navíc)", f"{int(billing_df['TO_navic'].sum()):,}", delta_color="inverse")
 
-    df_pick['Month'] = df_pick['Date'].dt.to_period('M').astype(str).replace('NaT', 'Neznámé')
-    st.sidebar.divider()
-    date_mode = st.sidebar.radio("Filtr období:", ['Celé období', 'Podle měsíce'], label_visibility="collapsed")
-    if date_mode == 'Podle měsíce':
-        df_pick = df_pick[df_pick['Month'] == st.sidebar.selectbox("Vyberte měsíc:", options=sorted(df_pick['Month'].unique()))].copy()
+        st.divider()
+        col_t1, col_t2 = st.columns([1.2, 1])
+        with col_t1:
+            st.markdown("**Souhrn podle kategorií**")
+            cat_sum = billing_df.groupby("Category_Full").agg(pocet_zakazek=("Clean_Del", "nunique"), pocet_to=("pocet_to", "sum"), pocet_hu=("pocet_hu", "sum"), pocet_lok=("pocet_lokaci", "sum"), poh=("pohyby_celkem", "sum"), to_navic=("TO_navic", "sum")).reset_index()
+            cat_sum["prum_poh"] = np.where(cat_sum["pocet_lok"] > 0, cat_sum["poh"] / cat_sum["pocet_lok"], 0)
+            disp = cat_sum[["Category_Full", "pocet_zakazek", "pocet_to", "pocet_hu", "prum_poh", "to_navic"]].copy()
+            disp.columns = ["Kategorie", "Počet zakázek", "Počet TO", "Zúčtované HU", "Prům. pohybů na lokaci", "TO navíc (Ztráta)"]
+            st.dataframe(disp.style.format({"Prům. pohybů na lokaci": "{:.1f}"}), use_container_width=True, hide_index=True)
+            
+        with col_t2:
+            st.markdown("**Trend v čase (Měsíce)**")
+            render_interactive_chart(billing_df)
 
-    tt, te, tm = fast_compute_moves(df_pick['Qty'].values, df_pick['Queue'].values, df_pick['Removal of total SU'].values, df_pick['Box_Sizes_List'].values, df_pick['Piece_Weight_KG'].values, df_pick['Piece_Max_Dim_CM'].values, limit_vahy, limit_rozmeru, kusy_na_hmat)
-    df_pick['Pohyby_Rukou'], df_pick['Pohyby_Exact'], df_pick['Pohyby_Loose_Miss'] = tt, te, tm
-    df_pick['Celkova_Vaha_KG'] = df_pick['Qty'] * df_pick['Piece_Weight_KG']
+        st.markdown(f"### ⚠️ Ztráta z konsolidace (Práce zdarma / Prodělek)")
+        imb_df = billing_df[billing_df['TO_navic'] > 0].sort_values("TO_navic", ascending=False).head(50)
+        if not imb_df.empty:
+            imb_disp = imb_df[['Delivery', 'Category_Full', 'pocet_to', 'pohyby_celkem', 'pocet_hu', 'TO_navic']].copy()
+            imb_disp.columns = ["Delivery", "Kategorie", "Pick TO celkem", "Pohyby rukou", "Účtované HU", "TO navíc (Rozdíl)"]
+            st.dataframe(imb_disp, use_container_width=True, hide_index=True)
+        else: st.success("Žádné zakázky s prodělkem nenalezeny!")
+        
+        # --- AUSWERTUNG SEKCE ---
+        st.divider()
+        st.subheader("📊 Analýza zásilkových dat (Auswertung)")
+        if not aus_data: st.info("Pro tuto sekci nahrajte zákazníkův soubor Auswertung_Outbound_HWL.xlsx")
+        else:
+            df_likp = aus_data.get("LIKP", pd.DataFrame())
+            df_vekp2 = aus_data.get("VEKP", pd.DataFrame())
+            df_vepo = aus_data.get("VEPO", pd.DataFrame())
+            df_sdshp = aus_data.get("SDSHP_AM2", pd.DataFrame())
+            df_t031 = aus_data.get("T031", pd.DataFrame())
 
-    tabs = st.tabs([t('tab_dashboard'), t('tab_pallets'), t('tab_fu'), t('tab_top'), t('tab_billing'), t('tab_packing'), t('tab_audit')])
+            kep_set = set()
+            if not df_sdshp.empty:
+                col_k = next((c for c in df_sdshp.columns if "KEP" in str(c).upper()), None)
+                if col_k: kep_set = set(df_sdshp.loc[df_sdshp[col_k].astype(str).str.strip() == "X", df_sdshp.columns[0]].astype(str).str.strip())
+            
+            df_lf = pd.DataFrame()
+            if not df_likp.empty:
+                c_lief = df_likp.columns[0]
+                c_vs = next((c for c in df_likp.columns if "Versandstelle" in str(c)), None)
+                c_sped = next((c for c in df_likp.columns if "pediteur" in str(c)), None)
+                df_lf = df_likp[[c_lief]].copy()
+                df_lf.columns = ["Lieferung"]
+                df_lf["Lieferung"] = df_lf["Lieferung"].astype(str).str.strip().str.lstrip('0')
+                df_lf["is_KEP"] = df_likp[c_sped].astype(str).str.strip().isin(kep_set) if c_sped else False
+                df_lf["Order_Type"] = "O" if c_vs else "N"
+                df_lf["Kategorie"] = np.where(df_lf["is_KEP"], np.where(df_lf["Order_Type"] == "O", "OE", "E"), np.where(df_lf["Order_Type"] == "O", "O", "N"))
 
-    with tabs[0]: display_q = render_dashboard(df_pick, data_dict['queue_count_col'])
-    with tabs[1]: render_pallets(df_pick)
-    with tabs[2]: render_fu(df_pick, data_dict['queue_count_col'])
-    with tabs[3]: render_top(df_pick)
-    with tabs[4]: billing_df = render_billing(df_pick, data_dict['df_vekp'], data_dict['df_vepo'], data_dict['df_cats'], data_dict['queue_count_col'], data_dict['aus_data'])
-    with tabs[5]: render_packing(billing_df if 'billing_df' in locals() else pd.DataFrame(), data_dict['df_oe'])
-    with tabs[6]: render_audit(df_pick, data_dict['df_vekp'], data_dict['df_vepo'], data_dict['df_oe'], data_dict['queue_count_col'], billing_df if 'billing_df' in locals() else pd.DataFrame(), data_dict['manual_boxes'], data_dict['weight_dict'], data_dict['dim_dict'], data_dict['box_dict'], limit_vahy, limit_rozmeru, kusy_na_hmat)
+            df_vk = pd.DataFrame()
+            if not df_vekp2.empty:
+                col_map = {df_vekp2.columns[0]: "HU_intern", df_vekp2.columns[1]: "Handling_Unit_Ext"}
+                c_gen = next((c for c in df_vekp2.columns if "generierte" in str(c) or "Generated" in str(c)), None)
+                c_pm = next((c for c in df_vekp2.columns if str(c).strip() == "Packmittel"), None)
+                c_gew = next((c for c in df_vekp2.columns if str(c).strip() == "Gesamtgewicht"), None)
+                c_art = next((c for c in df_vekp2.columns if str(c).strip() == "Art"), None)
+                if c_gen: col_map[c_gen] = "Lieferung"
+                if c_pm: col_map[c_pm] = "Packmittel"
+                if c_gew: col_map[c_gew] = "Gesamtgewicht"
+                if c_art: col_map[c_art] = "Art_HU"
+                
+                df_vk = df_vekp2[list(col_map.keys())].rename(columns=col_map)
+                df_vk["HU_intern"] = df_vk["HU_intern"].astype(str).str.strip()
+                if "Gesamtgewicht" in df_vk.columns: df_vk["Gesamtgewicht"] = pd.to_numeric(df_vk["Gesamtgewicht"], errors="coerce").fillna(0)
+                if not df_lf.empty and "Lieferung" in df_vk.columns:
+                    df_vk["Lieferung"] = df_vk["Lieferung"].astype(str).str.strip().str.lstrip('0')
+                    df_vk["Kategorie"] = df_vk["Lieferung"].map(df_lf.set_index("Lieferung")["Kategorie"]).fillna("N")
 
-    st.divider()
-    buffer = io.BytesIO()
-    with pd.ExcelWriter(buffer, engine='openpyxl') as writer:
-        pd.DataFrame({"Parameter": ["Weight Limit", "Dim Limit", "Grab limit", "Admins Excluded"], "Value": [f"{limit_vahy} kg", f"{limit_rozmeru} cm", f"{kusy_na_hmat} pcs", data_dict['num_removed_admins']]}).to_excel(writer, index=False, sheet_name='Settings')
-        if display_q is not None and not display_q.empty: display_q.to_excel(writer, index=False, sheet_name='Queue_Analysis')
-        df_pal_exp = df_pick[df_pick['Queue'].astype(str).str.upper().isin(['PI_PL', 'PI_PL_OE'])].groupby('Delivery').agg(num_materials=('Material', 'nunique'), material=('Material', 'first'), total_qty=('Qty', 'sum'), celkem_pohybu=('Pohyby_Rukou', 'sum'), pohyby_exact=('Pohyby_Exact', 'sum'), pohyby_miss=('Pohyby_Loose_Miss', 'sum'), vaha_zakazky=('Celkova_Vaha_KG', 'sum'), max_rozmer=('Piece_Max_Dim_CM', 'first'))
-        df_pal_single = df_pal_exp[df_pal_exp['num_materials'] == 1].copy()
-        if not df_pal_single.empty: df_pal_single[['material', 'total_qty', 'celkem_pohybu', 'pohyby_exact', 'pohyby_miss', 'vaha_zakazky', 'max_rozmer']].rename(columns={'material': t('col_mat'), 'total_qty': t('col_qty'), 'celkem_pohybu': t('col_mov'), 'pohyby_exact': t('col_mov_exact'), 'pohyby_miss': t('col_mov_miss'), 'vaha_zakazky': t('col_wgt'), 'max_rozmer': t('col_max_dim')}).to_excel(writer, index=True, sheet_name='Single_Mat_Orders')
-        df_pick.groupby('Material').agg(Moves=('Pohyby_Rukou', 'sum'), Qty=('Qty', 'sum'), Exact=('Pohyby_Exact', 'sum'), Estimates=('Pohyby_Loose_Miss', 'sum'), Lines=('Material', 'count')).reset_index().sort_values('Moves', ascending=False).to_excel(writer, index=False, sheet_name='Material_Totals')
+            st.markdown("### Kategorie zásilek (E / N / O / OE)")
+            if not df_vk.empty and "Kategorie" in df_vk.columns:
+                kat_grp = df_vk.groupby("Kategorie").agg(pocet_lief=("Lieferung", "nunique") if "Lieferung" in df_vk.columns else ("HU_intern", "nunique"), celk_hu=("HU_intern", "nunique")).reset_index()
+                kat_grp["prumer_hu"] = kat_grp["celk_hu"] / kat_grp["pocet_lief"]
+                st.dataframe(kat_grp.style.format({"prumer_hu": "{:.2f}"}), use_container_width=True, hide_index=True)
 
-    st.download_button(label=t('btn_download'), data=buffer.getvalue(), file_name=f"Warehouse_Control_Tower_{time.strftime('%Y%m%d_%H%M')}.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", type="primary")
+            st.markdown("### Typy krabic (Packmittel) — váhy")
+            if not df_vk.empty and "Packmittel" in df_vk.columns:
+                carton_agg = df_vk.groupby("Packmittel").agg(pocet=("HU_intern", "nunique"), avg_gew=("Gesamtgewicht", "mean") if "Gesamtgewicht" in df_vk.columns else ("HU_intern", "count")).reset_index().sort_values("pocet", ascending=False)
+                st.dataframe(carton_agg.style.format({"avg_gew": "{:.2f} kg"}), use_container_width=True, hide_index=True)
+                
+            st.markdown("### Typy HU (Sortenrein / Misch / Vollpalette)")
+            if not df_vk.empty and "Art_HU" in df_vk.columns:
+                art_celk = df_vk["Art_HU"].value_counts()
+                ca1, ca2, ca3 = st.columns(3)
+                with ca1:
+                    with st.container(border=True): st.metric("📦 Sortenrein", f"{art_celk.get('Sortenrein', 0):,}")
+                with ca2:
+                    with st.container(border=True): st.metric("🔀 Misch", f"{art_celk.get('Misch', 0):,}")
+                with ca3:
+                    with st.container(border=True): st.metric("🏭 Vollpalette", f"{art_celk.get('Vollpalette', 0):,}")
 
-if __name__ == "__main__":
-    main()
+    else:
+        st.warning("⚠️ Pro zobrazení těchto dat nahrajte soubor VEKP a VEPO.")
+
+    return billing_df
