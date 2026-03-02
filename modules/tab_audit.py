@@ -62,7 +62,6 @@ def render_audit(df_pick, df_vekp, df_vepo, df_oe, queue_count_col, billing_df, 
     st.divider()
     st.markdown("<div class='section-header'><h3>🔍 Rentgen Zakázky (End-to-End Audit)</h3></div>", unsafe_allow_html=True)
     
-    # BEZPEČNÉ TŘÍDĚNÍ: Převedeno na string, zabrání pádu aplikace
     avail_dels = sorted(df_pick['Delivery'].dropna().astype(str).unique())
     sel_del = st.selectbox("Vyberte Delivery pro kompletní rentgen:", options=[""] + avail_dels)
     
@@ -79,7 +78,7 @@ def render_audit(df_pick, df_vekp, df_vepo, df_oe, queue_count_col, billing_df, 
 
         st.markdown("#### 2️⃣ Fáze: Systémové Obaly (VEKP / VEPO)")
         if df_vekp is not None and not df_vekp.empty:
-            vekp_del = df_vekp[df_vekp['Generated delivery'].astype(str).str.strip().str.lstrip('0') == str(sel_del).lstrip('0')].copy()
+            vekp_del = df_vekp[df_vekp['Generated delivery'].astype(str).str.strip() == str(sel_del).strip()].copy()
             
             sel_del_kat = "N"
             if billing_df is not None and not billing_df.empty:
@@ -98,12 +97,19 @@ def render_audit(df_pick, df_vekp, df_vepo, df_oe, queue_count_col, billing_df, 
                 else: vekp_del['Clean_Parent'] = ""
                     
                 ext_to_int_aud = dict(zip(vekp_del['Clean_HU_Ext'], vekp_del['Clean_HU_Int']))
+                valid_hus_aud = set(vekp_del['Clean_HU_Int']).union(set(vekp_del['Clean_HU_Ext']))
+                
                 parent_map_aud = {}
                 for _, r in vekp_del.iterrows():
                     child = str(r['Clean_HU_Int'])
                     parent = str(r['Clean_Parent'])
                     if parent in ext_to_int_aud: parent = ext_to_int_aud[parent]
-                    parent_map_aud[child] = parent
+                    
+                    # OPRAVA: Ignorování rodičů (Kamionů) z jiných tabulek
+                    if parent in valid_hus_aud:
+                        parent_map_aud[child] = parent
+                    else:
+                        parent_map_aud[child] = ""
 
                 if df_vepo is not None and not df_vepo.empty:
                     vepo_hu_col_aud = next((c for c in df_vepo.columns if "Internal HU" in str(c) or "HU-Nummer intern" in str(c)), df_vepo.columns[0])
@@ -132,12 +138,7 @@ def render_audit(df_pick, df_vekp, df_vepo, df_oe, queue_count_col, billing_df, 
 
                 vekp_del['Status pro fakturaci'] = vekp_del.apply(get_audit_status, axis=1)
                 
-                auto_voll_hus_aud = set()
-                mask_x = df_pick['Removal of total SU'] == 'X'
-                for c_hu in ['Source storage unit', 'Source Storage Bin', 'Handling Unit']:
-                    if c_hu in df_pick.columns:
-                        auto_voll_hus_aud.update(df_pick.loc[mask_x, c_hu].dropna().astype(str).str.strip().str.lstrip('0'))
-
+                auto_voll_hus_aud = st.session_state.get('auto_voll_hus', set())
                 if c_hu_ext_aud:
                     vekp_del['Status pro fakturaci'] = vekp_del.apply(
                         lambda r: "🏭 Účtuje se (Vollpalette)" if ((str(r['Clean_HU_Ext']) in auto_voll_hus_aud or str(r['Clean_HU_Int']) in auto_voll_hus_aud) and "✅" in r['Status pro fakturaci']) else r['Status pro fakturaci'], axis=1
@@ -159,7 +160,7 @@ def render_audit(df_pick, df_vekp, df_vepo, df_oe, queue_count_col, billing_df, 
 
         st.markdown("#### 3️⃣ Fáze: Čas u balícího stolu (OE-Times)")
         if df_oe is not None:
-            oe_del = df_oe[df_oe['Delivery'].astype(str).str.strip().str.lstrip('0') == str(sel_del).lstrip('0')]
+            oe_del = df_oe[df_oe['Delivery'].astype(str).str.strip() == str(sel_del).strip()]
             if not oe_del.empty:
                 ro = oe_del.iloc[0]
                 cc1, cc2, cc3 = st.columns(3)
