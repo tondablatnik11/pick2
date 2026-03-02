@@ -103,7 +103,7 @@ def cached_billing_logic(df_pick, df_vekp, df_vepo, df_cats, queue_count_col, df
             leaf_exts = group.loc[group['Clean_HU_Int'] == leaf, 'Clean_HU_Ext'].values
             leaf_ext = leaf_exts[0] if len(leaf_exts) > 0 else ""
             
-            # THE MAGIC CHECK: Shoduje se zabalené HU s picknutým HU?
+            # Shoduje se zabalené HU s picknutým HU?
             if leaf in pick_hus or leaf_ext in pick_hus:
                 voll_count += 1
                 order_has_voll = True
@@ -149,18 +149,23 @@ def cached_billing_logic(df_pick, df_vekp, df_vepo, df_cats, queue_count_col, df
         # 1. MÁME KATEGORII ZE SOUBORU
         if cat_full not in ["", "nan", "None", txt_uncat]:
             if is_voll:
-                # Fyzická shoda HU přepisuje Sortenrein na Vollpalette
                 kat = cat_full.split(" ")[0] if " " in cat_full else cat_full
+                # POJISTKA: Vollpalette může být jen N nebo O
+                if kat.upper() == 'E': kat = 'N'
+                elif kat.upper() == 'OE': kat = 'O'
                 return f"{kat} Vollpalette"
             return cat_full
             
-        # 2. ODVOZUJEME Z DAT
+        # 2. ODVOZUJEME Z DAT (Když soubor není)
         kat = aus_category_map.get(str(row["Delivery"]).strip())
         if not kat:
             q = str(row.get('hlavni_fronta', '')).upper()
             kat = "OE" if 'PI_PA_OE' in q else "E" if 'PI_PA' in q else "O" if ('PI_PL_FUOE' in q or 'PI_PL_OE' in q) else "N" if 'PI_PL' in q else "N"
                 
         if is_voll:
+            # POJISTKA: Vollpalette může být jen N nebo O
+            if kat == 'E': kat = 'N'
+            elif kat == 'OE': kat = 'O'
             art = "Vollpalette"
         else:
             art = "Sortenrein" if row.get('pocet_mat', 1) <= 1 else "Misch"
