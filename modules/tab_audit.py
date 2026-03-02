@@ -62,7 +62,7 @@ def render_audit(df_pick, df_vekp, df_vepo, df_oe, queue_count_col, billing_df, 
     st.divider()
     st.markdown("<div class='section-header'><h3>🔍 Rentgen Zakázky (End-to-End Audit)</h3></div>", unsafe_allow_html=True)
     
-    # OPRAVA 2: Bezpečné třídění zakázek (zamezí pádu na černou obrazovku při kombinaci čísel a textu)
+    # BEZPEČNÉ TŘÍDĚNÍ: Převedeno na string, zabrání pádu aplikace
     avail_dels = sorted(df_pick['Delivery'].dropna().astype(str).unique())
     sel_del = st.selectbox("Vyberte Delivery pro kompletní rentgen:", options=[""] + avail_dels)
     
