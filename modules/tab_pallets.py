@@ -2,10 +2,10 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 import plotly.graph_objects as go
-from modules.utils import t
 
 def render_pallets(df_pick):
-    st.markdown(f"<div class='section-header'><h3>🎯 {t('sec1_title')}</h3><p>{t('pallets_clean_info')}</p></div>", unsafe_allow_html=True)
+    # OPRAVENÉ TEXTY V HLAVIČCE
+    st.markdown("<div class='section-header'><h3>🎯 Analýza čistých palet (Single SKU)</h3><p>Přehled paletových zakázek z front PI_PL a PI_PL_OE, které obsahují pouze jeden druh materiálu.</p></div>", unsafe_allow_html=True)
     
     # 1. Vyfiltrujeme pouze paletové fronty
     pal_df = df_pick[df_pick['Queue'].astype(str).str.upper().isin(['PI_PL', 'PI_PL_OE'])].copy()
