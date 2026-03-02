@@ -62,7 +62,6 @@ def render_billing(df_pick, df_vekp, df_vepo, df_cats, queue_count_col, aus_data
     pick_per_delivery = pd.DataFrame()
 
     if df_vekp is not None and not df_vekp.empty:
-        # PŘESNÉ NAPÁROVÁNÍ (Bez odstraňování nul u čísla zakázky)
         vekp_clean = df_vekp.dropna(subset=["Handling Unit", "Generated delivery"]).copy()
         valid_deliveries = df_pick["Delivery"].dropna().unique()
         vekp_filtered = vekp_clean[vekp_clean["Generated delivery"].isin(valid_deliveries)].copy()
@@ -92,7 +91,7 @@ def render_billing(df_pick, df_vekp, df_vepo, df_cats, queue_count_col, aus_data
 
         # Připravíme očištěné HUs pro Vollpalety
         auto_voll_hus = st.session_state.get('auto_voll_hus', set())
-        auto_voll_hus_clean = {str(h).lstrip('0') for h in auto_voll_hus if str(h).lower() not in ['nan', 'none', '']}
+        auto_voll_hus_clean = {str(h).strip().lstrip('0') for h in auto_voll_hus if str(h).lower() not in ['nan', 'none', '']}
 
         hu_agg_list = []
         for delivery, group in vekp_filtered.groupby("Generated delivery"):
@@ -105,36 +104,32 @@ def render_billing(df_pick, df_vekp, df_vepo, df_cats, queue_count_col, aus_data
                     parent = ext_to_int[parent]
                 p_map[child] = parent
                 
-            # 1. KONTROLA VEPO: Vezmeme jen ty HUs, které obsahují materiál (zelená fajfka)
-            # Tímto se automaticky odfiltrují všechny prázdné obaly
-            leaves_int = [h for h in group['Clean_HU_Int'] if h in valid_base_hus]
+            # 1. KONTROLA VEPO: Listy = jednotky, ve kterých je fyzicky materiál
+            leaves = [h for h in group['Clean_HU_Int'] if h in valid_base_hus]
             
             roots = set()
             voll_count = 0
             
-            # 2. LOGIKA PRO VOLLPALETY A STROM OBALŮ
-            for leaf_int in leaves_int:
-                # Najdeme externí ID pro kontrolu Vollpalet
-                leaf_exts = group.loc[group['Clean_HU_Int'] == leaf_int, 'Clean_HU_Ext'].values
+            for leaf in leaves:
+                # Zjištění externího čísla pro Vollpalette check
+                leaf_exts = group.loc[group['Clean_HU_Int'] == leaf, 'Clean_HU_Ext'].values
                 leaf_ext = leaf_exts[0] if len(leaf_exts) > 0 else ""
-
-                # Pravidlo z Auditu: Z jednotky se může stát Vollpalette POUZE TEHDY, 
-                # pokud už předtím úspěšně prošla kontrolou ve VEPO (je v leaves_int)
-                if leaf_int in auto_voll_hus_clean or leaf_ext in auto_voll_hus_clean:
+                
+                # 2. OCHRANA VOLLPALET: Pokud prošla VEPO a má 'X', počítáme ji samostatně a nešplháme výš
+                if leaf in auto_voll_hus_clean or leaf_ext in auto_voll_hus_clean:
                     voll_count += 1
                 else:
-                    # Není to Vollpalette, šplháme po struktuře nahoru až na hlavní paletu
-                    curr = leaf_int
+                    curr = leaf
                     visited = set()
                     while curr in p_map and p_map[curr] != "" and curr not in visited:
                         visited.add(curr)
                         curr = p_map[curr]
                     roots.add(curr)
-                
+                    
             hu_agg_list.append({
                 "Generated delivery": delivery,
-                "hu_leaf": len(leaves_int),
-                "hu_top_level": len(roots) + voll_count # Zde se přičtou nalezené Vollpalety k paletám
+                "hu_leaf": len(leaves),
+                "hu_top_level": len(roots) + voll_count
             })
             
         hu_agg = pd.DataFrame(hu_agg_list)
@@ -150,8 +145,7 @@ def render_billing(df_pick, df_vekp, df_vepo, df_cats, queue_count_col, aus_data
             Month=("Month", "first")
         ).reset_index()
 
-        billing_df = pd.merge(pick_agg, hu_agg,
-                              left_on="Delivery", right_on="Generated delivery", how="left")
+        billing_df = pd.merge(pick_agg, hu_agg, left_on="Delivery", right_on="Generated delivery", how="left")
 
         if df_cats is not None:
             billing_df = pd.merge(
@@ -162,7 +156,7 @@ def render_billing(df_pick, df_vekp, df_vepo, df_cats, queue_count_col, aus_data
 
         def odvod_kategorii(row):
             cat_full = row.get('Category_Full')
-            if pd.notna(cat_full) and str(cat_full).strip() not in ["", "nan", t("uncategorized")]:
+            if pd.notna(cat_full) and str(cat_full).strip() not in ["", "nan", "Bez kategorie"]:
                 return cat_full
             
             kat = aus_category_map.get(row["Delivery"])
@@ -176,9 +170,8 @@ def render_billing(df_pick, df_vekp, df_vepo, df_cats, queue_count_col, aus_data
                     
             art = "Sortenrein" if row.get('pocet_mat', 1) <= 1 else "Misch"
             
-            if kat:
-                return f"{kat} {art}"
-            return t("uncategorized")
+            if kat: return f"{kat} {art}"
+            return "Bez kategorie"
 
         billing_df["Category_Full"] = billing_df.apply(odvod_kategorii, axis=1)
 
