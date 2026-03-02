@@ -31,7 +31,7 @@ def cached_billing_logic(df_pick, df_vekp, df_vepo, df_cats, queue_count_col, df
         for _, r in df_likp_tmp.iterrows():
             lief = str(r[c_lief]).strip()
             vs = str(r[c_vs]).strip() if c_vs else "N"
-            sped = str(r[c_sped]).strip() if c_sped else ""
+            sped = str(r[c_sped]).strip().lstrip('0') if c_sped else ""
             o_type = order_type_map.get(vs, "N")
             is_kep = sped in kep_set
             aus_category_map[lief] = "OE" if o_type == "O" else "E" if is_kep else ("O" if o_type == "O" else "N")
@@ -201,6 +201,37 @@ def render_billing(df_pick, df_vekp, df_vepo, df_cats, queue_count_col, aus_data
             disp.columns = ["Kategorie", "Počet zakázek", "Počet TO", "Zúčtované HU", "Prům. pohybů na lokaci", "Čistá bilance (Zisk/Ztráta)", "Hrubá ztráta (TO navíc)"]
             st.dataframe(disp.style.format({"Prům. pohybů na lokaci": "{:.1f}"}), use_container_width=True, hide_index=True)
             
+            # --- NOVINKA: INTERAKTIVNÍ DETAIL ("DRILL-DOWN") ZAKÁZEK ---
+            st.markdown("<br>**🔍 Detailní seznam zakázek podle kategorie:**", unsafe_allow_html=True)
+            cat_opts = ["— Vyberte kategorii pro detail —"] + sorted(billing_df["Category_Full"].dropna().unique().tolist())
+            sel_detail_cat = st.selectbox("Vyberte", options=cat_opts, label_visibility="collapsed")
+            
+            if sel_detail_cat != "— Vyberte kategorii pro detail —":
+                det_df = billing_df[billing_df["Category_Full"] == sel_detail_cat].copy()
+                det_df["prum_poh_lok"] = np.where(det_df["pocet_lokaci"] > 0, det_df["pohyby_celkem"] / det_df["pocet_lokaci"], 0)
+                
+                # Seřadit od největší ztráty (nejvyšší kladná bilance) dolů k největšímu zisku
+                det_df = det_df.sort_values(by="Bilance", ascending=False)
+                
+                disp_det = det_df[["Delivery", "pocet_to", "pocet_hu", "prum_poh_lok", "Bilance"]].copy()
+                disp_det.columns = ["Zakázka (Delivery)", "Počet TO", "Zabalené HU", "Prům. pohybů na lok.", "Čistá bilance (TO navíc)"]
+                
+                # Obarvení: červená pro prodělek (>0), zelená pro zisk (<0)
+                def color_bilance(val):
+                    try:
+                        if val > 0: return 'color: #ef4444; font-weight: bold'
+                        elif val < 0: return 'color: #10b981; font-weight: bold'
+                    except: pass
+                    return ''
+
+                try: # Podpora pro nové i starší verze Pandas
+                    styled_det = disp_det.style.format({"Prům. pohybů na lok.": "{:.1f}"}).map(color_bilance, subset=["Čistá bilance (TO navíc)"])
+                except AttributeError:
+                    styled_det = disp_det.style.format({"Prům. pohybů na lok.": "{:.1f}"}).applymap(color_bilance, subset=["Čistá bilance (TO navíc)"])
+                
+                st.dataframe(styled_det, use_container_width=True, hide_index=True)
+            # ----------------------------------------------------------
+
         with col_t2:
             st.markdown("**Trend v čase (Měsíce)**")
             
@@ -232,12 +263,14 @@ def render_billing(df_pick, df_vekp, df_vepo, df_cats, queue_count_col, aus_data
             st.dataframe(imb_disp, use_container_width=True, hide_index=True)
         else: st.success("Žádné zakázky s prodělkem nenalezeny!")
         
+        # --- AUSWERTUNG SEKCE ---
         st.divider()
         st.subheader("📊 Analýza zásilkových dat (Auswertung)")
         if not aus_data: st.info("Pro tuto sekci nahrajte zákazníkův soubor Auswertung_Outbound_HWL.xlsx")
         else:
             df_likp = aus_data.get("LIKP", pd.DataFrame())
             df_vekp2 = aus_data.get("VEKP", pd.DataFrame())
+            df_vepo = aus_data.get("VEPO", pd.DataFrame())
             df_sdshp = aus_data.get("SDSHP_AM2", pd.DataFrame())
             df_t031 = aus_data.get("T031", pd.DataFrame())
 
@@ -298,5 +331,8 @@ def render_billing(df_pick, df_vekp, df_vepo, df_cats, queue_count_col, aus_data
                     with st.container(border=True): st.metric("🔀 Misch", f"{art_celk.get('Misch', 0):,}")
                 with ca3:
                     with st.container(border=True): st.metric("🏭 Vollpalette", f"{art_celk.get('Vollpalette', 0):,}")
+
+    else:
+        st.warning("⚠️ Pro zobrazení těchto dat nahrajte soubor VEKP a VEPO.")
 
     return billing_df
