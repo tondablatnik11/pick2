@@ -2,8 +2,9 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 import plotly.graph_objects as go
+from modules.utils import t
 
-# Kouzlo pro bleskové překreslování - "Fragment"
+# Kouzlo pro bleskové překreslování grafu bez načítání celé stránky
 try:
     fast_render = st.fragment
 except AttributeError:
@@ -30,111 +31,151 @@ def render_interactive_chart(billing_df):
     fig.update_layout(yaxis2=dict(title="Pohyby", side="right", overlaying="y", showgrid=False), plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)", margin=dict(l=0, r=0, t=10, b=0), legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1))
     st.plotly_chart(fig, use_container_width=True)
 
+
 def render_billing(df_pick, df_vekp, df_vepo, df_cats, queue_count_col, aus_data):
-    st.markdown(f"<div class='section-header'><h3>💰 Korelace mezi Pickováním a Účtováním</h3></div>", unsafe_allow_html=True)
+    st.markdown(f"<div class='section-header'><h3>💰 Korelace mezi Pickováním a Účtováním</h3><p>Zákazník platí podle počtu výsledných balících jednotek (HU). Zde vidíte náročnost vytvoření těchto zpoplatněných jednotek napříč fakturačními kategoriemi.</p></div>", unsafe_allow_html=True)
     
-    aus_category_map = {}
-    if aus_data:
-        df_likp_tmp = aus_data.get("LIKP", pd.DataFrame())
+    # 1. Agresivní čištění čísel zakázek (odstranění předních nul napříč aplikací)
+    df_pick['Clean_Del'] = df_pick['Delivery'].astype(str).str.strip().str.lstrip('0')
+    
+    # 2. Vytvoření spolehlivé mapy Kategorií
+    del_to_cat_map = {}
+    if aus_data and "LIKP" in aus_data and not aus_data["LIKP"].empty:
+        df_likp_tmp = aus_data["LIKP"]
         df_sdshp_tmp = aus_data.get("SDSHP_AM2", pd.DataFrame())
         df_t031_tmp = aus_data.get("T031", pd.DataFrame())
+        
         kep_set = set()
         if not df_sdshp_tmp.empty:
             col_s = df_sdshp_tmp.columns[0]
             col_k = next((c for c in df_sdshp_tmp.columns if "KEP" in str(c).upper() or "FÄHIG" in str(c).upper()), None)
-            if col_k: kep_set = set(df_sdshp_tmp.loc[df_sdshp_tmp[col_k].astype(str).str.strip() == "X", col_s].astype(str).str.strip())
+            if col_k: 
+                kep_set = set(df_sdshp_tmp.loc[df_sdshp_tmp[col_k].astype(str).str.strip() == "X", col_s].astype(str).str.strip().str.lstrip('0'))
+        
         order_type_map = {}
-        if not df_t031_tmp.empty: order_type_map = dict(zip(df_t031_tmp.iloc[:, 0].astype(str).str.strip(), df_t031_tmp.iloc[:, 1].astype(str).str.strip()))
-        if not df_likp_tmp.empty:
-            c_lief = df_likp_tmp.columns[0]
-            c_vs = next((c for c in df_likp_tmp.columns if "Versandstelle" in str(c) or "Shipping" in str(c)), None)
-            c_sped = next((c for c in df_likp_tmp.columns if "pediteur" in str(c) or "Transp" in str(c)), None)
-            tmp_lf = df_likp_tmp[[c_lief]].copy()
-            tmp_lf.columns = ["Lieferung"]
-            tmp_lf["Lieferung"] = tmp_lf["Lieferung"].astype(str).str.strip()
-            tmp_lf["Order_Type"] = df_likp_tmp[c_vs].astype(str).str.strip().map(order_type_map).fillna("N") if c_vs else "N"
-            tmp_lf["is_KEP"] = df_likp_tmp[c_sped].astype(str).str.strip().isin(kep_set) if c_sped else False
-            tmp_lf["Kategorie"] = np.where(tmp_lf["is_KEP"], np.where(tmp_lf["Order_Type"] == "O", "OE", "E"), np.where(tmp_lf["Order_Type"] == "O", "O", "N"))
-            aus_category_map = tmp_lf.set_index("Lieferung")["Kategorie"].to_dict()
+        if not df_t031_tmp.empty: 
+            order_type_map = dict(zip(df_t031_tmp.iloc[:, 0].astype(str).str.strip(), df_t031_tmp.iloc[:, 1].astype(str).str.strip()))
+        
+        c_lief = df_likp_tmp.columns[0]
+        c_vs = next((c for c in df_likp_tmp.columns if "Versandstelle" in str(c) or "Shipping" in str(c)), None)
+        c_sped = next((c for c in df_likp_tmp.columns if "pediteur" in str(c) or "Transp" in str(c)), None)
+        
+        for _, r in df_likp_tmp.iterrows():
+            dlv = str(r[c_lief]).strip().lstrip('0')
+            vs = str(r[c_vs]).strip() if c_vs else "N"
+            sped = str(r[c_sped]).strip().lstrip('0') if c_sped else ""
+            
+            o_type = order_type_map.get(vs, "N")
+            is_kep = sped in kep_set
+            kat = "OE" if o_type == "O" else "E" if is_kep else ("O" if o_type == "O" else "N")
+            del_to_cat_map[dlv] = kat
+            
+    elif df_cats is not None and not df_cats.empty:
+        c_lief = df_cats.columns[0]
+        c_cat = "Category_Full" if "Category_Full" in df_cats.columns else df_cats.columns[1]
+        for _, r in df_cats.iterrows():
+            dlv = str(r[c_lief]).strip().lstrip('0')
+            del_to_cat_map[dlv] = str(r[c_cat]).strip()
 
     billing_df = pd.DataFrame()
-    if df_vekp is not None and not df_vekp.empty:
-        vekp_c = df_vekp.dropna(subset=["Handling Unit", "Generated delivery"]).copy()
-        
-        # --- OPRAVA NULOVÝCH ZAKÁZEK ---
-        vekp_c['Clean_Del'] = vekp_c['Generated delivery'].astype(str).str.strip().str.lstrip('0')
-        df_pick['Clean_Del'] = df_pick['Delivery'].astype(str).str.strip().str.lstrip('0')
-        
-        vekp_filtered = vekp_c[vekp_c["Clean_Del"].isin(df_pick["Clean_Del"].dropna().unique())].copy()
-        
-        c_hu_int = next((c for c in vekp_filtered.columns if "Internal HU" in str(c) or "HU-Nummer intern" in str(c)), vekp_filtered.columns[0])
-        c_hu_ext = vekp_filtered.columns[1]
-        c_parent = next((c for c in vekp_filtered.columns if "higher-level" in str(c).lower() or "übergeordn" in str(c).lower()), None)
-        
-        vekp_filtered['Clean_HU_Int'] = vekp_filtered[c_hu_int].astype(str).str.strip().str.lstrip('0')
-        vekp_filtered['Clean_HU_Ext'] = vekp_filtered[c_hu_ext].astype(str).str.strip().str.lstrip('0')
-        if c_parent: vekp_filtered['Clean_Parent'] = vekp_filtered[c_parent].astype(str).str.strip().str.lstrip('0').replace({'nan': '', 'none': ''})
-        else: vekp_filtered['Clean_Parent'] = ""
+    actual_vekp = aus_data.get("VEKP") if aus_data and not aus_data.get("VEKP", pd.DataFrame()).empty else df_vekp
+    actual_vepo = aus_data.get("VEPO") if aus_data and not aus_data.get("VEPO", pd.DataFrame()).empty else df_vepo
 
-        valid_base_hus = set()
-        if df_vepo is not None and not df_vepo.empty:
-            v_hu = next((c for c in df_vepo.columns if "Internal HU" in str(c) or "HU-Nummer intern" in str(c)), df_vepo.columns[0])
-            v_low = next((c for c in df_vepo.columns if "Lower-level" in str(c) or "untergeordn" in str(c).lower()), None)
-            valid_base_hus = set(df_vepo[v_hu].astype(str).str.strip().str.lstrip('0'))
-            if v_low: valid_base_hus.update(set(df_vepo[v_low].dropna().astype(str).str.strip().str.lstrip('0')))
-        else:
-            valid_base_hus = set(vekp_filtered['Clean_HU_Int'])
+    # 3. Zpracování VEKP obalů a přímé ověření přes VEPO
+    if actual_vekp is not None and not actual_vekp.empty:
+        vk = actual_vekp.dropna(subset=[actual_vekp.columns[0]]).copy()
+        c_hu_int = vk.columns[0]
+        c_hu_ext = vk.columns[1]
+        c_gen = next((c for c in vk.columns if "generierte" in str(c).lower() or "generated delivery" in str(c).lower()), None)
+        c_parent = next((c for c in vk.columns if "higher-level" in str(c).lower() or "übergeordn" in str(c).lower() or "superordinate" in str(c).lower()), None)
+        
+        vk['Clean_HU_Int'] = vk[c_hu_int].astype(str).str.strip().str.lstrip('0')
+        vk['Clean_HU_Ext'] = vk[c_hu_ext].astype(str).str.strip().str.lstrip('0')
+        vk['Clean_Del'] = vk[c_gen].astype(str).str.strip().str.lstrip('0') if c_gen else ""
+        vk['Clean_Parent'] = vk[c_parent].astype(str).str.strip().str.lstrip('0').replace({'nan':'', 'none':''}) if c_parent else ""
 
-        hu_agg_list = []
-        for delivery, group in vekp_filtered.groupby("Clean_Del"):
-            ext_to_int = dict(zip(group['Clean_HU_Ext'], group['Clean_HU_Int']))
-            p_map = {}
-            for _, r in group.iterrows():
-                child = str(r['Clean_HU_Int'])
-                parent = str(r['Clean_Parent'])
-                if parent in ext_to_int: parent = ext_to_int[parent]
-                p_map[child] = parent
+        # --- VEPO OVĚŘOVACÍ BLOK ---
+        valid_vepo_hus = set()
+        vepo_nested = set()
+        vepo_parents = set()
+
+        if actual_vepo is not None and not actual_vepo.empty:
+            hu_cols = [c for c in actual_vepo.columns if "HU" in str(c).upper() or "HANDLING UNIT" in str(c).upper()]
+            for c in hu_cols:
+                valid_vepo_hus.update(actual_vepo[c].dropna().astype(str).str.strip().str.lstrip('0'))
             
-            leaves = [h for h in group['Clean_HU_Int'] if h in valid_base_hus]
-            roots = set()
-            for leaf in leaves:
-                curr = leaf
-                visited = set()
-                while curr in p_map and p_map[curr] != "" and curr not in visited:
-                    visited.add(curr)
-                    curr = p_map[curr]
-                roots.add(curr)
-            hu_agg_list.append({"Clean_Del": delivery, "hu_leaf": len(leaves), "hu_top_level": len(roots)})
+            v_hu = next((c for c in actual_vepo.columns if "internal hu" in str(c).lower() or "hu-nummer intern" in str(c).lower()), actual_vepo.columns[0])
+            v_low = next((c for c in actual_vepo.columns if "lower-level" in str(c).lower() or "untergeordn" in str(c).lower()), None)
+            
+            if v_low:
+                vepo_nested = set(actual_vepo[v_low].dropna().astype(str).str.strip().str.lstrip('0'))
+                vepo_nested = {h for h in vepo_nested if h not in ["", "nan", "none"]}
+                vepo_parents = set(actual_vepo.loc[
+                    actual_vepo[v_low].notna() & (actual_vepo[v_low].astype(str).str.strip() != ""),
+                    v_hu
+                ].astype(str).str.strip().str.lstrip('0'))
+
+        # Než něco začneme počítat, vyřadíme HU, které nejsou uvedené ve VEPO jako reálně nabalené
+        if valid_vepo_hus:
+            vk = vk[vk['Clean_HU_Int'].isin(valid_vepo_hus) | vk['Clean_HU_Ext'].isin(valid_vepo_hus)].copy()
+
+        if vepo_nested or vepo_parents:
+            vk['is_top_level'] = ~vk['Clean_HU_Int'].isin(vepo_nested) & ~vk['Clean_HU_Ext'].isin(vepo_nested)
+            vk['is_leaf'] = ~vk['Clean_HU_Int'].isin(vepo_parents) & ~vk['Clean_HU_Ext'].isin(vepo_parents)
+        else:
+            # Fallback pokud VEPO nemá stromovou strukturu
+            id_map = {str(r['Clean_HU_Ext']): str(r['Clean_HU_Int']) for _, r in vk.iterrows() if str(r['Clean_HU_Ext']) != 'nan'}
+            for _, r in vk.iterrows(): id_map[str(r['Clean_HU_Int'])] = str(r['Clean_HU_Int'])
+            vk['Norm_Parent'] = vk['Clean_Parent'].apply(lambda x: id_map.get(x, x))
+            parents = set(vk['Norm_Parent'].dropna())
+            parents.discard("")
+            vk['is_top_level'] = vk['Norm_Parent'] == ""
+            vk['is_leaf'] = ~vk['Clean_HU_Int'].isin(parents)
+
+        vk['Category_Full'] = vk['Clean_Del'].map(del_to_cat_map).fillna("N")
         
-        hu_agg = pd.DataFrame(hu_agg_list)
-        pick_agg = df_pick.groupby("Delivery").agg(
-            pocet_to=(queue_count_col, "nunique"), pohyby_celkem=("Pohyby_Rukou", "sum"), pocet_lokaci=("Source Storage Bin", "nunique"), hlavni_fronta=("Queue", "first"), pocet_mat=("Material", "nunique"), Month=("Month", "first"),
-            Clean_Del=("Clean_Del", "first")
+        # Podle Kategorie (N/E) přesně identifikujeme, které HU se fakturují
+        def is_billable(row):
+            kat = str(row['Category_Full']).upper()
+            if kat.startswith('E') or kat.startswith('OE'): return row['is_leaf']
+            return row['is_top_level']
+            
+        vk['is_billable'] = vk.apply(is_billable, axis=1)
+        hu_counts = vk[vk['is_billable']].groupby('Clean_Del')['Clean_HU_Int'].nunique().reset_index()
+        hu_counts.columns = ['Clean_Del', 'pocet_hu']
+
+        # 4. Finální spojení ořezaných a ověřených dat
+        pick_agg = df_pick.groupby("Clean_Del").agg(
+            pocet_to=(queue_count_col, "nunique"),
+            pohyby_celkem=("Pohyby_Rukou", "sum"),
+            pocet_lokaci=("Source Storage Bin", "nunique"),
+            hlavni_fronta=("Queue", "first"),
+            pocet_mat=("Material", "nunique"),
+            Month=("Month", "first"),
+            Delivery=("Delivery", "first")
         ).reset_index()
 
-        billing_df = pd.merge(pick_agg, hu_agg, on="Clean_Del", how="left")
-
-        def odvod_kategorii(row):
-            kat = aus_category_map.get(row["Delivery"])
+        billing_df = pd.merge(pick_agg, hu_counts, on="Clean_Del", how="left")
+        
+        def fallback_category(row):
+            kat = del_to_cat_map.get(row['Clean_Del'])
+            if kat and " " in kat: return kat
             if not kat:
-                q = str(row.get('hlavni_fronta', '')).upper()
+                q = str(row['hlavni_fronta']).upper()
+                kat = "N"
                 if 'PI_PA_OE' in q: kat = "OE"
                 elif 'PI_PA' in q: kat = "E"
                 elif 'PI_PL_FUOE' in q or 'PI_PL_OE' in q: kat = "O"
                 elif 'PI_PL' in q: kat = "N"
-            art = "Sortenrein" if row.get('pocet_mat', 1) <= 1 else "Misch"
-            return f"{kat} {art}" if kat else "Bez kategorie"
-
-        billing_df["Category_Full"] = billing_df.apply(odvod_kategorii, axis=1)
-
-        def urci_konecnou_hu(row):
-            kat = str(row.get('Category_Full', '')).upper()
-            if kat.startswith('E') or kat.startswith('OE'): return row.get('hu_leaf', 0)
-            else: return row.get('hu_top_level', 0)
-
-        billing_df['pocet_hu'] = billing_df.apply(urci_konecnou_hu, axis=1).fillna(0).astype(int)
+            art = "Sortenrein" if row['pocet_mat'] <= 1 else "Misch"
+            return f"{kat} {art}"
+            
+        billing_df['Category_Full'] = billing_df.apply(fallback_category, axis=1)
+        billing_df['pocet_hu'] = billing_df['pocet_hu'].fillna(0).astype(int)
         billing_df['TO_navic'] = (billing_df['pocet_to'] - billing_df['pocet_hu']).clip(lower=0).astype(int)
-        
+
+    # VYKRESLENÍ METRIK A GRAFŮ (KORELACE)
+    if not billing_df.empty:
         c1, c2, c3, c4 = st.columns(4)
         with c1:
             with st.container(border=True): st.metric("Zakázek celkem", f"{len(billing_df):,}")
@@ -157,7 +198,6 @@ def render_billing(df_pick, df_vekp, df_vepo, df_cats, queue_count_col, aus_data
             
         with col_t2:
             st.markdown("**Trend v čase (Měsíce)**")
-            # Volání izolovaného grafu
             render_interactive_chart(billing_df)
 
         st.markdown(f"### ⚠️ Ztráta z konsolidace (Práce zdarma / Prodělek)")
@@ -168,7 +208,7 @@ def render_billing(df_pick, df_vekp, df_vepo, df_cats, queue_count_col, aus_data
             st.dataframe(imb_disp, use_container_width=True, hide_index=True)
         else: st.success("Žádné zakázky s prodělkem nenalezeny!")
         
-        # --- ZCELA KOMPLETNÍ AUSWERTUNG SEKCE ---
+        # --- ZCELA KOMPLETNÍ AUSWERTUNG SEKCE (Zůstává nezměněná) ---
         st.divider()
         st.subheader("📊 Analýza zásilkových dat (Auswertung)")
         if not aus_data: st.info("Pro tuto sekci nahrajte zákazníkův soubor Auswertung_Outbound_HWL.xlsx")
