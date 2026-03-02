@@ -68,18 +68,23 @@ def cached_billing_logic(df_pick, df_vekp, df_vepo, df_cats, queue_count_col, df
     else:
         valid_base_hus = set(vekp_filtered['Clean_HU_Int'])
 
-    # --- PŘESNÁ LOGIKA VOLLPALET (MATCH HU: PICK -> PACK) ---
-    pick_hus = set()
+    # --- PŘESNÁ LOGIKA VOLLPALET: Ochrana proti zapsání KLT jako Vollpalet ---
+    pick_hus_pallets = set()
+    mask_x = df_pick.get('Removal of total SU', pd.Series(index=df_pick.index, data='')).astype(str).str.strip().str.upper() == 'X'
+    
     for c_hu in ['Source storage unit', 'Handling Unit']:
         if c_hu in df_pick.columns:
-            pick_hus.update(df_pick[c_hu].dropna().astype(str).str.strip().str.lstrip('0'))
+            s = df_pick[c_hu].dropna().astype(str).str.strip().str.lstrip('0')
+            # Paleta je buď X, nebo má dlouhý 18-místný SSCC kód (>= 17 aby to pokrylo i 18místné bez nuly)
+            valid_mask = mask_x.loc[s.index] | (s.str.len() >= 17)
+            pick_hus_pallets.update(s[valid_mask])
             
     for h in auto_voll_hus_tuple:
-        pick_hus.add(str(h).strip().lstrip('0'))
+        pick_hus_pallets.add(str(h).strip().lstrip('0'))
 
-    pick_hus.discard("")
-    pick_hus.discard("nan")
-    pick_hus.discard("none")
+    pick_hus_pallets.discard("")
+    pick_hus_pallets.discard("nan")
+    pick_hus_pallets.discard("none")
 
     hu_agg_list = []
     for delivery, group in vekp_filtered.groupby("Generated delivery"):
@@ -97,16 +102,14 @@ def cached_billing_logic(df_pick, df_vekp, df_vepo, df_cats, queue_count_col, df
         leaves = [h for h in group['Clean_HU_Int'] if h in valid_base_hus]
         roots = set()
         voll_count = 0
-        order_has_voll = False
         
         for leaf in leaves:
             leaf_exts = group.loc[group['Clean_HU_Int'] == leaf, 'Clean_HU_Ext'].values
             leaf_ext = leaf_exts[0] if len(leaf_exts) > 0 else ""
             
-            # Shoduje se zabalené HU s picknutým HU?
-            if leaf in pick_hus or leaf_ext in pick_hus:
+            # Bezpečné ověření - Zastaví to jenom pokud se shoduje dlouhý SSCC kód
+            if leaf in pick_hus_pallets or leaf_ext in pick_hus_pallets:
                 voll_count += 1
-                order_has_voll = True
             else:
                 curr = leaf
                 visited = set()
@@ -118,13 +121,19 @@ def cached_billing_logic(df_pick, df_vekp, df_vepo, df_cats, queue_count_col, df
         hu_agg_list.append({
             "Generated delivery": delivery, 
             "hu_leaf": len(leaves), 
-            "hu_top_level": len(roots) + voll_count,
-            "is_voll_order": order_has_voll
+            "hu_top_level": len(roots) + voll_count
         })
         
     hu_agg = pd.DataFrame(hu_agg_list)
     if hu_agg.empty:
-        hu_agg = pd.DataFrame(columns=["Generated delivery", "hu_leaf", "hu_top_level", "is_voll_order"])
+        hu_agg = pd.DataFrame(columns=["Generated delivery", "hu_leaf", "hu_top_level"])
+
+    # AGREGACE ZAKÁZEK A PŘESNÉ URČENÍ KATEGORIE VOLLPALETTE
+    # (Zakázka je Vollpalette jen když VŠECHNY její řádky jsou dlouhé palety)
+    df_pick['is_voll_pick'] = mask_x
+    for c_hu in ['Source storage unit', 'Handling Unit']:
+        if c_hu in df_pick.columns:
+            df_pick['is_voll_pick'] = df_pick['is_voll_pick'] | (df_pick[c_hu].astype(str).str.strip().str.lstrip('0').str.len() >= 17)
 
     pick_agg = df_pick.groupby("Delivery").agg(
         pocet_to=(queue_count_col, "nunique"),
@@ -132,8 +141,13 @@ def cached_billing_logic(df_pick, df_vekp, df_vepo, df_cats, queue_count_col, df
         pocet_lokaci=("Source Storage Bin", "nunique"),
         hlavni_fronta=("Queue", "first"),
         pocet_mat=("Material", "nunique"),
-        Month=("Month", "first")
+        Month=("Month", "first"),
+        total_lines=("Material", "count")
     ).reset_index()
+
+    voll_counts = df_pick[df_pick['is_voll_pick']].groupby('Delivery').size()
+    pick_agg['voll_lines'] = pick_agg['Delivery'].map(voll_counts).fillna(0)
+    pick_agg['is_voll_category'] = (pick_agg['voll_lines'] > 0) & (pick_agg['voll_lines'] == pick_agg['total_lines'])
 
     billing_df = pd.merge(pick_agg, hu_agg, left_on="Delivery", right_on="Generated delivery", how="left")
 
@@ -144,13 +158,12 @@ def cached_billing_logic(df_pick, df_vekp, df_vepo, df_cats, queue_count_col, df
 
     def odvod_kategorii(row):
         cat_full = str(row.get('Category_Full', '')).strip()
-        is_voll = row.get('is_voll_order', False)
+        is_voll_cat = row.get('is_voll_category', False)
         
         # 1. MÁME KATEGORII ZE SOUBORU
         if cat_full not in ["", "nan", "None", txt_uncat]:
-            if is_voll:
+            if is_voll_cat:
                 kat = cat_full.split(" ")[0] if " " in cat_full else cat_full
-                # POJISTKA: Vollpalette může být jen N nebo O
                 if kat.upper() == 'E': kat = 'N'
                 elif kat.upper() == 'OE': kat = 'O'
                 return f"{kat} Vollpalette"
@@ -162,8 +175,7 @@ def cached_billing_logic(df_pick, df_vekp, df_vepo, df_cats, queue_count_col, df
             q = str(row.get('hlavni_fronta', '')).upper()
             kat = "OE" if 'PI_PA_OE' in q else "E" if 'PI_PA' in q else "O" if ('PI_PL_FUOE' in q or 'PI_PL_OE' in q) else "N" if 'PI_PL' in q else "N"
                 
-        if is_voll:
-            # POJISTKA: Vollpalette může být jen N nebo O
+        if is_voll_cat:
             if kat == 'E': kat = 'N'
             elif kat == 'OE': kat = 'O'
             art = "Vollpalette"
