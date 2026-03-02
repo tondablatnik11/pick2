@@ -39,7 +39,8 @@ def categorize_su(sut):
         return 'Ostatní / Neznámé'
 
 def render_fu(df_pick, queue_count_col):
-    st.markdown(f"<div class='section-header'><h3>🏭 {t('fu_title')}</h3><p>{t('fu_desc')}</p></div>", unsafe_allow_html=True)
+    # OPRAVENÉ TEXTY V HLAVIČCE
+    st.markdown("<div class='section-header'><h3>🏭 Analýza front PI_PL_FU a PI_PL_FUOE</h3><p>Rozpad picků podle typu skladovací jednotky (Storage Unit Type).</p></div>", unsafe_allow_html=True)
     
     # Vyfiltrujeme pouze FU fronty
     fu_df = df_pick[df_pick['Queue'].astype(str).str.upper().str.contains('PI_PL_FU')].copy()
@@ -85,7 +86,7 @@ def render_fu(df_pick, queue_count_col):
 
     col_t, col_g = st.columns([1, 1.5])
 
-    # 2. DETAILY V TABULCE
+    # 2. DETAILY V TABULCE S OPRAVENÝMI TEXTY
     with col_t:
         st.markdown("**Přehled podle přesných kódů (SUT)**")
         agg_df = fu_df.groupby(['Typ_Obalu', 'Skladovaci_Jednotka']).agg(
@@ -97,7 +98,10 @@ def render_fu(df_pick, queue_count_col):
         agg_df['Podíl (%)'] = (agg_df['radky'] / total_lines * 100).round(1).astype(str) + " %"
         
         disp_df = agg_df[['Typ_Obalu', 'Skladovaci_Jednotka', 'radky', 'pocet_to', 'kusy', 'Podíl (%)']].copy()
-        disp_df.columns = [t('fu_col_cat'), t('fu_col_su'), t('fu_col_lines'), t('fu_col_to'), t('fu_col_qty'), 'Podíl (%)']
+        
+        # OPRAVENÉ NÁZVY SLOUPCŮ V TABULCE
+        disp_df.columns = ['Typ balení', 'Kód jednotky', 'Počet picků (Řádky)', 'Počet TO', 'Kusů celkem', 'Podíl (%)']
+        
         st.dataframe(disp_df, use_container_width=True, hide_index=True)
 
     # 3. INTERAKTIVNÍ GRAF S TRENDEM
