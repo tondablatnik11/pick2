@@ -151,7 +151,6 @@ def fetch_and_prep_data():
     if 'Handling Unit' in df_pick.columns: auto_voll_hus.update(df_pick.loc[mask_x, 'Handling Unit'].dropna().astype(str).str.strip())
     auto_voll_hus = {h for h in auto_voll_hus if h not in ["", "nan", "None"]}
 
-    # --- OPRAVENÉ NAČÍTÁNÍ OE-TIMES ---
     df_oe = load_from_db('raw_oe')
     if df_oe is not None and not df_oe.empty:
         cols_up = [str(c).upper() for c in df_oe.columns]
@@ -168,7 +167,6 @@ def fetch_and_prep_data():
                 has_time = True
                 
         df_oe.rename(columns=rename_map, inplace=True)
-        # Pojistka: zahození duplicitních sloupců, pokud by k nim došlo
         df_oe = df_oe.loc[:, ~df_oe.columns.duplicated()].copy()
         
         if 'DN NUMBER (SAP)' in df_oe.columns and 'Process Time' in df_oe.columns:
@@ -292,13 +290,19 @@ def main():
                     time.sleep(2.0)
                     st.rerun()
 
-    with st.spinner("🔄 Načítám data z databáze..."):
-        data_dict = fetch_and_prep_data()
+    # --- NOVÁ ANIMACE S PROGRESS BAREM ---
+    progress_bar = st.progress(0, text="🚀 Inicializace Warehouse Control Tower...")
+    time.sleep(0.1)
+    
+    progress_bar.progress(30, text="📥 Načítání a propojování dat z databáze (Pick, VEKP, VEPO)...")
+    data_dict = fetch_and_prep_data()
 
     if data_dict is None:
+        progress_bar.empty()
         st.warning("🗄️ Databáze je zatím prázdná. Otevřete levé menu 'Admin Zóna', zadejte heslo 'admin123' a nahrajte Pick Report a další soubory.")
         return
 
+    progress_bar.progress(65, text="⚙️ Výpočet fyzických pohybů a kontrola ergonomie podle limitů...")
     df_pick = data_dict['df_pick']
     st.session_state['auto_voll_hus'] = data_dict['auto_voll_hus']
 
@@ -311,6 +315,10 @@ def main():
     tt, te, tm = fast_compute_moves(df_pick['Qty'].values, df_pick['Queue'].values, df_pick['Removal of total SU'].values, df_pick['Box_Sizes_List'].values, df_pick['Piece_Weight_KG'].values, df_pick['Piece_Max_Dim_CM'].values, limit_vahy, limit_rozmeru, kusy_na_hmat)
     df_pick['Pohyby_Rukou'], df_pick['Pohyby_Exact'], df_pick['Pohyby_Loose_Miss'] = tt, te, tm
     df_pick['Celkova_Vaha_KG'] = df_pick['Qty'] * df_pick['Piece_Weight_KG']
+
+    progress_bar.progress(90, text="📊 Vykreslování vizualizací a tabulek...")
+    time.sleep(0.2)
+    progress_bar.empty() # Skryje progress bar po dokončení
 
     tabs = st.tabs([t('tab_dashboard'), t('tab_pallets'), t('tab_fu'), t('tab_top'), t('tab_billing'), t('tab_packing'), t('tab_audit')])
 
