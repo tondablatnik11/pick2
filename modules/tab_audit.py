@@ -61,12 +61,14 @@ def render_audit(df_pick, df_vekp, df_vepo, df_oe, queue_count_col, billing_df, 
 
     st.divider()
     st.markdown("<div class='section-header'><h3>🔍 Rentgen Zakázky (End-to-End Audit)</h3></div>", unsafe_allow_html=True)
-    avail_dels = sorted(df_pick['Delivery'].dropna().unique())
+    
+    # OPRAVA 2: Bezpečné třídění zakázek (zamezí pádu na černou obrazovku při kombinaci čísel a textu)
+    avail_dels = sorted(df_pick['Delivery'].dropna().astype(str).unique())
     sel_del = st.selectbox("Vyberte Delivery pro kompletní rentgen:", options=[""] + avail_dels)
     
     if sel_del:
         st.markdown("#### 1️⃣ Fáze: Pickování ve skladu")
-        pick_del = df_pick[df_pick['Delivery'] == sel_del]
+        pick_del = df_pick[df_pick['Delivery'].astype(str) == sel_del]
         to_count = pick_del[queue_count_col].nunique()
         moves_count = pick_del['Pohyby_Rukou'].sum()
         
@@ -81,7 +83,7 @@ def render_audit(df_pick, df_vekp, df_vepo, df_oe, queue_count_col, billing_df, 
             
             sel_del_kat = "N"
             if billing_df is not None and not billing_df.empty:
-                cat_row = billing_df[billing_df['Clean_Del'] == str(sel_del).lstrip('0')]
+                cat_row = billing_df[billing_df['Delivery'].astype(str).str.strip() == str(sel_del).strip()]
                 if not cat_row.empty: sel_del_kat = str(cat_row.iloc[0]['Category_Full']).upper()
             
             if not vekp_del.empty:
