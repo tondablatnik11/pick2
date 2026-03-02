@@ -30,19 +30,34 @@ def render_dashboard(df_pick, queue_count_col):
     # --- 2. Tabulka průměrné náročnosti (Queue Table) ---
     st.markdown(f"<div class='section-header'><h3>{t('sec_queue_title')}</h3></div>", unsafe_allow_html=True)
     
-    # OPRAVA: Nejprve spočítáme statistiky pro každý jednotlivý pickovací úkol (TO)
+    # KROK 1: Spočítáme statistiky pro každý jednotlivý pickovací úkol (TO)
     to_group = df_pick.groupby(queue_count_col).agg(
         Queue=('Queue', 'first'),
-        lokace_v_to=('Source Storage Bin', 'nunique'), # Počet zastávek u regálu pro dané TO
+        lokace_v_to=('Source Storage Bin', 'nunique'), # Počet zastávek u regálu
         kusy_v_to=('Qty', 'sum'),
         pohyby_v_to=('Pohyby_Rukou', 'sum'),
         exact_poh=('Pohyby_Exact', 'sum'),
-        miss_poh=('Pohyby_Loose_Miss', 'sum')
+        miss_poh=('Pohyby_Loose_Miss', 'sum'),
+        pocet_mat=('Material', 'nunique'),             # Zjištění, zda jde o Single nebo Mix
+        Delivery=('Delivery', 'first')
     ).reset_index()
 
-    # Následně sečteme tyto reálné zastávky do celé Queue
-    q_agg = to_group.groupby('Queue').agg(
+    # OPRAVA CHYBĚJÍCÍ FUNKCE: Rozřazení paletových front na Single a Mix
+    def split_queue(row):
+        q = str(row['Queue']).strip()
+        if q in ['PI_PL', 'PI_PL_OE']:
+            if row['pocet_mat'] <= 1:
+                return f"{q} (Single)"
+            else:
+                return f"{q} (Mix)"
+        return q
+
+    to_group['Queue_Split'] = to_group.apply(split_queue, axis=1)
+
+    # KROK 2: Nyní sečteme tyto reálné zastávky z TO do finální kategorie (Queue)
+    q_agg = to_group.groupby('Queue_Split').agg(
         pocet_to=(queue_count_col, 'nunique'),
+        zakazky=('Delivery', 'nunique'),
         lokace_celkem=('lokace_v_to', 'sum'),
         kusy_celkem=('kusy_v_to', 'sum'),
         pohyby_celkem=('pohyby_v_to', 'sum'),
@@ -50,11 +65,7 @@ def render_dashboard(df_pick, queue_count_col):
         miss_celkem=('miss_poh', 'sum')
     ).reset_index()
 
-    # Zvlášť připojíme unikátní zakázky
-    zak_agg = df_pick.groupby('Queue').agg(zakazky=('Delivery', 'nunique')).reset_index()
-    q_agg = pd.merge(q_agg, zak_agg, on='Queue', how='left')
-
-    # Opravené a přesné výpočty průměrů
+    # Výpočty přesných průměrů
     q_agg['prum_lok_to'] = np.where(q_agg['pocet_to'] > 0, q_agg['lokace_celkem'] / q_agg['pocet_to'], 0)
     q_agg['prum_ks_to'] = np.where(q_agg['pocet_to'] > 0, q_agg['kusy_celkem'] / q_agg['pocet_to'], 0)
     q_agg['prum_poh_lok'] = np.where(q_agg['lokace_celkem'] > 0, q_agg['pohyby_celkem'] / q_agg['lokace_celkem'], 0)
@@ -63,10 +74,10 @@ def render_dashboard(df_pick, queue_count_col):
     q_agg['pct_exact'] = np.where(q_agg['pohyby_celkem'] > 0, q_agg['exact_celkem'] / q_agg['pohyby_celkem'] * 100, 0)
     q_agg['pct_miss'] = np.where(q_agg['pohyby_celkem'] > 0, q_agg['miss_celkem'] / q_agg['pohyby_celkem'] * 100, 0)
 
-    q_agg['Queue_Desc'] = q_agg['Queue'].map(QUEUE_DESC).fillna(t('unknown'))
+    q_agg['Queue_Desc'] = q_agg['Queue_Split'].map(QUEUE_DESC).fillna(t('unknown'))
     
-    # Výběr sloupců a vložení čistých, srozumitelných českých názvů
-    disp_q = q_agg[['Queue', 'Queue_Desc', 'pocet_to', 'zakazky', 'prum_lok_to', 'prum_ks_to', 'prum_poh_lok', 'prum_exact_lok', 'pct_exact', 'prum_miss_lok', 'pct_miss']].copy()
+    # Výběr sloupců
+    disp_q = q_agg[['Queue_Split', 'Queue_Desc', 'pocet_to', 'zakazky', 'prum_lok_to', 'prum_ks_to', 'prum_poh_lok', 'prum_exact_lok', 'pct_exact', 'prum_miss_lok', 'pct_miss']].copy()
     disp_q.columns = [
         "Queue", 
         "Popis fronty", 
@@ -95,7 +106,11 @@ def render_dashboard(df_pick, queue_count_col):
     st.markdown(f"<div class='section-header'><h3>📈 Trend náročnosti v čase podle Queue</h3></div>", unsafe_allow_html=True)
     
     if 'Month' in df_pick.columns:
-        valid_queues = sorted([q for q in df_pick['Queue'].dropna().unique() if q != 'N/A'])
+        # Propagujeme správné Queue kategorie i zpět do původní tabulky, aby graf fungoval
+        q_split_map = to_group.set_index(queue_count_col)['Queue_Split'].to_dict()
+        df_pick['Queue_Split_Graf'] = df_pick[queue_count_col].map(q_split_map).fillna(df_pick['Queue'])
+
+        valid_queues = sorted([q for q in df_pick['Queue_Split_Graf'].dropna().unique() if q != 'N/A'])
         
         selected_queues = st.multiselect(
             "Zvolte Queue pro zobrazení v grafu (můžete vybrat libovolný počet):",
@@ -104,16 +119,15 @@ def render_dashboard(df_pick, queue_count_col):
         )
         
         if selected_queues:
-            trend_df = df_pick[df_pick['Queue'].isin(selected_queues)]
+            trend_df = df_pick[df_pick['Queue_Split_Graf'].isin(selected_queues)]
             
-            # OPRAVA GRAFU: Správné sčítání lokací přes jednotlivá TO v čase
             trend_to_group = trend_df.groupby(['Month', queue_count_col]).agg(
-                Queue=('Queue', 'first'),
+                Queue_Split=('Queue_Split_Graf', 'first'),
                 lokace=('Source Storage Bin', 'nunique'),
                 pohyby=('Pohyby_Rukou', 'sum')
             ).reset_index()
 
-            trend_agg = trend_to_group.groupby(['Month', 'Queue']).agg(
+            trend_agg = trend_to_group.groupby(['Month', 'Queue_Split']).agg(
                 to_count=(queue_count_col, 'nunique'),
                 loc_count=('lokace', 'sum'),
                 moves_count=('pohyby', 'sum')
@@ -125,7 +139,7 @@ def render_dashboard(df_pick, queue_count_col):
             colors = px.colors.qualitative.Plotly 
             
             for i, q in enumerate(selected_queues):
-                q_data = trend_agg[trend_agg['Queue'] == q].sort_values('Month')
+                q_data = trend_agg[trend_agg['Queue_Split'] == q].sort_values('Month')
                 color = colors[i % len(colors)]
                 
                 if not q_data.empty:
