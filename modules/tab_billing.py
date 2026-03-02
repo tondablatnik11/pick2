@@ -4,13 +4,11 @@ import numpy as np
 import plotly.graph_objects as go
 from modules.utils import t
 
-# Rychlá funkce fragmentu, díky které se graf překresluje lokálně bez znovunačtení stránky
 try:
     fast_render = st.fragment
 except AttributeError:
     fast_render = lambda f: f
 
-# 🚀 CACHE: Tento blok se vypočítá JEN JEDNOU a uloží se do paměti! Extrémní zrychlení.
 @st.cache_data(show_spinner=False)
 def cached_billing_logic(df_pick, df_vekp, df_vepo, df_cats, queue_count_col, df_likp_tmp, df_sdshp_tmp, df_t031_tmp, auto_voll_hus_tuple, txt_uncat):
     aus_category_map = {}
@@ -162,16 +160,14 @@ def cached_billing_logic(df_pick, df_vekp, df_vepo, df_cats, queue_count_col, df
     return billing_df
 
 def render_billing(df_pick, df_vekp, df_vepo, df_cats, queue_count_col, aus_data):
-    st.markdown(f"<div class='section-header'><h3>💰 Korelace mezi Pickováním a Balením</h3></div>", unsafe_allow_html=True)
+    st.markdown(f"<div class='section-header'><h3>💰 Korelace mezi Pickováním a Účtováním</h3><p>Zákazník platí podle počtu výsledných balících jednotek (HU). Zde vidíte náročnost vytvoření těchto zpoplatněných jednotek napříč fakturačními kategoriemi.</p></div>", unsafe_allow_html=True)
 
-    # Bezpečné rozebrání databází pro posun do cache
     df_likp_tmp = aus_data.get("LIKP", pd.DataFrame()) if aus_data else pd.DataFrame()
     df_sdshp_tmp = aus_data.get("SDSHP_AM2", pd.DataFrame()) if aus_data else pd.DataFrame()
     df_t031_tmp = aus_data.get("T031", pd.DataFrame()) if aus_data else pd.DataFrame()
     auto_voll_hus_tuple = tuple(st.session_state.get('auto_voll_hus', set()))
     txt_uncat = t("uncategorized")
 
-    # Bleskové zavolání z paměti
     billing_df = cached_billing_logic(df_pick, df_vekp, df_vepo, df_cats, queue_count_col, df_likp_tmp, df_sdshp_tmp, df_t031_tmp, auto_voll_hus_tuple, txt_uncat)
 
     if not billing_df.empty:
@@ -201,7 +197,6 @@ def render_billing(df_pick, df_vekp, df_vepo, df_cats, queue_count_col, aus_data
             disp.columns = ["Kategorie", "Počet zakázek", "Počet TO", "Zúčtované HU", "Prům. pohybů na lokaci", "Čistá bilance (Zisk/Ztráta)", "Hrubá ztráta (TO navíc)"]
             st.dataframe(disp.style.format({"Prům. pohybů na lokaci": "{:.1f}"}), use_container_width=True, hide_index=True)
             
-            # --- NOVINKA: INTERAKTIVNÍ DETAIL ("DRILL-DOWN") ZAKÁZEK ---
             st.markdown("<br>**🔍 Detailní seznam zakázek podle kategorie:**", unsafe_allow_html=True)
             cat_opts = ["— Vyberte kategorii pro detail —"] + sorted(billing_df["Category_Full"].dropna().unique().tolist())
             sel_detail_cat = st.selectbox("Vyberte", options=cat_opts, label_visibility="collapsed")
@@ -209,14 +204,11 @@ def render_billing(df_pick, df_vekp, df_vepo, df_cats, queue_count_col, aus_data
             if sel_detail_cat != "— Vyberte kategorii pro detail —":
                 det_df = billing_df[billing_df["Category_Full"] == sel_detail_cat].copy()
                 det_df["prum_poh_lok"] = np.where(det_df["pocet_lokaci"] > 0, det_df["pohyby_celkem"] / det_df["pocet_lokaci"], 0)
-                
-                # Seřadit od největší ztráty (nejvyšší kladná bilance) dolů k největšímu zisku
                 det_df = det_df.sort_values(by="Bilance", ascending=False)
                 
                 disp_det = det_df[["Delivery", "pocet_to", "pocet_hu", "prum_poh_lok", "Bilance"]].copy()
                 disp_det.columns = ["Zakázka (Delivery)", "Počet TO", "Zabalené HU", "Prům. pohybů na lok.", "Čistá bilance (TO navíc)"]
                 
-                # Obarvení: červená pro prodělek (>0), zelená pro zisk (<0)
                 def color_bilance(val):
                     try:
                         if val > 0: return 'color: #ef4444; font-weight: bold'
@@ -224,18 +216,15 @@ def render_billing(df_pick, df_vekp, df_vepo, df_cats, queue_count_col, aus_data
                     except: pass
                     return ''
 
-                try: # Podpora pro nové i starší verze Pandas
+                try:
                     styled_det = disp_det.style.format({"Prům. pohybů na lok.": "{:.1f}"}).map(color_bilance, subset=["Čistá bilance (TO navíc)"])
                 except AttributeError:
                     styled_det = disp_det.style.format({"Prům. pohybů na lok.": "{:.1f}"}).applymap(color_bilance, subset=["Čistá bilance (TO navíc)"])
                 
                 st.dataframe(styled_det, use_container_width=True, hide_index=True)
-            # ----------------------------------------------------------
 
         with col_t2:
             st.markdown("**Trend v čase (Měsíce)**")
-            
-            # Bezpečný fragment - Graf se změní okamžitě bez přeskočení stránky
             @fast_render
             def interactive_chart():
                 cat_options = ["Všechny kategorie"] + sorted(billing_df["Category_Full"].dropna().unique().tolist())
@@ -255,7 +244,56 @@ def render_billing(df_pick, df_vekp, df_vepo, df_cats, queue_count_col, aus_data
             
             interactive_chart()
 
-        st.markdown(f"### ⚠️ Žebříček neefektivity z konsolidace")
+        # --- NOVINKA: ANALÝZA POMĚRU PICK VS PACK ---
+        st.divider()
+        st.markdown("### ⚖️ Analýza poměru Pick vs. Pack (Efektivita zakázek)")
+        
+        # Příprava dat pro poměry
+        billing_df['is_1_to_1'] = (billing_df['pocet_to'] == billing_df['pocet_hu']).astype(int)
+        billing_df['is_more_to'] = (billing_df['pocet_to'] > billing_df['pocet_hu']).astype(int)
+        billing_df['is_more_hu'] = (billing_df['pocet_to'] < billing_df['pocet_hu']).astype(int)
+        
+        rc1, rc2 = st.columns([1.2, 1])
+        with rc1:
+            st.markdown("**Rozpad zakázek podle kategorií**")
+            ratio_table = billing_df.groupby('Category_Full').agg(
+                celkem=('Delivery', 'nunique'),
+                count_1_1=('is_1_to_1', 'sum'),
+                count_more_to=('is_more_to', 'sum'),
+                count_more_hu=('is_more_hu', 'sum')
+            ).reset_index()
+            
+            def format_pct(count, total):
+                if total == 0: return "0 (0.0 %)"
+                return f"{int(count)} ({(count/total*100):.1f} %)"
+            
+            ratio_table['1:1 (Ideál)'] = ratio_table.apply(lambda r: format_pct(r['count_1_1'], r['celkem']), axis=1)
+            ratio_table['Více TO (Ztráta)'] = ratio_table.apply(lambda r: format_pct(r['count_more_to'], r['celkem']), axis=1)
+            ratio_table['Více HU (Zisk)'] = ratio_table.apply(lambda r: format_pct(r['count_more_hu'], r['celkem']), axis=1)
+            
+            disp_ratio = ratio_table[['Category_Full', 'celkem', '1:1 (Ideál)', 'Více TO (Ztráta)', 'Více HU (Zisk)']].copy()
+            disp_ratio.columns = ["Kategorie", "Zakázek celkem", "1 TO = 1 HU", "Více TO (Ztráta)", "Více HU (Zisk)"]
+            st.dataframe(disp_ratio, use_container_width=True, hide_index=True)
+            
+        with rc2:
+            st.markdown("**Trend typů zakázek (Měsíce)**")
+            trend_ratio = billing_df.groupby('Month').agg(
+                count_1_1=('is_1_to_1', 'sum'),
+                count_more_to=('is_more_to', 'sum'),
+                count_more_hu=('is_more_hu', 'sum')
+            ).reset_index()
+            
+            fig_r = go.Figure()
+            fig_r.add_trace(go.Bar(x=trend_ratio['Month'], y=trend_ratio['count_1_1'], name='1:1 (Ideál)', marker_color='#10b981', text=trend_ratio['count_1_1'], textposition='auto'))
+            fig_r.add_trace(go.Bar(x=trend_ratio['Month'], y=trend_ratio['count_more_hu'], name='Více HU (Zisk)', marker_color='#3b82f6', text=trend_ratio['count_more_hu'], textposition='auto'))
+            fig_r.add_trace(go.Bar(x=trend_ratio['Month'], y=trend_ratio['count_more_to'], name='Více TO (Ztráta)', marker_color='#ef4444', text=trend_ratio['count_more_to'], textposition='auto'))
+            
+            fig_r.update_layout(barmode='stack', plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)", margin=dict(l=0, r=0, t=10, b=0), legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1))
+            st.plotly_chart(fig_r, use_container_width=True)
+
+        # -------------------------------------------------------------
+        st.divider()
+        st.markdown(f"### ⚠️ Žebříček neefektivity z konsolidace (Práce zdarma)")
         imb_df = billing_df[billing_df['TO_navic'] > 0].sort_values("TO_navic", ascending=False).head(50)
         if not imb_df.empty:
             imb_disp = imb_df[['Delivery', 'Category_Full', 'pocet_to', 'pohyby_celkem', 'pocet_hu', 'TO_navic']].copy()
