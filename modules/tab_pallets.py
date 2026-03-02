@@ -5,67 +5,104 @@ import plotly.graph_objects as go
 from modules.utils import t
 
 def render_pallets(df_pick):
-    # OPRAVENÝ NADPIS NA SINGLE SKU PALLET
-    st.markdown(f"<div class='section-header'><h3>🎯 Analýza paletových zakázek (Single SKU Pallet)</h3><p>*(Jednodruhové palety, počítáno výhradně z front PI_PL a PI_PL_OE)*</p></div>", unsafe_allow_html=True)
-
-    df_pallets_clean = df_pick[df_pick['Queue'].astype(str).str.upper().isin(['PI_PL', 'PI_PL_OE'])].copy()
+    st.markdown(f"<div class='section-header'><h3>🎯 {t('sec1_title')}</h3><p>{t('pallets_clean_info')}</p></div>", unsafe_allow_html=True)
     
-    for col_name in ['Certificate Number']:
-        if col_name not in df_pallets_clean.columns: df_pallets_clean[col_name] = ''
+    # 1. Vyfiltrujeme pouze paletové fronty
+    pal_df = df_pick[df_pick['Queue'].astype(str).str.upper().isin(['PI_PL', 'PI_PL_OE'])].copy()
+    
+    if pal_df.empty:
+        st.info("V aktuálních datech nejsou žádné zakázky z front PI_PL nebo PI_PL_OE.")
+        return
 
-    if not df_pallets_clean.empty:
-        grouped_orders = df_pallets_clean.groupby('Delivery').agg(
-            num_materials=('Material', 'nunique'), material=('Material', 'first'),
-            certs=('Certificate Number', lambda x: ", ".join([str(v) for v in x.dropna().unique() if str(v) not in ['', 'nan']])),
-            total_qty=('Qty', 'sum'), num_positions=('Source Storage Bin', 'nunique'),
-            celkem_pohybu=('Pohyby_Rukou', 'sum'), pohyby_exact=('Pohyby_Exact', 'sum'),
-            pohyby_miss=('Pohyby_Loose_Miss', 'sum'), vaha_zakazky=('Celkova_Vaha_KG', 'sum'),
-            max_rozmer=('Piece_Max_Dim_CM', 'first'), Month=('Month', 'first')
-        )
+    # 2. Agregace dat na úroveň celé zakázky (Delivery)
+    pal_agg = pal_df.groupby('Delivery').agg(
+        num_materials=('Material', 'nunique'),
+        total_qty=('Qty', 'sum'),
+        celkem_pohybu=('Pohyby_Rukou', 'sum'),
+        lokace=('Source Storage Bin', 'nunique'),
+        vaha_zakazky=('Celkova_Vaha_KG', 'sum'),
+        Month=('Month', 'first')
+    ).reset_index()
+
+    # Rozřazení na Single SKU (1 materiál) a Mix (>1 materiál)
+    pal_agg['Typ_Palety'] = np.where(pal_agg['num_materials'] == 1, 'Single SKU', 'Mix (Více materiálů)')
+    
+    # 3. METRIKY
+    total_pal = len(pal_agg)
+    single_pal = len(pal_agg[pal_agg['Typ_Palety'] == 'Single SKU'])
+    mix_pal = len(pal_agg[pal_agg['Typ_Palety'] == 'Mix (Více materiálů)'])
+    
+    single_pct = (single_pal / total_pal * 100) if total_pal > 0 else 0
+    mix_pct = (mix_pal / total_pal * 100) if total_pal > 0 else 0
+
+    c1, c2, c3, c4 = st.columns(4)
+    with c1:
+        with st.container(border=True): 
+            st.metric("Paletových zakázek celkem", f"{total_pal:,}")
+    with c2:
+        with st.container(border=True): 
+            st.metric("📦 Single SKU (1 materiál)", f"{single_pal:,}", f"{single_pct:.1f} % podíl", delta_color="normal")
+    with c3:
+        with st.container(border=True): 
+            st.metric("🔀 Mix palety (>1 materiál)", f"{mix_pal:,}", f"{mix_pct:.1f} % podíl", delta_color="inverse")
+    with c4:
+        avg_moves = pal_agg['celkem_pohybu'].mean() if not pal_agg.empty else 0
+        with st.container(border=True): 
+            st.metric("Průměr fyz. pohybů na zakázku", f"{avg_moves:.1f}")
+
+    st.divider()
+
+    col_t, col_g = st.columns([1, 1.5])
+
+    # 4. TABULKA (Nejnáročnější Single SKU zakázky)
+    with col_t:
+        st.markdown("**Detailní přehled (Nejnáročnější Single SKU)**")
+        single_df = pal_agg[pal_agg['Typ_Palety'] == 'Single SKU'].copy()
         
-        # FILTR PRO SINGLE SKU (1 materiál na zakázku)
-        filtered_orders = grouped_orders[grouped_orders['num_materials'] == 1].copy()
-
-        if not filtered_orders.empty:
-            filtered_orders['mov_per_loc'] = np.where(filtered_orders['num_positions'] > 0, filtered_orders['celkem_pohybu'] / filtered_orders['num_positions'], 0)
+        if not single_df.empty:
+            single_df['prum_poh_lok'] = np.where(single_df['lokace'] > 0, single_df['celkem_pohybu'] / single_df['lokace'], 0)
+            disp_single = single_df[['Delivery', 'total_qty', 'celkem_pohybu', 'prum_poh_lok', 'vaha_zakazky']].sort_values('celkem_pohybu', ascending=False).head(50)
+            disp_single.columns = ["Zakázka", "Kusů", "Pohyby celkem", "Pohybů / lokaci", "Celk. váha (kg)"]
             
-            c1, c2, c3, c4 = st.columns(4)
-            with c1:
-                with st.container(border=True): st.metric("Počet zakázek", f"{len(filtered_orders):,}".replace(',', ' '))
-            with c2:
-                with st.container(border=True): st.metric("Prům. kusů / zakázku", f"{filtered_orders['total_qty'].mean():.1f}")
-            with c3:
-                with st.container(border=True): st.metric("Prům. pozic / zakázku", f"{filtered_orders['num_positions'].mean():.2f}")
-            with c4:
-                with st.container(border=True): st.metric("Prům. fyz. pohybů na lokaci", f"{filtered_orders['mov_per_loc'].mean():.1f}")
+            st.dataframe(disp_single.style.format({"Pohybů / lokaci": "{:.1f}", "Celk. váha (kg)": "{:.1f}"}), use_container_width=True, hide_index=True)
+        else:
+            st.info("Žádné Single SKU zakázky k zobrazení.")
 
-            # --- TREND GRAF ---
-            st.divider()
-            trend_df = filtered_orders.groupby('Month').agg(pocet_to=('total_qty', 'count'), prum_poh=('mov_per_loc', 'mean')).reset_index()
+    # 5. NOVÝ KOMBINOVANÝ GRAF (Trend v čase: Absolutní čísla + Procenta)
+    with col_g:
+        st.markdown("**📈 Měsíční trend (Single vs. Mix palety)**")
+        if 'Month' in pal_agg.columns:
+            trend_agg = pal_agg.groupby(['Month', 'Typ_Palety']).size().reset_index(name='pocet')
+            
+            pivot_trend = trend_agg.pivot(index='Month', columns='Typ_Palety', values='pocet').fillna(0).reset_index()
+            
+            if 'Single SKU' not in pivot_trend.columns: pivot_trend['Single SKU'] = 0
+            if 'Mix (Více materiálů)' not in pivot_trend.columns: pivot_trend['Mix (Více materiálů)'] = 0
+            
+            pivot_trend['Celkem'] = pivot_trend['Single SKU'] + pivot_trend['Mix (Více materiálů)']
+            pivot_trend['Single_pct'] = np.where(pivot_trend['Celkem'] > 0, pivot_trend['Single SKU'] / pivot_trend['Celkem'] * 100, 0)
+            pivot_trend['Mix_pct'] = np.where(pivot_trend['Celkem'] > 0, pivot_trend['Mix (Více materiálů)'] / pivot_trend['Celkem'] * 100, 0)
             
             fig = go.Figure()
-            fig.add_trace(go.Bar(x=trend_df['Month'], y=trend_df['pocet_to'], name='Počet TO', marker_color='#38bdf8'))
-            fig.add_trace(go.Scatter(x=trend_df['Month'], y=trend_df['prum_poh'], name='Pohyby na lokaci', yaxis='y2', mode='lines+markers', line=dict(color='#f43f5e', width=3)))
+            
+            # Sloupce (Absolutní počty, mírně průhledné, aby nekryly čáry)
+            fig.add_trace(go.Bar(x=pivot_trend['Month'], y=pivot_trend['Single SKU'], name='Single SKU (Ks)', marker_color='rgba(16, 185, 129, 0.5)', text=pivot_trend['Single SKU'], textposition='inside', yaxis='y'))
+            fig.add_trace(go.Bar(x=pivot_trend['Month'], y=pivot_trend['Mix (Více materiálů)'], name='Mix palety (Ks)', marker_color='rgba(245, 158, 11, 0.5)', text=pivot_trend['Mix (Více materiálů)'], textposition='inside', yaxis='y'))
+            
+            # Čáry (Procentuální podíl, plná barva)
+            fig.add_trace(go.Scatter(x=pivot_trend['Month'], y=pivot_trend['Single_pct'], name='Podíl Single (%)', mode='lines+markers+text', text=pivot_trend['Single_pct'].round(1).astype(str) + '%', textposition='top center', marker_color='#059669', line=dict(width=3), yaxis='y2'))
+            fig.add_trace(go.Scatter(x=pivot_trend['Month'], y=pivot_trend['Mix_pct'], name='Podíl Mix (%)', mode='lines+markers+text', text=pivot_trend['Mix_pct'].round(1).astype(str) + '%', textposition='bottom center', marker_color='#d97706', line=dict(width=3), yaxis='y2'))
             
             fig.update_layout(
-                title="Trend počtu zakázek a náročnosti",
-                yaxis=dict(title="Počet TO", side="left"),
-                yaxis2=dict(title="Prům. pohybů na lokaci", side="right", overlaying="y", showgrid=False),
-                plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)", margin=dict(l=0, r=0, t=40, b=0),
-                legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
+                barmode='stack',
+                yaxis=dict(title="Absolutní počet zakázek"),
+                yaxis2=dict(title="Procentuální podíl (%)", side="right", overlaying="y", showgrid=False, range=[0, 115]),
+                plot_bgcolor="rgba(0,0,0,0)",
+                paper_bgcolor="rgba(0,0,0,0)",
+                margin=dict(l=0, r=0, t=30, b=0),
+                legend=dict(orientation="h", yanchor="bottom", y=1.05, xanchor="left", x=0)
             )
+            
             st.plotly_chart(fig, use_container_width=True)
-
-            tot_p_pal = filtered_orders['celkem_pohybu'].sum()
-            if tot_p_pal > 0:
-                st.markdown("**Podíl z celkového počtu POHYBŮ:**")
-                c_p1, c_p2 = st.columns(2)
-                c_p1.metric("Přesně (Krabice / Palety / Volné)", f"{filtered_orders['pohyby_exact'].sum() / tot_p_pal * 100:.1f} %")
-                c_p2.metric("Odhady (Chybí balení)", f"{filtered_orders['pohyby_miss'].sum() / tot_p_pal * 100:.1f} %", delta_color="inverse")
-
-            with st.expander("Zobrazit tabulku zakázek (Single SKU)"):
-                display_df = filtered_orders[['material', 'total_qty', 'celkem_pohybu', 'pohyby_exact', 'pohyby_miss', 'vaha_zakazky', 'max_rozmer', 'certs']].copy()
-                display_df.columns = ["Materiál", "Kusů celkem", "Celkem pohybů", "Pohyby (Přesně)", "Pohyby (Odhady)", "Hmotnost (kg)", "Rozměr (cm)", "Certifikát"]
-                st.dataframe(display_df, use_container_width=True, hide_index=True)
-        else: st.warning("Nenalezeny žádné zakázky pro zobrazení.")
-    else: st.warning("Nenalezeny žádné zakázky pro zobrazení.")
+        else:
+            st.info("Chybí data o měsících pro vykreslení trendu.")
