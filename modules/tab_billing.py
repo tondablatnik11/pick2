@@ -244,7 +244,7 @@ def render_billing(df_pick, df_vekp, df_vepo, df_cats, queue_count_col, aus_data
             
             interactive_chart()
 
-        # --- NOVINKA: ANALÝZA POMĚRU PICK VS PACK ---
+        # --- ANALÝZA POMĚRU PICK VS PACK ---
         st.divider()
         st.markdown("### ⚖️ Analýza poměru Pick vs. Pack (Efektivita zakázek)")
         
@@ -283,12 +283,33 @@ def render_billing(df_pick, df_vekp, df_vepo, df_cats, queue_count_col, aus_data
                 count_more_hu=('is_more_hu', 'sum')
             ).reset_index()
             
-            fig_r = go.Figure()
-            fig_r.add_trace(go.Bar(x=trend_ratio['Month'], y=trend_ratio['count_1_1'], name='1:1 (Ideál)', marker_color='#10b981', text=trend_ratio['count_1_1'], textposition='auto'))
-            fig_r.add_trace(go.Bar(x=trend_ratio['Month'], y=trend_ratio['count_more_hu'], name='Více HU (Zisk)', marker_color='#3b82f6', text=trend_ratio['count_more_hu'], textposition='auto'))
-            fig_r.add_trace(go.Bar(x=trend_ratio['Month'], y=trend_ratio['count_more_to'], name='Více TO (Ztráta)', marker_color='#ef4444', text=trend_ratio['count_more_to'], textposition='auto'))
+            # Výpočet celkových počtů a procent
+            trend_ratio['total'] = trend_ratio['count_1_1'] + trend_ratio['count_more_to'] + trend_ratio['count_more_hu']
+            trend_ratio['pct_1_1'] = np.where(trend_ratio['total'] > 0, trend_ratio['count_1_1'] / trend_ratio['total'] * 100, 0)
+            trend_ratio['pct_more_to'] = np.where(trend_ratio['total'] > 0, trend_ratio['count_more_to'] / trend_ratio['total'] * 100, 0)
+            trend_ratio['pct_more_hu'] = np.where(trend_ratio['total'] > 0, trend_ratio['count_more_hu'] / trend_ratio['total'] * 100, 0)
             
-            fig_r.update_layout(barmode='stack', plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)", margin=dict(l=0, r=0, t=10, b=0), legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1))
+            fig_r = go.Figure()
+            
+            # 1. SLOUPCE (Absolutní počty zakázek - mírně průhledné, ať to neruší čáry)
+            fig_r.add_trace(go.Bar(x=trend_ratio['Month'], y=trend_ratio['count_1_1'], name='1:1 (Kusy)', marker_color='rgba(16, 185, 129, 0.5)', text=trend_ratio['count_1_1'], textposition='inside', yaxis='y'))
+            fig_r.add_trace(go.Bar(x=trend_ratio['Month'], y=trend_ratio['count_more_hu'], name='Více HU (Kusy)', marker_color='rgba(59, 130, 246, 0.5)', text=trend_ratio['count_more_hu'], textposition='inside', yaxis='y'))
+            fig_r.add_trace(go.Bar(x=trend_ratio['Month'], y=trend_ratio['count_more_to'], name='Více TO (Kusy)', marker_color='rgba(239, 68, 68, 0.5)', text=trend_ratio['count_more_to'], textposition='inside', yaxis='y'))
+            
+            # 2. ČÁRY S PROCENTY (Na pravé ose y2, ostře viditelné)
+            fig_r.add_trace(go.Scatter(x=trend_ratio['Month'], y=trend_ratio['pct_1_1'], name='1:1 (%)', mode='lines+markers+text', text=trend_ratio['pct_1_1'].round(1).astype(str) + '%', textposition='top center', marker_color='#10b981', line=dict(width=3), yaxis='y2'))
+            fig_r.add_trace(go.Scatter(x=trend_ratio['Month'], y=trend_ratio['pct_more_hu'], name='Více HU (%)', mode='lines+markers+text', text=trend_ratio['pct_more_hu'].round(1).astype(str) + '%', textposition='top center', marker_color='#3b82f6', line=dict(width=3), yaxis='y2'))
+            fig_r.add_trace(go.Scatter(x=trend_ratio['Month'], y=trend_ratio['pct_more_to'], name='Více TO (%)', mode='lines+markers+text', text=trend_ratio['pct_more_to'].round(1).astype(str) + '%', textposition='bottom center', marker_color='#ef4444', line=dict(width=3), yaxis='y2'))
+            
+            fig_r.update_layout(
+                barmode='stack', 
+                plot_bgcolor="rgba(0,0,0,0)", 
+                paper_bgcolor="rgba(0,0,0,0)", 
+                margin=dict(l=0, r=0, t=10, b=0), 
+                legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
+                yaxis=dict(title="Celkem zakázek"),
+                yaxis2=dict(title="Podíl zakázek (%)", side="right", overlaying="y", showgrid=False, range=[0, 110])
+            )
             st.plotly_chart(fig_r, use_container_width=True)
 
         # -------------------------------------------------------------
