@@ -48,7 +48,7 @@ def render_audit(df_pick, df_vekp, df_vepo, df_oe, queue_count_col, billing_df, 
 
     with col_au2:
         st.markdown("<div class='section-header'><h3>🔍 Prohlížeč Master Dat</h3></div>", unsafe_allow_html=True)
-        mat_search = st.selectbox("Zkontrolujte si konkrétní materiál:", options=[""] + sorted(df_pick['Material'].unique().tolist()))
+        mat_search = st.selectbox("Zkontrolujte si konkrétní materiál:", options=[""] + sorted(df_pick['Material'].dropna().astype(str).unique().tolist()))
         if mat_search:
             search_key = get_match_key(mat_search)
             if search_key in manual_boxes: st.success(f"✅ Ruční ověření nalezeno: balení **{manual_boxes[search_key]} ks**.")
@@ -104,12 +104,7 @@ def render_audit(df_pick, df_vekp, df_vepo, df_oe, queue_count_col, billing_df, 
                     child = str(r['Clean_HU_Int'])
                     parent = str(r['Clean_Parent'])
                     if parent in ext_to_int_aud: parent = ext_to_int_aud[parent]
-                    
-                    # OPRAVA: Ignorování rodičů (Kamionů) z jiných tabulek
-                    if parent in valid_hus_aud:
-                        parent_map_aud[child] = parent
-                    else:
-                        parent_map_aud[child] = ""
+                    parent_map_aud[child] = parent if parent in valid_hus_aud else ""
 
                 if df_vepo is not None and not df_vepo.empty:
                     vepo_hu_col_aud = next((c for c in df_vepo.columns if "Internal HU" in str(c) or "HU-Nummer intern" in str(c)), df_vepo.columns[0])
