@@ -7,6 +7,7 @@ from modules.utils import t
 def render_billing(df_pick, df_vekp, df_vepo, df_cats, queue_count_col, aus_data):
     st.markdown(f"<div class='section-header'><h3>💰 Korelace mezi Pickováním a Účtováním</h3><p>Zákazník platí podle počtu výsledných balících jednotek (HU). Zde vidíte náročnost vytvoření těchto zpoplatněných jednotek napříč fakturačními kategoriemi.</p></div>", unsafe_allow_html=True)
 
+    # BEZPEČNÉ NAPÁROVÁNÍ KATEGORIÍ (odstraní nuly pro spojení s Auswertungem)
     aus_category_map = {}
     if aus_data:
         df_likp_tmp = aus_data.get("LIKP", pd.DataFrame())
@@ -37,7 +38,7 @@ def render_billing(df_pick, df_vekp, df_vepo, df_cats, queue_count_col, aus_data
     billing_df = pd.DataFrame()
 
     if df_vekp is not None and not df_vekp.empty:
-        # PÁROVÁNÍ PŘESNĚ BEZ OŘEZÁVÁNÍ NUL, ABY SE ZAKÁZKY SPOJILY
+        # PÁROVÁNÍ VEKP <-> PICK PŘESNĚ BEZ OŘEZÁVÁNÍ NUL (aby se nerozbilo spojení)
         vekp_clean = df_vekp.dropna(subset=["Handling Unit", "Generated delivery"]).copy()
         valid_deliveries = df_pick["Delivery"].dropna().unique()
         vekp_filtered = vekp_clean[vekp_clean["Generated delivery"].isin(valid_deliveries)].copy()
@@ -65,7 +66,6 @@ def render_billing(df_pick, df_vekp, df_vepo, df_cats, queue_count_col, aus_data
         else:
             valid_base_hus = set(vekp_filtered['Clean_HU_Int'])
 
-        # Ochrana Vollpalet
         auto_voll_hus_clean = set()
         mask_x = df_pick['Removal of total SU'] == 'X'
         for c_hu in ['Source storage unit', 'Source Storage Bin', 'Handling Unit']:
@@ -85,7 +85,7 @@ def render_billing(df_pick, df_vekp, df_vepo, df_cats, queue_count_col, aus_data
                 if parent in ext_to_int: parent = ext_to_int[parent]
                 p_map[child] = parent
                 
-            # HUs s fyzickým materiálem (Krabice)
+            # Listy = HUs s fyzickým materiálem (Krabice z VEPO)
             leaves = [h for h in group['Clean_HU_Int'] if h in valid_base_hus]
             
             roots = set()
@@ -95,7 +95,7 @@ def render_billing(df_pick, df_vekp, df_vepo, df_cats, queue_count_col, aus_data
                 leaf_exts = group.loc[group['Clean_HU_Int'] == leaf, 'Clean_HU_Ext'].values
                 leaf_ext = leaf_exts[0] if len(leaf_exts) > 0 else ""
                 
-                # Zabráníme sloučení, pokud se jedná o Vollpaletu (X)
+                # Pokud to je Vollpaleta (X), neslučuje se a počítá se samostatně
                 if leaf in auto_voll_hus_clean or leaf_ext in auto_voll_hus_clean:
                     voll_count += 1
                 else:
@@ -143,7 +143,7 @@ def render_billing(df_pick, df_vekp, df_vepo, df_cats, queue_count_col, aus_data
             if pd.notna(cat_full) and str(cat_full).strip() not in ["", "nan", t("uncategorized")]:
                 return cat_full
             
-            # ZDE SE HLEDÁ V AUSWERTUNGU PŘES OŘEZANOU ZAKÁZKU
+            # BEZPEČNÉ HLEDÁNÍ PŘES OŘEZANOU ZAKÁZKU (Aby se KEP zakázky našly)
             deliv_clean = str(row["Delivery"]).strip().lstrip('0')
             kat = aus_category_map.get(deliv_clean)
             
@@ -227,6 +227,7 @@ def render_billing(df_pick, df_vekp, df_vepo, df_cats, queue_count_col, aus_data
         else:
             df_likp = aus_data.get("LIKP", pd.DataFrame())
             df_vekp2 = aus_data.get("VEKP", pd.DataFrame())
+            df_vepo = aus_data.get("VEPO", pd.DataFrame())
             df_sdshp = aus_data.get("SDSHP_AM2", pd.DataFrame())
             df_t031 = aus_data.get("T031", pd.DataFrame())
 
