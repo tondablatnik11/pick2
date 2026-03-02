@@ -24,29 +24,26 @@ def render_pallets(df_pick):
         Month=('Month', 'first')
     ).reset_index()
 
-    # Rozřazení na Single SKU (1 materiál) a Mix (>1 materiál)
-    pal_agg['Typ_Palety'] = np.where(pal_agg['num_materials'] == 1, 'Single SKU', 'Mix (Více materiálů)')
-    
-    # 3. METRIKY
-    total_pal = len(pal_agg)
-    single_pal = len(pal_agg[pal_agg['Typ_Palety'] == 'Single SKU'])
-    mix_pal = len(pal_agg[pal_agg['Typ_Palety'] == 'Mix (Více materiálů)'])
-    
-    single_pct = (single_pal / total_pal * 100) if total_pal > 0 else 0
-    mix_pct = (mix_pal / total_pal * 100) if total_pal > 0 else 0
+    # 3. PŘÍSNÝ FILTR - POUZE ZAKÁZKY S 1 MATERIÁLEM (Zahození Mixu)
+    single_df = pal_agg[pal_agg['num_materials'] == 1].copy()
 
-    c1, c2, c3, c4 = st.columns(4)
+    if single_df.empty:
+        st.warning("V datech nejsou žádné čisté paletové zakázky obsahující pouze 1 materiál.")
+        return
+
+    # 4. METRIKY (Čisté palety)
+    total_single = len(single_df)
+    avg_qty = single_df['total_qty'].mean()
+    avg_moves = single_df['celkem_pohybu'].mean()
+    
+    c1, c2, c3 = st.columns(3)
     with c1:
         with st.container(border=True): 
-            st.metric("Paletových zakázek celkem", f"{total_pal:,}")
+            st.metric("Počet zakázek (Čisté palety 1:1)", f"{total_single:,}")
     with c2:
         with st.container(border=True): 
-            st.metric("📦 Single SKU (1 materiál)", f"{single_pal:,}", f"{single_pct:.1f} % podíl", delta_color="normal")
+            st.metric("Průměrně kusů na zakázku", f"{avg_qty:.0f}")
     with c3:
-        with st.container(border=True): 
-            st.metric("🔀 Mix palety (>1 materiál)", f"{mix_pal:,}", f"{mix_pct:.1f} % podíl", delta_color="inverse")
-    with c4:
-        avg_moves = pal_agg['celkem_pohybu'].mean() if not pal_agg.empty else 0
         with st.container(border=True): 
             st.metric("Průměr fyz. pohybů na zakázku", f"{avg_moves:.1f}")
 
@@ -54,49 +51,55 @@ def render_pallets(df_pick):
 
     col_t, col_g = st.columns([1, 1.5])
 
-    # 4. TABULKA (Nejnáročnější Single SKU zakázky)
+    # 5. TABULKA (Nejnáročnější čisté zakázky)
     with col_t:
-        st.markdown("**Detailní přehled (Nejnáročnější Single SKU)**")
-        single_df = pal_agg[pal_agg['Typ_Palety'] == 'Single SKU'].copy()
+        st.markdown("**Detailní přehled (Nejnáročnější čisté palety)**")
+        single_df['prum_poh_lok'] = np.where(single_df['lokace'] > 0, single_df['celkem_pohybu'] / single_df['lokace'], 0)
         
-        if not single_df.empty:
-            single_df['prum_poh_lok'] = np.where(single_df['lokace'] > 0, single_df['celkem_pohybu'] / single_df['lokace'], 0)
-            disp_single = single_df[['Delivery', 'total_qty', 'celkem_pohybu', 'prum_poh_lok', 'vaha_zakazky']].sort_values('celkem_pohybu', ascending=False).head(50)
-            disp_single.columns = ["Zakázka", "Kusů", "Pohyby celkem", "Pohybů / lokaci", "Celk. váha (kg)"]
-            
-            st.dataframe(disp_single.style.format({"Pohybů / lokaci": "{:.1f}", "Celk. váha (kg)": "{:.1f}"}), use_container_width=True, hide_index=True)
-        else:
-            st.info("Žádné Single SKU zakázky k zobrazení.")
+        # Seřadíme od největšího počtu pohybů
+        disp_single = single_df[['Delivery', 'total_qty', 'celkem_pohybu', 'prum_poh_lok', 'vaha_zakazky']].sort_values('celkem_pohybu', ascending=False).head(50)
+        disp_single.columns = ["Zakázka", "Kusů", "Pohyby celkem", "Pohybů / lokaci", "Celk. váha (kg)"]
+        
+        st.dataframe(disp_single.style.format({"Pohybů / lokaci": "{:.1f}", "Celk. váha (kg)": "{:.1f}"}), use_container_width=True, hide_index=True)
 
-    # 5. NOVÝ KOMBINOVANÝ GRAF (Trend v čase: Absolutní čísla + Procenta)
+    # 6. GRAF (Trend vývoje čistých palet v čase)
     with col_g:
-        st.markdown("**📈 Měsíční trend (Single vs. Mix palety)**")
-        if 'Month' in pal_agg.columns:
-            trend_agg = pal_agg.groupby(['Month', 'Typ_Palety']).size().reset_index(name='pocet')
-            
-            pivot_trend = trend_agg.pivot(index='Month', columns='Typ_Palety', values='pocet').fillna(0).reset_index()
-            
-            if 'Single SKU' not in pivot_trend.columns: pivot_trend['Single SKU'] = 0
-            if 'Mix (Více materiálů)' not in pivot_trend.columns: pivot_trend['Mix (Více materiálů)'] = 0
-            
-            pivot_trend['Celkem'] = pivot_trend['Single SKU'] + pivot_trend['Mix (Více materiálů)']
-            pivot_trend['Single_pct'] = np.where(pivot_trend['Celkem'] > 0, pivot_trend['Single SKU'] / pivot_trend['Celkem'] * 100, 0)
-            pivot_trend['Mix_pct'] = np.where(pivot_trend['Celkem'] > 0, pivot_trend['Mix (Více materiálů)'] / pivot_trend['Celkem'] * 100, 0)
+        st.markdown("**📈 Měsíční trend u čistých palet**")
+        if 'Month' in single_df.columns:
+            trend_agg = single_df.groupby('Month').agg(
+                pocet_zakazek=('Delivery', 'count'),
+                prum_pohybu=('celkem_pohybu', 'mean')
+            ).reset_index()
             
             fig = go.Figure()
             
-            # Sloupce (Absolutní počty, mírně průhledné, aby nekryly čáry)
-            fig.add_trace(go.Bar(x=pivot_trend['Month'], y=pivot_trend['Single SKU'], name='Single SKU (Ks)', marker_color='rgba(16, 185, 129, 0.5)', text=pivot_trend['Single SKU'], textposition='inside', yaxis='y'))
-            fig.add_trace(go.Bar(x=pivot_trend['Month'], y=pivot_trend['Mix (Více materiálů)'], name='Mix palety (Ks)', marker_color='rgba(245, 158, 11, 0.5)', text=pivot_trend['Mix (Více materiálů)'], textposition='inside', yaxis='y'))
+            # Sloupce (Počet zakázek v daném měsíci)
+            fig.add_trace(go.Bar(
+                x=trend_agg['Month'], 
+                y=trend_agg['pocet_zakazek'], 
+                name='Počet zakázek', 
+                marker_color='#10b981', 
+                text=trend_agg['pocet_zakazek'], 
+                textposition='auto',
+                yaxis='y'
+            ))
             
-            # Čáry (Procentuální podíl, plná barva)
-            fig.add_trace(go.Scatter(x=pivot_trend['Month'], y=pivot_trend['Single_pct'], name='Podíl Single (%)', mode='lines+markers+text', text=pivot_trend['Single_pct'].round(1).astype(str) + '%', textposition='top center', marker_color='#059669', line=dict(width=3), yaxis='y2'))
-            fig.add_trace(go.Scatter(x=pivot_trend['Month'], y=pivot_trend['Mix_pct'], name='Podíl Mix (%)', mode='lines+markers+text', text=pivot_trend['Mix_pct'].round(1).astype(str) + '%', textposition='bottom center', marker_color='#d97706', line=dict(width=3), yaxis='y2'))
+            # Čára (Vývoj průměrného počtu fyzických pohybů)
+            fig.add_trace(go.Scatter(
+                x=trend_agg['Month'], 
+                y=trend_agg['prum_pohybu'], 
+                name='Prům. pohybů na zakázku', 
+                mode='lines+markers+text', 
+                text=trend_agg['prum_pohybu'].round(1).astype(str), 
+                textposition='top center', 
+                marker_color='#f59e0b', 
+                line=dict(width=3), 
+                yaxis='y2'
+            ))
             
             fig.update_layout(
-                barmode='stack',
-                yaxis=dict(title="Absolutní počet zakázek"),
-                yaxis2=dict(title="Procentuální podíl (%)", side="right", overlaying="y", showgrid=False, range=[0, 115]),
+                yaxis=dict(title="Počet zakázek (1 mat.)"),
+                yaxis2=dict(title="Průměr pohybů", side="right", overlaying="y", showgrid=False),
                 plot_bgcolor="rgba(0,0,0,0)",
                 paper_bgcolor="rgba(0,0,0,0)",
                 margin=dict(l=0, r=0, t=30, b=0),
