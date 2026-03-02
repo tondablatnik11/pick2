@@ -68,9 +68,10 @@ def cached_billing_logic(df_pick, df_vekp, df_vepo, df_cats, queue_count_col, df
     else:
         valid_base_hus = set(vekp_filtered['Clean_HU_Int'])
 
+    # OPRAVA AUDIT F24: Odstraněna lokace ze sběru HU pro Vollpalety
     auto_voll_hus_clean = set()
     mask_x = df_pick['Removal of total SU'] == 'X'
-    for c_hu in ['Source storage unit', 'Source Storage Bin', 'Handling Unit']:
+    for c_hu in ['Source storage unit', 'Handling Unit']:
         if c_hu in df_pick.columns:
             auto_voll_hus_clean.update(df_pick.loc[mask_x, c_hu].dropna().astype(str).str.strip().str.lstrip('0'))
             
@@ -118,14 +119,21 @@ def cached_billing_logic(df_pick, df_vekp, df_vepo, df_cats, queue_count_col, df
     if hu_agg.empty:
         hu_agg = pd.DataFrame(columns=["Generated delivery", "hu_leaf", "hu_top_level"])
 
+    # AGREGACE A DETEKCE VOLLPALET
     pick_agg = df_pick.groupby("Delivery").agg(
         pocet_to=(queue_count_col, "nunique"),
         pohyby_celkem=("Pohyby_Rukou", "sum"),
         pocet_lokaci=("Source Storage Bin", "nunique"),
         hlavni_fronta=("Queue", "first"),
         pocet_mat=("Material", "nunique"),
-        Month=("Month", "first")
+        Month=("Month", "first"),
+        total_lines=("Material", "count")
     ).reset_index()
+
+    # Rychlý vektorový výpočet: Je to čistě Vollpaletová zakázka?
+    voll_counts = df_pick[mask_x].groupby('Delivery').size()
+    pick_agg['voll_lines'] = pick_agg['Delivery'].map(voll_counts).fillna(0)
+    pick_agg['is_voll'] = (pick_agg['voll_lines'] > 0) & (pick_agg['voll_lines'] == pick_agg['total_lines'])
 
     billing_df = pd.merge(pick_agg, hu_agg, left_on="Delivery", right_on="Generated delivery", how="left")
 
@@ -143,21 +151,32 @@ def cached_billing_logic(df_pick, df_vekp, df_vepo, df_cats, queue_count_col, df
             q = str(row.get('hlavni_fronta', '')).upper()
             kat = "OE" if 'PI_PA_OE' in q else "E" if 'PI_PA' in q else "O" if ('PI_PL_FUOE' in q or 'PI_PL_OE' in q) else "N" if 'PI_PL' in q else None
                 
-        art = "Sortenrein" if row.get('pocet_mat', 1) <= 1 else "Misch"
+        # ZDE JE PŘIDANÁ LOGIKA PRO VOLLPALETY
+        if row.get('is_voll', False):
+            art = "Vollpalette"
+        else:
+            art = "Sortenrein" if row.get('pocet_mat', 1) <= 1 else "Misch"
+            
         if kat: return f"{kat} {art}"
         return txt_uncat
 
     billing_df["Category_Full"] = billing_df.apply(odvod_kategorii, axis=1)
 
+    # OPRAVA AUDIT F21: Neprůstřelná logika kategorií
     def urci_konecnou_hu(row):
         kat = str(row.get('Category_Full', '')).upper()
-        return row.get('hu_leaf', 0) if kat.startswith('E') or kat.startswith('OE') else row.get('hu_top_level', 0)
+        base_kat = kat.split()[0] if kat else ""
+        if base_kat in ['E', 'OE']:
+            return row.get('hu_leaf', 0)
+        else:
+            return row.get('hu_top_level', 0)
 
     billing_df["pocet_hu"] = billing_df.apply(urci_konecnou_hu, axis=1).fillna(0).astype(int)
     billing_df["Bilance"] = (billing_df["pocet_to"] - billing_df["pocet_hu"]).astype(int)
     billing_df["TO_navic"] = billing_df["Bilance"].clip(lower=0)
 
     return billing_df
+
 
 def render_billing(df_pick, df_vekp, df_vepo, df_cats, queue_count_col, aus_data):
     st.markdown(f"<div class='section-header'><h3>💰 Korelace mezi Pickováním a Účtováním</h3><p>Zákazník platí podle počtu výsledných balících jednotek (HU). Zde vidíte náročnost vytvoření těchto zpoplatněných jednotek napříč fakturačními kategoriemi.</p></div>", unsafe_allow_html=True)
@@ -240,7 +259,6 @@ def render_billing(df_pick, df_vekp, df_vepo, df_cats, queue_count_col, aus_data
                 fig.add_trace(go.Bar(x=tr_df['Month'], y=tr_df['hu_sum'], name='Počet HU', marker_color='#818cf8', text=tr_df['hu_sum'], textposition='auto'))
                 fig.add_trace(go.Scatter(x=tr_df['Month'], y=tr_df['prum_poh'], name='Pohyby na lokaci', yaxis='y2', mode='lines+markers+text', text=tr_df['prum_poh'].round(1), textposition='top center', textfont=dict(color='#f43f5e'), line=dict(color='#f43f5e', width=3)))
                 
-                # OPRAVA LEGENdy a ZVĚTŠENÍ TOP MARGINU
                 fig.update_layout(
                     yaxis2=dict(title="Pohyby", side="right", overlaying="y", showgrid=False), 
                     plot_bgcolor="rgba(0,0,0,0)", 
@@ -256,7 +274,6 @@ def render_billing(df_pick, df_vekp, df_vepo, df_cats, queue_count_col, aus_data
         st.divider()
         st.markdown("### ⚖️ Analýza poměru Pick vs. Pack (Efektivita zakázek)")
         
-        # Příprava dat pro poměry
         billing_df['is_1_to_1'] = (billing_df['pocet_to'] == billing_df['pocet_hu']).astype(int)
         billing_df['is_more_to'] = (billing_df['pocet_to'] > billing_df['pocet_hu']).astype(int)
         billing_df['is_more_hu'] = (billing_df['pocet_to'] < billing_df['pocet_hu']).astype(int)
@@ -291,7 +308,6 @@ def render_billing(df_pick, df_vekp, df_vepo, df_cats, queue_count_col, aus_data
                 count_more_hu=('is_more_hu', 'sum')
             ).reset_index()
             
-            # Výpočet celkových počtů a procent
             trend_ratio['total'] = trend_ratio['count_1_1'] + trend_ratio['count_more_to'] + trend_ratio['count_more_hu']
             trend_ratio['pct_1_1'] = np.where(trend_ratio['total'] > 0, trend_ratio['count_1_1'] / trend_ratio['total'] * 100, 0)
             trend_ratio['pct_more_to'] = np.where(trend_ratio['total'] > 0, trend_ratio['count_more_to'] / trend_ratio['total'] * 100, 0)
@@ -299,17 +315,14 @@ def render_billing(df_pick, df_vekp, df_vepo, df_cats, queue_count_col, aus_data
             
             fig_r = go.Figure()
             
-            # 1. SLOUPCE (Absolutní počty zakázek - mírně průhledné, ať to neruší čáry)
             fig_r.add_trace(go.Bar(x=trend_ratio['Month'], y=trend_ratio['count_1_1'], name='1:1 (Kusy)', marker_color='rgba(16, 185, 129, 0.5)', text=trend_ratio['count_1_1'], textposition='inside', yaxis='y'))
             fig_r.add_trace(go.Bar(x=trend_ratio['Month'], y=trend_ratio['count_more_hu'], name='Více HU (Kusy)', marker_color='rgba(59, 130, 246, 0.5)', text=trend_ratio['count_more_hu'], textposition='inside', yaxis='y'))
             fig_r.add_trace(go.Bar(x=trend_ratio['Month'], y=trend_ratio['count_more_to'], name='Více TO (Kusy)', marker_color='rgba(239, 68, 68, 0.5)', text=trend_ratio['count_more_to'], textposition='inside', yaxis='y'))
             
-            # 2. ČÁRY S PROCENTY (Na pravé ose y2, ostře viditelné)
             fig_r.add_trace(go.Scatter(x=trend_ratio['Month'], y=trend_ratio['pct_1_1'], name='1:1 (%)', mode='lines+markers+text', text=trend_ratio['pct_1_1'].round(1).astype(str) + '%', textposition='top center', marker_color='#10b981', line=dict(width=3), yaxis='y2'))
             fig_r.add_trace(go.Scatter(x=trend_ratio['Month'], y=trend_ratio['pct_more_hu'], name='Více HU (%)', mode='lines+markers+text', text=trend_ratio['pct_more_hu'].round(1).astype(str) + '%', textposition='top center', marker_color='#3b82f6', line=dict(width=3), yaxis='y2'))
             fig_r.add_trace(go.Scatter(x=trend_ratio['Month'], y=trend_ratio['pct_more_to'], name='Více TO (%)', mode='lines+markers+text', text=trend_ratio['pct_more_to'].round(1).astype(str) + '%', textposition='bottom center', marker_color='#ef4444', line=dict(width=3), yaxis='y2'))
             
-            # OPRAVA LEGENdy a ZVĚTŠENÍ TOP MARGINU
             fig_r.update_layout(
                 barmode='stack', 
                 plot_bgcolor="rgba(0,0,0,0)", 
