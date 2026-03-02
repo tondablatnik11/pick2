@@ -27,12 +27,11 @@ def render_audit_detail(df_pick, df_vekp, df_vepo, df_oe, queue_count_col, billi
 
         st.markdown("#### 2️⃣ Fáze: Systémové Obaly (VEKP / VEPO)")
         if df_vekp is not None and not df_vekp.empty:
-            # OPRAVA: Ořezání nul z VEKP i pro Audit (aby se HU bezpečně objevily)
             vekp_del = df_vekp[df_vekp['Generated delivery'].astype(str).str.strip().str.lstrip('0') == sel_del.lstrip('0')].copy()
             
             sel_del_kat = "N"
             if billing_df is not None and not billing_df.empty:
-                cat_row = billing_df[billing_df['Clean_Del'] == sel_del.lstrip('0')]
+                cat_row = billing_df[billing_df['Delivery'].astype(str).str.strip() == str(sel_del).strip()]
                 if not cat_row.empty: sel_del_kat = str(cat_row.iloc[0]['Category_Full']).upper()
             
             if not vekp_del.empty:
@@ -93,7 +92,7 @@ def render_audit_detail(df_pick, df_vekp, df_vepo, df_oe, queue_count_col, billi
                     )
 
                 hu_count = len(vekp_del[vekp_del['Status pro fakturaci'].str.contains('✅') | vekp_del['Status pro fakturaci'].str.contains('🏭')])
-                st.metric(f"Zabalených HU (VEKP) - Kategorie {sel_del_kat}", hu_count)
+                st.metric(f"Zabalených HU (Kategorie: {sel_del_kat})", hu_count)
                 
                 with st.expander("Zobrazit hierarchii obalů"):
                     disp_cols = [c_hu_ext_aud, 'Packaging materials', 'Total Weight', 'Status pro fakturaci']
