@@ -4,33 +4,6 @@ import numpy as np
 import plotly.graph_objects as go
 from modules.utils import t
 
-# Kouzlo pro bleskové překreslování grafu bez načítání celé stránky
-try:
-    fast_render = st.fragment
-except AttributeError:
-    fast_render = lambda f: f
-
-@fast_render
-def render_interactive_chart(billing_df):
-    cat_options = ["Všechny kategorie"] + sorted(billing_df["Category_Full"].dropna().unique().tolist())
-    selected_cat = st.selectbox("Vyberte kategorii pro graf:", options=cat_options, label_visibility="collapsed")
-    
-    if selected_cat == "Všechny kategorie":
-        plot_df = billing_df.copy()
-    else:
-        plot_df = billing_df[billing_df["Category_Full"] == selected_cat].copy()
-    
-    tr_df = plot_df.groupby("Month").agg(to_sum=("pocet_to", "sum"), hu_sum=("pocet_hu", "sum"), poh=("pohyby_celkem", "sum"), lok=("pocet_lokaci", "sum")).reset_index()
-    tr_df['prum_poh'] = np.where(tr_df['lok']>0, tr_df['poh']/tr_df['lok'], 0)
-    
-    fig = go.Figure()
-    fig.add_trace(go.Bar(x=tr_df['Month'], y=tr_df['to_sum'], name='Počet TO', marker_color='#38bdf8', text=tr_df['to_sum'], textposition='auto'))
-    fig.add_trace(go.Bar(x=tr_df['Month'], y=tr_df['hu_sum'], name='Počet HU', marker_color='#818cf8', text=tr_df['hu_sum'], textposition='auto'))
-    fig.add_trace(go.Scatter(x=tr_df['Month'], y=tr_df['prum_poh'], name='Pohyby na lokaci', yaxis='y2', mode='lines+markers+text', text=tr_df['prum_poh'].round(1), textposition='top center', textfont=dict(color='#f43f5e'), line=dict(color='#f43f5e', width=3)))
-    
-    fig.update_layout(yaxis2=dict(title="Pohyby", side="right", overlaying="y", showgrid=False), plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)", margin=dict(l=0, r=0, t=10, b=0), legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1))
-    st.plotly_chart(fig, use_container_width=True)
-
 def render_billing(df_pick, df_vekp, df_vepo, df_cats, queue_count_col, aus_data):
     st.markdown(f"<div class='section-header'><h3>💰 Korelace mezi Pickováním a Účtováním</h3><p>Zákazník platí podle počtu výsledných balících jednotek (HU). Zde vidíte náročnost vytvoření těchto zpoplatněných jednotek napříč fakturačními kategoriemi.</p></div>", unsafe_allow_html=True)
 
@@ -62,8 +35,12 @@ def render_billing(df_pick, df_vekp, df_vepo, df_cats, queue_count_col, aus_data
 
     if df_vekp is not None and not df_vekp.empty:
         vekp_clean = df_vekp.dropna(subset=["Handling Unit", "Generated delivery"]).copy()
-        valid_deliveries = df_pick["Delivery"].dropna().unique()
-        vekp_filtered = vekp_clean[vekp_clean["Generated delivery"].isin(valid_deliveries)].copy()
+        
+        vekp_clean['Clean_Del'] = vekp_clean['Generated delivery'].astype(str).str.strip().str.lstrip('0')
+        df_pick['Clean_Del'] = df_pick['Delivery'].astype(str).str.strip().str.lstrip('0')
+        
+        valid_deliveries = df_pick["Clean_Del"].dropna().unique()
+        vekp_filtered = vekp_clean[vekp_clean["Clean_Del"].isin(valid_deliveries)].copy()
         
         vekp_hu_col = next((c for c in vekp_filtered.columns if "Internal HU" in str(c) or "HU-Nummer intern" in str(c)), vekp_filtered.columns[0])
         vekp_ext_col = vekp_filtered.columns[1]
@@ -98,16 +75,18 @@ def render_billing(df_pick, df_vekp, df_vepo, df_cats, queue_count_col, aus_data
         auto_voll_hus_clean.discard("none")
 
         hu_agg_list = []
-        for delivery, group in vekp_filtered.groupby("Generated delivery"):
+        for delivery, group in vekp_filtered.groupby("Clean_Del"):
             ext_to_int = dict(zip(group['Clean_HU_Ext'], group['Clean_HU_Int']))
             p_map = {}
             for _, r in group.iterrows():
                 child = str(r['Clean_HU_Int'])
                 parent = str(r['Clean_Parent'])
-                if parent in ext_to_int: parent = ext_to_int[parent]
+                if parent in ext_to_int:
+                    parent = ext_to_int[parent]
                 p_map[child] = parent
                 
             leaves = [h for h in group['Clean_HU_Int'] if h in valid_base_hus]
+            
             roots = set()
             voll_count = 0
             
@@ -126,34 +105,32 @@ def render_billing(df_pick, df_vekp, df_vepo, df_cats, queue_count_col, aus_data
                     roots.add(curr)
                     
             hu_agg_list.append({
-                "Delivery": delivery,
+                "Clean_Del": delivery,
                 "hu_leaf": len(leaves),
                 "hu_top_level": len(roots) + voll_count
             })
             
         hu_agg = pd.DataFrame(hu_agg_list)
         if hu_agg.empty:
-            hu_agg = pd.DataFrame(columns=["Delivery", "hu_leaf", "hu_top_level"])
+            hu_agg = pd.DataFrame(columns=["Clean_Del", "hu_leaf", "hu_top_level"])
 
-        pick_agg = df_pick.groupby("Delivery").agg(
+        pick_agg = df_pick.groupby("Clean_Del").agg(
             pocet_to=(queue_count_col, "nunique"),
             pohyby_celkem=("Pohyby_Rukou", "sum"),
             pocet_lokaci=("Source Storage Bin", "nunique"),
             hlavni_fronta=("Queue", "first"),
             pocet_mat=("Material", "nunique"),
-            Month=("Month", "first")
+            Month=("Month", "first"),
+            Delivery=("Delivery", "first")
         ).reset_index()
 
-        billing_df = pd.merge(pick_agg, hu_agg, on="Delivery", how="left")
+        billing_df = pd.merge(pick_agg, hu_agg, on="Clean_Del", how="left")
 
-        # Bezpečné přiřazení kategorie
-        if df_cats is not None and not df_cats.empty:
+        if df_cats is not None:
             df_cats["Lieferung_Clean"] = df_cats["Lieferung"].astype(str).str.strip().str.lstrip('0')
-            billing_df["Del_Clean_For_Merge"] = billing_df["Delivery"].astype(str).str.strip().str.lstrip('0')
             billing_df = pd.merge(
                 billing_df, df_cats[["Lieferung_Clean", "Category_Full"]],
-                left_on="Del_Clean_For_Merge", right_on="Lieferung_Clean", how="left")
-            billing_df.drop(columns=["Del_Clean_For_Merge", "Lieferung_Clean"], inplace=True, errors='ignore')
+                left_on="Clean_Del", right_on="Lieferung_Clean", how="left")
         else:
             billing_df["Category_Full"] = pd.NA
 
@@ -162,8 +139,7 @@ def render_billing(df_pick, df_vekp, df_vepo, df_cats, queue_count_col, aus_data
             if pd.notna(cat_full) and str(cat_full).strip() not in ["", "nan", t("uncategorized")]:
                 return cat_full
             
-            deliv_clean = str(row["Delivery"]).strip().lstrip('0')
-            kat = aus_category_map.get(deliv_clean)
+            kat = aus_category_map.get(row["Clean_Del"])
             
             if not kat:
                 q = str(row.get('hlavni_fronta', '')).upper()
@@ -173,6 +149,7 @@ def render_billing(df_pick, df_vekp, df_vepo, df_cats, queue_count_col, aus_data
                 elif 'PI_PL' in q: kat = "N"
                     
             art = "Sortenrein" if row.get('pocet_mat', 1) <= 1 else "Misch"
+            
             if kat: return f"{kat} {art}"
             return t("uncategorized")
 
@@ -203,7 +180,7 @@ def render_billing(df_pick, df_vekp, df_vepo, df_cats, queue_count_col, aus_data
         col_t1, col_t2 = st.columns([1.2, 1])
         with col_t1:
             st.markdown("**Souhrn podle kategorií**")
-            cat_sum = billing_df.groupby("Category_Full").agg(pocet_zakazek=("Delivery", "nunique"), pocet_to=("pocet_to", "sum"), pocet_hu=("pocet_hu", "sum"), pocet_lok=("pocet_lokaci", "sum"), poh=("pohyby_celkem", "sum"), to_navic=("TO_navic", "sum")).reset_index()
+            cat_sum = billing_df.groupby("Category_Full").agg(pocet_zakazek=("Clean_Del", "nunique"), pocet_to=("pocet_to", "sum"), pocet_hu=("pocet_hu", "sum"), pocet_lok=("pocet_lokaci", "sum"), poh=("pohyby_celkem", "sum"), to_navic=("TO_navic", "sum")).reset_index()
             cat_sum["prum_poh"] = np.where(cat_sum["pocet_lok"] > 0, cat_sum["poh"] / cat_sum["pocet_lok"], 0)
             disp = cat_sum[["Category_Full", "pocet_zakazek", "pocet_to", "pocet_hu", "prum_poh", "to_navic"]].copy()
             disp.columns = ["Kategorie", "Počet zakázek", "Počet TO", "Zúčtované HU", "Prům. pohybů na lokaci", "TO navíc (Ztráta)"]
@@ -211,7 +188,24 @@ def render_billing(df_pick, df_vekp, df_vepo, df_cats, queue_count_col, aus_data
             
         with col_t2:
             st.markdown("**Trend v čase (Měsíce)**")
-            render_interactive_chart(billing_df)
+            cat_options = ["Všechny kategorie"] + sorted(billing_df["Category_Full"].dropna().unique().tolist())
+            selected_cat = st.selectbox("Vyberte kategorii pro graf:", options=cat_options, label_visibility="collapsed")
+            
+            if selected_cat == "Všechny kategorie":
+                plot_df = billing_df.copy()
+            else:
+                plot_df = billing_df[billing_df["Category_Full"] == selected_cat].copy()
+            
+            tr_df = plot_df.groupby("Month").agg(to_sum=("pocet_to", "sum"), hu_sum=("pocet_hu", "sum"), poh=("pohyby_celkem", "sum"), lok=("pocet_lokaci", "sum")).reset_index()
+            tr_df['prum_poh'] = np.where(tr_df['lok']>0, tr_df['poh']/tr_df['lok'], 0)
+            
+            fig = go.Figure()
+            fig.add_trace(go.Bar(x=tr_df['Month'], y=tr_df['to_sum'], name='Počet TO', marker_color='#38bdf8', text=tr_df['to_sum'], textposition='auto'))
+            fig.add_trace(go.Bar(x=tr_df['Month'], y=tr_df['hu_sum'], name='Počet HU', marker_color='#818cf8', text=tr_df['hu_sum'], textposition='auto'))
+            fig.add_trace(go.Scatter(x=tr_df['Month'], y=tr_df['prum_poh'], name='Pohyby na lokaci', yaxis='y2', mode='lines+markers+text', text=tr_df['prum_poh'].round(1), textposition='top center', textfont=dict(color='#f43f5e'), line=dict(color='#f43f5e', width=3)))
+            
+            fig.update_layout(yaxis2=dict(title="Pohyby", side="right", overlaying="y", showgrid=False), plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)", margin=dict(l=0, r=0, t=10, b=0), legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1))
+            st.plotly_chart(fig, use_container_width=True)
 
         st.markdown(f"### ⚠️ Ztráta z konsolidace (Práce zdarma / Prodělek)")
         imb_df = billing_df[billing_df['TO_navic'] > 0].sort_values("TO_navic", ascending=False).head(50)
@@ -221,7 +215,6 @@ def render_billing(df_pick, df_vekp, df_vepo, df_cats, queue_count_col, aus_data
             st.dataframe(imb_disp, use_container_width=True, hide_index=True)
         else: st.success("Žádné zakázky s prodělkem nenalezeny!")
         
-        # --- AUSWERTUNG SEKCE ---
         st.divider()
         st.subheader("📊 Analýza zásilkových dat (Auswertung)")
         if not aus_data: st.info("Pro tuto sekci nahrajte zákazníkův soubor Auswertung_Outbound_HWL.xlsx")
@@ -235,7 +228,7 @@ def render_billing(df_pick, df_vekp, df_vepo, df_cats, queue_count_col, aus_data
             kep_set = set()
             if not df_sdshp.empty:
                 col_k = next((c for c in df_sdshp.columns if "KEP" in str(c).upper()), None)
-                if col_k: kep_set = set(df_sdshp.loc[df_sdshp[col_k].astype(str).str.strip() == "X", df_sdshp.columns[0]].astype(str).str.strip())
+                if col_k: kep_set = set(df_sdshp.loc[df_sdshp[col_k].astype(str).str.strip() == "X", df_sdshp.columns[0]].astype(str).str.strip().str.lstrip('0'))
             
             df_lf = pd.DataFrame()
             if not df_likp.empty:
@@ -245,7 +238,7 @@ def render_billing(df_pick, df_vekp, df_vepo, df_cats, queue_count_col, aus_data
                 df_lf = df_likp[[c_lief]].copy()
                 df_lf.columns = ["Lieferung"]
                 df_lf["Lieferung"] = df_lf["Lieferung"].astype(str).str.strip().str.lstrip('0')
-                df_lf["is_KEP"] = df_likp[c_sped].astype(str).str.strip().isin(kep_set) if c_sped else False
+                df_lf["is_KEP"] = df_likp[c_sped].astype(str).str.strip().str.lstrip('0').isin(kep_set) if c_sped else False
                 df_lf["Order_Type"] = "O" if c_vs else "N"
                 df_lf["Kategorie"] = np.where(df_lf["is_KEP"], np.where(df_lf["Order_Type"] == "O", "OE", "E"), np.where(df_lf["Order_Type"] == "O", "O", "N"))
 
