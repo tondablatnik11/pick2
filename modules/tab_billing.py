@@ -43,18 +43,21 @@ def render_billing(df_pick, df_vekp, df_vepo, df_cats, queue_count_col, aus_data
         if not df_sdshp_tmp.empty:
             col_s = df_sdshp_tmp.columns[0]
             col_k = next((c for c in df_sdshp_tmp.columns if "KEP" in str(c).upper() or "FÄHIG" in str(c).upper()), None)
-            if col_k: kep_set = set(df_sdshp_tmp.loc[df_sdshp_tmp[col_k].astype(str).str.strip() == "X", col_s].astype(str).str.strip())
+            if col_k: kep_set = set(df_sdshp_tmp.loc[df_sdshp_tmp[col_k].astype(str).str.strip() == "X", col_s].astype(str).str.strip().str.lstrip('0'))
+        
         order_type_map = {}
         if not df_t031_tmp.empty: order_type_map = dict(zip(df_t031_tmp.iloc[:, 0].astype(str).str.strip(), df_t031_tmp.iloc[:, 1].astype(str).str.strip()))
+        
         if not df_likp_tmp.empty:
             c_lief = df_likp_tmp.columns[0]
             c_vs = next((c for c in df_likp_tmp.columns if "Versandstelle" in str(c) or "Shipping" in str(c)), None)
             c_sped = next((c for c in df_likp_tmp.columns if "pediteur" in str(c) or "Transp" in str(c)), None)
             tmp_lf = df_likp_tmp[[c_lief]].copy()
             tmp_lf.columns = ["Lieferung"]
-            tmp_lf["Lieferung"] = tmp_lf["Lieferung"].astype(str).str.strip()
+            # ODSTRANĚNÍ NUL POUZE PRO MAPOVÁNÍ KATEGORIÍ
+            tmp_lf["Lieferung"] = tmp_lf["Lieferung"].astype(str).str.strip().str.lstrip('0')
             tmp_lf["Order_Type"] = df_likp_tmp[c_vs].astype(str).str.strip().map(order_type_map).fillna("N") if c_vs else "N"
-            tmp_lf["is_KEP"] = df_likp_tmp[c_sped].astype(str).str.strip().isin(kep_set) if c_sped else False
+            tmp_lf["is_KEP"] = df_likp_tmp[c_sped].astype(str).str.strip().str.lstrip('0').isin(kep_set) if c_sped else False
             tmp_lf["Kategorie"] = np.where(tmp_lf["is_KEP"], np.where(tmp_lf["Order_Type"] == "O", "OE", "E"), np.where(tmp_lf["Order_Type"] == "O", "O", "N"))
             aus_category_map = tmp_lf.set_index("Lieferung")["Kategorie"].to_dict()
 
@@ -62,7 +65,7 @@ def render_billing(df_pick, df_vekp, df_vepo, df_cats, queue_count_col, aus_data
     pick_per_delivery = pd.DataFrame()
 
     if df_vekp is not None and not df_vekp.empty:
-        # PŘESNÉ NAPÁROVÁNÍ DLE STARÉHO APP.PY (Zrušeno lstrip, aby se nerozbila shoda Delivery)
+        # PŘESNÁ LOGIKA STROMU OBALŮ ZE STARÉHO APP.PY
         vekp_clean = df_vekp.dropna(subset=["Handling Unit", "Generated delivery"]).copy()
         valid_deliveries = df_pick["Delivery"].dropna().unique()
         vekp_filtered = vekp_clean[vekp_clean["Generated delivery"].isin(valid_deliveries)].copy()
@@ -90,16 +93,6 @@ def render_billing(df_pick, df_vekp, df_vepo, df_cats, queue_count_col, aus_data
         else:
             valid_base_hus = set(vekp_filtered['Clean_HU_Int'])
 
-        # Robustní získání Vollpalet (Včetně Source storage unit)
-        auto_voll_hus_clean = set()
-        mask_x = df_pick['Removal of total SU'] == 'X'
-        for c_hu in ['Source storage unit', 'Source Storage Bin', 'Handling Unit']:
-            if c_hu in df_pick.columns:
-                auto_voll_hus_clean.update(df_pick.loc[mask_x, c_hu].dropna().astype(str).str.strip().str.lstrip('0'))
-        auto_voll_hus_clean.discard("")
-        auto_voll_hus_clean.discard("nan")
-        auto_voll_hus_clean.discard("none")
-
         hu_agg_list = []
         for delivery, group in vekp_filtered.groupby("Generated delivery"):
             ext_to_int = dict(zip(group['Clean_HU_Ext'], group['Clean_HU_Int']))
@@ -111,31 +104,22 @@ def render_billing(df_pick, df_vekp, df_vepo, df_cats, queue_count_col, aus_data
                     parent = ext_to_int[parent]
                 p_map[child] = parent
                 
-            # 1. KONTROLA VEPO: Vezme jen HUs s materiálem
+            # Listy = jednotky, ve kterých je fyzicky materiál (podle VEPO)
             leaves = [h for h in group['Clean_HU_Int'] if h in valid_base_hus]
             
             roots = set()
-            voll_count = 0
-            
             for leaf in leaves:
-                leaf_exts = group.loc[group['Clean_HU_Int'] == leaf, 'Clean_HU_Ext'].values
-                leaf_ext = leaf_exts[0] if len(leaf_exts) > 0 else ""
+                curr = leaf
+                visited = set()
+                while curr in p_map and p_map[curr] != "" and curr not in visited:
+                    visited.add(curr)
+                    curr = p_map[curr]
+                roots.add(curr)
                 
-                # 2. OCHRANA VOLLPALET: Pokud prošla přes VEPO a má označení X -> Počítá se samostatně
-                if leaf in auto_voll_hus_clean or leaf_ext in auto_voll_hus_clean:
-                    voll_count += 1
-                else:
-                    curr = leaf
-                    visited = set()
-                    while curr in p_map and p_map[curr] != "" and curr not in visited:
-                        visited.add(curr)
-                        curr = p_map[curr]
-                    roots.add(curr)
-                    
             hu_agg_list.append({
                 "Generated delivery": delivery,
                 "hu_leaf": len(leaves),
-                "hu_top_level": len(roots) + voll_count
+                "hu_top_level": len(roots)
             })
             
         hu_agg = pd.DataFrame(hu_agg_list)
@@ -165,7 +149,8 @@ def render_billing(df_pick, df_vekp, df_vepo, df_cats, queue_count_col, aus_data
             if pd.notna(cat_full) and str(cat_full).strip() not in ["", "nan", t("uncategorized")]:
                 return cat_full
             
-            kat = aus_category_map.get(row["Delivery"])
+            deliv_clean = str(row["Delivery"]).strip().lstrip('0')
+            kat = aus_category_map.get(deliv_clean)
             
             if not kat:
                 q = str(row.get('hlavni_fronta', '')).upper()
