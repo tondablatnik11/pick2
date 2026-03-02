@@ -62,7 +62,7 @@ def render_billing(df_pick, df_vekp, df_vepo, df_cats, queue_count_col, aus_data
     pick_per_delivery = pd.DataFrame()
 
     if df_vekp is not None and not df_vekp.empty:
-        # PŘESNÁ LOGIKA ZE STARÉHO APP.PY
+        # PŘESNÉ NAPÁROVÁNÍ (Bez odstraňování nul u čísla zakázky)
         vekp_clean = df_vekp.dropna(subset=["Handling Unit", "Generated delivery"]).copy()
         valid_deliveries = df_pick["Delivery"].dropna().unique()
         vekp_filtered = vekp_clean[vekp_clean["Generated delivery"].isin(valid_deliveries)].copy()
@@ -90,6 +90,10 @@ def render_billing(df_pick, df_vekp, df_vepo, df_cats, queue_count_col, aus_data
         else:
             valid_base_hus = set(vekp_filtered['Clean_HU_Int'])
 
+        # Připravíme očištěné HUs pro Vollpalety
+        auto_voll_hus = st.session_state.get('auto_voll_hus', set())
+        auto_voll_hus_clean = {str(h).lstrip('0') for h in auto_voll_hus if str(h).lower() not in ['nan', 'none', '']}
+
         hu_agg_list = []
         for delivery, group in vekp_filtered.groupby("Generated delivery"):
             ext_to_int = dict(zip(group['Clean_HU_Ext'], group['Clean_HU_Int']))
@@ -101,21 +105,36 @@ def render_billing(df_pick, df_vekp, df_vepo, df_cats, queue_count_col, aus_data
                     parent = ext_to_int[parent]
                 p_map[child] = parent
                 
-            leaves = [h for h in group['Clean_HU_Int'] if h in valid_base_hus]
+            # 1. KONTROLA VEPO: Vezmeme jen ty HUs, které obsahují materiál (zelená fajfka)
+            # Tímto se automaticky odfiltrují všechny prázdné obaly
+            leaves_int = [h for h in group['Clean_HU_Int'] if h in valid_base_hus]
             
             roots = set()
-            for leaf in leaves:
-                curr = leaf
-                visited = set()
-                while curr in p_map and p_map[curr] != "" and curr not in visited:
-                    visited.add(curr)
-                    curr = p_map[curr]
-                roots.add(curr)
+            voll_count = 0
+            
+            # 2. LOGIKA PRO VOLLPALETY A STROM OBALŮ
+            for leaf_int in leaves_int:
+                # Najdeme externí ID pro kontrolu Vollpalet
+                leaf_exts = group.loc[group['Clean_HU_Int'] == leaf_int, 'Clean_HU_Ext'].values
+                leaf_ext = leaf_exts[0] if len(leaf_exts) > 0 else ""
+
+                # Pravidlo z Auditu: Z jednotky se může stát Vollpalette POUZE TEHDY, 
+                # pokud už předtím úspěšně prošla kontrolou ve VEPO (je v leaves_int)
+                if leaf_int in auto_voll_hus_clean or leaf_ext in auto_voll_hus_clean:
+                    voll_count += 1
+                else:
+                    # Není to Vollpalette, šplháme po struktuře nahoru až na hlavní paletu
+                    curr = leaf_int
+                    visited = set()
+                    while curr in p_map and p_map[curr] != "" and curr not in visited:
+                        visited.add(curr)
+                        curr = p_map[curr]
+                    roots.add(curr)
                 
             hu_agg_list.append({
                 "Generated delivery": delivery,
-                "hu_leaf": len(leaves),
-                "hu_top_level": len(roots)
+                "hu_leaf": len(leaves_int),
+                "hu_top_level": len(roots) + voll_count # Zde se přičtou nalezené Vollpalety k paletám
             })
             
         hu_agg = pd.DataFrame(hu_agg_list)
@@ -143,7 +162,7 @@ def render_billing(df_pick, df_vekp, df_vepo, df_cats, queue_count_col, aus_data
 
         def odvod_kategorii(row):
             cat_full = row.get('Category_Full')
-            if pd.notna(cat_full) and str(cat_full).strip() not in ["", "nan", "Bez kategorie"]:
+            if pd.notna(cat_full) and str(cat_full).strip() not in ["", "nan", t("uncategorized")]:
                 return cat_full
             
             kat = aus_category_map.get(row["Delivery"])
@@ -159,7 +178,7 @@ def render_billing(df_pick, df_vekp, df_vepo, df_cats, queue_count_col, aus_data
             
             if kat:
                 return f"{kat} {art}"
-            return "Bez kategorie"
+            return t("uncategorized")
 
         billing_df["Category_Full"] = billing_df.apply(odvod_kategorii, axis=1)
 
@@ -213,6 +232,7 @@ def render_billing(df_pick, df_vekp, df_vepo, df_cats, queue_count_col, aus_data
         else:
             df_likp = aus_data.get("LIKP", pd.DataFrame())
             df_vekp2 = aus_data.get("VEKP", pd.DataFrame())
+            df_vepo = aus_data.get("VEPO", pd.DataFrame())
             df_sdshp = aus_data.get("SDSHP_AM2", pd.DataFrame())
             df_t031 = aus_data.get("T031", pd.DataFrame())
 
