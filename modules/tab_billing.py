@@ -4,7 +4,6 @@ import numpy as np
 import plotly.graph_objects as go
 
 # Kouzlo pro bleskové překreslování - "Fragment"
-# Izoluje graf od zbytku aplikace, takže se při změně filtru nenačítá celá záložka
 try:
     fast_render = st.fragment
 except AttributeError:
@@ -61,7 +60,13 @@ def render_billing(df_pick, df_vekp, df_vepo, df_cats, queue_count_col, aus_data
     billing_df = pd.DataFrame()
     if df_vekp is not None and not df_vekp.empty:
         vekp_c = df_vekp.dropna(subset=["Handling Unit", "Generated delivery"]).copy()
-        vekp_filtered = vekp_c[vekp_c["Generated delivery"].isin(df_pick["Delivery"].dropna().unique())].copy()
+        
+        # --- OPRAVA NULOVÝCH ZAKÁZEK ---
+        vekp_c['Clean_Del'] = vekp_c['Generated delivery'].astype(str).str.strip().str.lstrip('0')
+        df_pick['Clean_Del'] = df_pick['Delivery'].astype(str).str.strip().str.lstrip('0')
+        
+        vekp_filtered = vekp_c[vekp_c["Clean_Del"].isin(df_pick["Clean_Del"].dropna().unique())].copy()
+        
         c_hu_int = next((c for c in vekp_filtered.columns if "Internal HU" in str(c) or "HU-Nummer intern" in str(c)), vekp_filtered.columns[0])
         c_hu_ext = vekp_filtered.columns[1]
         c_parent = next((c for c in vekp_filtered.columns if "higher-level" in str(c).lower() or "übergeordn" in str(c).lower()), None)
@@ -81,7 +86,7 @@ def render_billing(df_pick, df_vekp, df_vepo, df_cats, queue_count_col, aus_data
             valid_base_hus = set(vekp_filtered['Clean_HU_Int'])
 
         hu_agg_list = []
-        for delivery, group in vekp_filtered.groupby("Generated delivery"):
+        for delivery, group in vekp_filtered.groupby("Clean_Del"):
             ext_to_int = dict(zip(group['Clean_HU_Ext'], group['Clean_HU_Int']))
             p_map = {}
             for _, r in group.iterrows():
@@ -99,14 +104,15 @@ def render_billing(df_pick, df_vekp, df_vepo, df_cats, queue_count_col, aus_data
                     visited.add(curr)
                     curr = p_map[curr]
                 roots.add(curr)
-            hu_agg_list.append({"Delivery": delivery, "hu_leaf": len(leaves), "hu_top_level": len(roots)})
+            hu_agg_list.append({"Clean_Del": delivery, "hu_leaf": len(leaves), "hu_top_level": len(roots)})
         
         hu_agg = pd.DataFrame(hu_agg_list)
         pick_agg = df_pick.groupby("Delivery").agg(
-            pocet_to=(queue_count_col, "nunique"), pohyby_celkem=("Pohyby_Rukou", "sum"), pocet_lokaci=("Source Storage Bin", "nunique"), hlavni_fronta=("Queue", "first"), pocet_mat=("Material", "nunique"), Month=("Month", "first")
+            pocet_to=(queue_count_col, "nunique"), pohyby_celkem=("Pohyby_Rukou", "sum"), pocet_lokaci=("Source Storage Bin", "nunique"), hlavni_fronta=("Queue", "first"), pocet_mat=("Material", "nunique"), Month=("Month", "first"),
+            Clean_Del=("Clean_Del", "first")
         ).reset_index()
 
-        billing_df = pd.merge(pick_agg, hu_agg, on="Delivery", how="left")
+        billing_df = pd.merge(pick_agg, hu_agg, on="Clean_Del", how="left")
 
         def odvod_kategorii(row):
             kat = aus_category_map.get(row["Delivery"])
@@ -154,7 +160,7 @@ def render_billing(df_pick, df_vekp, df_vepo, df_cats, queue_count_col, aus_data
             # Volání izolovaného grafu
             render_interactive_chart(billing_df)
 
-        st.markdown(f"### ⚠️ Ztráta z konsolidace ")
+        st.markdown(f"### ⚠️ Ztráta z konsolidace (Práce zdarma / Prodělek)")
         imb_df = billing_df[billing_df['TO_navic'] > 0].sort_values("TO_navic", ascending=False).head(50)
         if not imb_df.empty:
             imb_disp = imb_df[['Delivery', 'Category_Full', 'pocet_to', 'pohyby_celkem', 'pocet_hu', 'TO_navic']].copy()
@@ -162,6 +168,7 @@ def render_billing(df_pick, df_vekp, df_vepo, df_cats, queue_count_col, aus_data
             st.dataframe(imb_disp, use_container_width=True, hide_index=True)
         else: st.success("Žádné zakázky s prodělkem nenalezeny!")
         
+        # --- ZCELA KOMPLETNÍ AUSWERTUNG SEKCE ---
         st.divider()
         st.subheader("📊 Analýza zásilkových dat (Auswertung)")
         if not aus_data: st.info("Pro tuto sekci nahrajte zákazníkův soubor Auswertung_Outbound_HWL.xlsx")
