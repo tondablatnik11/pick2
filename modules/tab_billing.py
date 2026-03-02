@@ -239,7 +239,15 @@ def render_billing(df_pick, df_vekp, df_vepo, df_cats, queue_count_col, aus_data
                 fig.add_trace(go.Bar(x=tr_df['Month'], y=tr_df['to_sum'], name='Počet TO', marker_color='#38bdf8', text=tr_df['to_sum'], textposition='auto'))
                 fig.add_trace(go.Bar(x=tr_df['Month'], y=tr_df['hu_sum'], name='Počet HU', marker_color='#818cf8', text=tr_df['hu_sum'], textposition='auto'))
                 fig.add_trace(go.Scatter(x=tr_df['Month'], y=tr_df['prum_poh'], name='Pohyby na lokaci', yaxis='y2', mode='lines+markers+text', text=tr_df['prum_poh'].round(1), textposition='top center', textfont=dict(color='#f43f5e'), line=dict(color='#f43f5e', width=3)))
-                fig.update_layout(yaxis2=dict(title="Pohyby", side="right", overlaying="y", showgrid=False), plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)", margin=dict(l=0, r=0, t=10, b=0), legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1))
+                
+                # OPRAVA LEGENdy a ZVĚTŠENÍ TOP MARGINU
+                fig.update_layout(
+                    yaxis2=dict(title="Pohyby", side="right", overlaying="y", showgrid=False), 
+                    plot_bgcolor="rgba(0,0,0,0)", 
+                    paper_bgcolor="rgba(0,0,0,0)", 
+                    margin=dict(l=0, r=0, t=30, b=0), 
+                    legend=dict(orientation="h", yanchor="bottom", y=1.05, xanchor="left", x=0)
+                )
                 st.plotly_chart(fig, use_container_width=True)
             
             interactive_chart()
@@ -301,12 +309,13 @@ def render_billing(df_pick, df_vekp, df_vepo, df_cats, queue_count_col, aus_data
             fig_r.add_trace(go.Scatter(x=trend_ratio['Month'], y=trend_ratio['pct_more_hu'], name='Více HU (%)', mode='lines+markers+text', text=trend_ratio['pct_more_hu'].round(1).astype(str) + '%', textposition='top center', marker_color='#3b82f6', line=dict(width=3), yaxis='y2'))
             fig_r.add_trace(go.Scatter(x=trend_ratio['Month'], y=trend_ratio['pct_more_to'], name='Více TO (%)', mode='lines+markers+text', text=trend_ratio['pct_more_to'].round(1).astype(str) + '%', textposition='bottom center', marker_color='#ef4444', line=dict(width=3), yaxis='y2'))
             
+            # OPRAVA LEGENdy a ZVĚTŠENÍ TOP MARGINU
             fig_r.update_layout(
                 barmode='stack', 
                 plot_bgcolor="rgba(0,0,0,0)", 
                 paper_bgcolor="rgba(0,0,0,0)", 
-                margin=dict(l=0, r=0, t=10, b=0), 
-                legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
+                margin=dict(l=0, r=0, t=30, b=0), 
+                legend=dict(orientation="h", yanchor="bottom", y=1.05, xanchor="left", x=0),
                 yaxis=dict(title="Celkem zakázek"),
                 yaxis2=dict(title="Podíl zakázek (%)", side="right", overlaying="y", showgrid=False, range=[0, 110])
             )
