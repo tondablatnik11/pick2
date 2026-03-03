@@ -62,12 +62,14 @@ st.markdown("""
 """, unsafe_allow_html=True)
 if 'lang' not in st.session_state: st.session_state.lang = 'cs'
 
+# Přidán parametr use_marm, cache si pohlídá uložení obou verzí (zapnuto/vypnuto) do paměti
 @st.cache_data(show_spinner=False, ttl=3600)
-def fetch_and_prep_data():
+def fetch_and_prep_data(use_marm=True):
     df_pick_raw = load_from_db('raw_pick')
     if df_pick_raw is None or df_pick_raw.empty: return None
 
-    df_marm_raw = load_from_db('raw_marm')
+    # Pokud je přepínač vypnutý, aplikace MARM z databáze zcela ignoruje
+    df_marm_raw = load_from_db('raw_marm') if use_marm else None
     df_queue_raw = load_from_db('raw_queue')
     df_manual_raw = load_from_db('raw_manual')
 
@@ -213,6 +215,10 @@ def main():
             st.rerun()
 
     st.sidebar.header("⚙️ Konfigurace algoritmů")
+    
+    # PŘIDÁNO: Přepínač pro aktivaci / deaktivaci MARM dat
+    use_marm = st.sidebar.toggle("📦 Zahrnout data z MARM", value=True, help="Vypnutím zjistíte, kolik dat je aplikace schopna spočítat přesně pouze pomocí vašeho ručního ověření, a kolik musí odhadovat.")
+    
     limit_vahy = st.sidebar.number_input("Hranice váhy (kg)", min_value=0.1, max_value=20.0, value=2.0, step=0.5)
     limit_rozmeru = st.sidebar.number_input("Hranice rozměru (cm)", min_value=1.0, max_value=200.0, value=15.0, step=1.0)
     kusy_na_hmat = st.sidebar.slider("Ks do hrsti", min_value=1, max_value=20, value=1, step=1)
@@ -290,12 +296,11 @@ def main():
                     time.sleep(2.0)
                     st.rerun()
 
-    # --- NOVÁ ANIMACE S PROGRESS BAREM ---
     progress_bar = st.progress(0, text="🚀 Inicializace Warehouse Control Tower...")
     time.sleep(0.1)
     
     progress_bar.progress(30, text="📥 Načítání a propojování dat z databáze (Pick, VEKP, VEPO)...")
-    data_dict = fetch_and_prep_data()
+    data_dict = fetch_and_prep_data(use_marm) # TADY se propisuje stav tlačítka pro MARM
 
     if data_dict is None:
         progress_bar.empty()
@@ -318,7 +323,7 @@ def main():
 
     progress_bar.progress(90, text="📊 Vykreslování vizualizací a tabulek...")
     time.sleep(0.2)
-    progress_bar.empty() # Skryje progress bar po dokončení
+    progress_bar.empty()
 
     tabs = st.tabs([t('tab_dashboard'), t('tab_pallets'), t('tab_fu'), t('tab_top'), t('tab_billing'), t('tab_packing'), t('tab_audit')])
 
