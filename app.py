@@ -62,13 +62,11 @@ st.markdown("""
 """, unsafe_allow_html=True)
 if 'lang' not in st.session_state: st.session_state.lang = 'cs'
 
-# Přidán parametr use_marm, cache si pohlídá uložení obou verzí (zapnuto/vypnuto) do paměti
 @st.cache_data(show_spinner=False, ttl=3600)
 def fetch_and_prep_data(use_marm=True):
     df_pick_raw = load_from_db('raw_pick')
     if df_pick_raw is None or df_pick_raw.empty: return None
 
-    # Pokud je přepínač vypnutý, aplikace MARM z databáze zcela ignoruje
     df_marm_raw = load_from_db('raw_marm') if use_marm else None
     df_queue_raw = load_from_db('raw_queue')
     df_manual_raw = load_from_db('raw_manual')
@@ -216,12 +214,15 @@ def main():
 
     st.sidebar.header("⚙️ Konfigurace algoritmů")
     
-    # PŘIDÁNO: Přepínač pro aktivaci / deaktivaci MARM dat
     use_marm = st.sidebar.toggle("📦 Zahrnout data z MARM", value=True, help="Vypnutím zjistíte, kolik dat je aplikace schopna spočítat přesně pouze pomocí vašeho ručního ověření, a kolik musí odhadovat.")
-    
     limit_vahy = st.sidebar.number_input("Hranice váhy (kg)", min_value=0.1, max_value=20.0, value=2.0, step=0.5)
     limit_rozmeru = st.sidebar.number_input("Hranice rozměru (cm)", min_value=1.0, max_value=200.0, value=15.0, step=1.0)
     kusy_na_hmat = st.sidebar.slider("Ks do hrsti", min_value=1, max_value=20, value=1, step=1)
+
+    # PŘIDÁNO: Textové pole pro vyloučení materiálů
+    st.sidebar.divider()
+    st.sidebar.header("🚫 Vyloučení dat")
+    exclude_mats_input = st.sidebar.text_area("Vyloučit materiály (oddělené čárkou nebo mezerou):", help="Vložené materiály budou kompletně smazány z výpočtů. Můžete je sem například rovnou zkopírovat z Excelu.")
 
     st.sidebar.divider()
     with st.sidebar.expander("🛠️ Admin Zóna (Nahrát data do DB)"):
@@ -300,7 +301,7 @@ def main():
     time.sleep(0.1)
     
     progress_bar.progress(30, text="📥 Načítání a propojování dat z databáze (Pick, VEKP, VEPO)...")
-    data_dict = fetch_and_prep_data(use_marm) # TADY se propisuje stav tlačítka pro MARM
+    data_dict = fetch_and_prep_data(use_marm)
 
     if data_dict is None:
         progress_bar.empty()
@@ -309,6 +310,19 @@ def main():
 
     progress_bar.progress(65, text="⚙️ Výpočet fyzických pohybů a kontrola ergonomie podle limitů...")
     df_pick = data_dict['df_pick']
+    
+    # --- PŘIDÁNO: Odfiltrování zadaných materiálů ---
+    if exclude_mats_input:
+        # Rozdělí vstup podle čárek, středníků nebo prázdných znaků (mezery/nové řádky)
+        excluded_materials = [m.strip().upper() for m in re.split(r'[,\s;]+', exclude_mats_input) if m.strip()]
+        if excluded_materials:
+            df_pick = df_pick[~df_pick['Material'].astype(str).str.upper().isin(excluded_materials)].copy()
+            if df_pick.empty:
+                progress_bar.empty()
+                st.warning("⚠️ Po vyloučení těchto materiálů nezbyla v Pick reportu žádná data.")
+                st.stop()
+    # --------------------------------------------------
+
     st.session_state['auto_voll_hus'] = data_dict['auto_voll_hus']
 
     df_pick['Month'] = df_pick['Date'].dt.to_period('M').astype(str).replace('NaT', 'Neznámé')
