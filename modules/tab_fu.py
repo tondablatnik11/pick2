@@ -121,22 +121,66 @@ def render_fu(df_pick, queue_count_col):
     fu_df_pallets = fu_df[~fu_df['Is_KLT']].copy()
     ignored_klt_count = fu_df[fu_df['Is_KLT']][queue_count_col].nunique()
     
-    # --- MĚSÍČNÍ GRAF EFEKTIVITY ---
+    # --- MĚSÍČNÍ GRAF EFEKTIVITY (S TRENDOVOU ČÁROU A HODNOTAMI) ---
     if 'Month' in fu_df_pallets.columns:
         st.markdown("#### 📈 Měsíční trend odbavení celých palet")
-        trend_fu = fu_df_pallets[fu_df_pallets['Has_X']].groupby(['Month', 'Neprebalovano'])[queue_count_col].nunique().reset_index()
-        trend_fu['Status'] = np.where(trend_fu['Neprebalovano'], 'Nepřebalováno (Ziskové)', 'Přebaleno (Zbytečná práce)')
         
-        fig_bar = px.bar(
-            trend_fu, 
-            x='Month', 
-            y=queue_count_col, 
-            color='Status', 
+        # Příprava dat pro graf
+        trend_df = fu_df_pallets[fu_df_pallets['Has_X']].groupby(['Month', 'Neprebalovano'])[queue_count_col].nunique().reset_index()
+        trend_pivot = trend_df.pivot(index='Month', columns='Neprebalovano', values=queue_count_col).fillna(0)
+        
+        if True not in trend_pivot.columns: trend_pivot[True] = 0
+        if False not in trend_pivot.columns: trend_pivot[False] = 0
+        
+        trend_pivot['Celkem_X'] = trend_pivot[True] + trend_pivot[False]
+        # Výpočet procentuální úspěšnosti
+        trend_pivot['Uspesnost_pct'] = np.where(trend_pivot['Celkem_X'] > 0, (trend_pivot[True] / trend_pivot['Celkem_X']) * 100, 0)
+        trend_pivot = trend_pivot.reset_index().sort_values('Month')
+        
+        fig_bar = go.Figure()
+        
+        # Zelené sloupce (Nepřebalováno = Zisk)
+        fig_bar.add_trace(go.Bar(
+            x=trend_pivot['Month'], 
+            y=trend_pivot[True],
+            name='Nepřebalováno (Ziskové)', 
+            marker_color='#10b981',
+            text=trend_pivot[True], 
+            textposition='auto'
+        ))
+        
+        # Červené sloupce (Přebaleno = Ztráta)
+        fig_bar.add_trace(go.Bar(
+            x=trend_pivot['Month'], 
+            y=trend_pivot[False],
+            name='Přebaleno (Zbytečná práce)', 
+            marker_color='#ef4444',
+            text=trend_pivot[False], 
+            textposition='auto'
+        ))
+        
+        # Modrá trendová čára (%)
+        fig_bar.add_trace(go.Scatter(
+            x=trend_pivot['Month'], 
+            y=trend_pivot['Uspesnost_pct'],
+            name='Úspěšnost bez přebalení (%)', 
+            yaxis='y2',
+            mode='lines+markers+text',
+            text=trend_pivot['Uspesnost_pct'].round(1).astype(str) + '%',
+            textposition='top center',
+            line=dict(color='#3b82f6', width=3),
+            marker=dict(symbol='circle', size=8)
+        ))
+
+        fig_bar.update_layout(
             barmode='group',
-            color_discrete_map={'Nepřebalováno (Ziskové)': '#10b981', 'Přebaleno (Zbytečná práce)': '#ef4444'},
-            labels={'Month': 'Měsíc', queue_count_col: 'Počet palet (TO)', 'Status': 'Stav palety'}
+            yaxis=dict(title="Počet palet (TO)"),
+            yaxis2=dict(title="Úspěšnost (%)", side="right", overlaying="y", showgrid=False, range=[0, 115]),
+            plot_bgcolor="rgba(0,0,0,0)", 
+            paper_bgcolor="rgba(0,0,0,0)", 
+            margin=dict(t=20, b=10, l=10, r=10), 
+            legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
         )
-        fig_bar.update_layout(plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)", margin=dict(t=20, b=10, l=10, r=10), legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1))
         st.plotly_chart(fig_bar, use_container_width=True)
         st.markdown("<br>", unsafe_allow_html=True)
     
@@ -159,9 +203,7 @@ def render_fu(df_pick, queue_count_col):
     # Zobrazení detailů - kde se práce ušetřila vs. kde se pálil čas přebalováním
     prebaleno_x = fu_df_pallets[(fu_df_pallets['Has_X']) & (~fu_df_pallets['Neprebalovano'])]
     
-    st.markdown("<br>", unsafe_allow_html=True)
     col_t1, col_t2 = st.columns(2)
-    
     with col_t1:
         st.success(f"**✅ Úspěšné Vollpalety: {total_neprebalovano} TO**")
         nepreb_df = fu_df_pallets[fu_df_pallets['Neprebalovano']].drop_duplicates(subset=[queue_count_col]).copy()
@@ -180,3 +222,73 @@ def render_fu(df_pick, queue_count_col):
             st.dataframe(disp2, use_container_width=True, hide_index=True)
         else:
             st.info("Skvělá práce! Všechny celé palety ('X') byly úspěšně odbaveny bez přebalování.")
+
+    # --- 4. RENTGEN / AUDIT KONKRÉTNÍ ZAKÁZKY ---
+    st.divider()
+    st.markdown("<div class='section-header'><h3>🔍 Rentgen paletové zakázky (Audit logiky)</h3><p>Zde si můžete ověřit libovolnou zakázku z fronty FU a zjistit, proč ji algoritmus vyhodnotil jako Přebalenou/Nepřebalenou.</p></div>", unsafe_allow_html=True)
+    
+    # Bezpečné získání seznamu zakázek (aby nedošlo k chybě řazení s NaN / float)
+    audit_dels = sorted(fu_df['Clean_Del'].dropna().unique())
+    sel_audit_del = st.selectbox("Vyberte zakázku (Delivery) pro rentgen:", options=[""] + audit_dels, key="audit_fu_del")
+    
+    if sel_audit_del:
+        st.markdown(f"#### Výsledky pro zakázku: `{sel_audit_del}`")
+        
+        # A) Co ukazuje Pick Report
+        st.markdown("**1. Data ze Skladu (Pick Report):**")
+        pick_audit = fu_df[fu_df['Clean_Del'] == sel_audit_del].copy()
+        
+        cols_to_show = [queue_count_col, 'Material', 'Qty', 'Removal of total SU']
+        if c_su: cols_to_show.append(c_su)
+        for c in pick_hu_cols:
+            if c in pick_audit.columns: cols_to_show.append(c)
+            
+        st.dataframe(pick_audit[cols_to_show], hide_index=True, use_container_width=True)
+        
+        # B) Co je vyfakturováno (VEKP)
+        st.markdown("**2. Co je vyfakturováno (VEKP):**")
+        vekp_audit = df_vekp[df_vekp['Clean_Del'] == sel_audit_del]
+        if not vekp_audit.empty:
+            st.dataframe(vekp_audit[['Generated delivery', 'Clean_HU_Int', 'Clean_HU_Ext', 'Packaging materials', 'Clean_Parent']], hide_index=True, use_container_width=True)
+            valid_h = del_to_valid_hus.get(sel_audit_del, set())
+            st.caption(f"Systém očekává přiřazení k těmto platným HU (dle VEPO): `{', '.join(valid_h)}`")
+        else:
+            st.warning("Žádné obaly ve VEKP pro tuto zakázku (nebo VEPO nenašlo položky).")
+            valid_h = set()
+            
+        # C) Krok za krokem vyhodnocení
+        st.markdown("**3. Myšlenkový pochod algoritmu (TO po TO):**")
+        
+        for _, r in pick_audit.drop_duplicates(subset=[queue_count_col]).iterrows():
+            to_num = r[queue_count_col]
+            with st.expander(f"Hodnocení pro TO: {to_num}", expanded=True):
+                # 1. KLT kontrola
+                if r['Is_KLT']:
+                    st.info(f"🚫 Typ obalu je `{r.get(c_su, '')}` (KLT). Do paletové analýzy to vůbec nepočítám.")
+                    continue
+                else:
+                    st.success(f"✔️ Typ obalu `{r.get(c_su, '')}` je Paleta.")
+                
+                # 2. X kontrola
+                if not r['Has_X']:
+                    st.error("❌ Pozice nebyla vybrána do nuly (Chybí značka 'X'). Logika končí.")
+                    continue
+                else:
+                    st.success("✔️ Nalezena značka 'X' (Paleta vybrána z lokace celá).")
+                
+                # 3. HU kontrola
+                hu_found = False
+                for c in pick_hu_cols:
+                    if c in r.index and pd.notna(r[c]):
+                        val = str(r[c]).strip().lstrip('0')
+                        if val in valid_h:
+                            hu_found = True
+                            st.success(f"✔️ Pickované HU `{val}` ze sloupce '{c}' nalezeno přímo ve VEKP u této zakázky!")
+                            break
+                        elif val and val != 'nan' and val != 'none':
+                            st.warning(f"⚠️ Pickované HU `{val}` ze sloupce '{c}' ve VEKP pro tuto zakázku neexistuje.")
+                            
+                if hu_found:
+                    st.success("**Závěr: ✅ Paleta byla vyhodnocena jako NEPŘEBALOVANÁ.**")
+                else:
+                    st.error("**Závěr: ❌ Shoda HU nenalezena. Paleta byla u stolu PŘEBALENA na novou HU.**")
