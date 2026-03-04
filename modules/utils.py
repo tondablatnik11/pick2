@@ -3,6 +3,19 @@ import pandas as pd
 import numpy as np
 import re
 
+# Globální nastavení barev a designu pro všechny grafy Plotly
+CHART_COLORS = ['#3b82f6', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6', '#06b6d4']
+
+CHART_LAYOUT = dict(
+    paper_bgcolor='rgba(0,0,0,0)', 
+    plot_bgcolor='rgba(0,0,0,0)',
+    font=dict(color='#f8fafc', size=12, family="Inter, sans-serif"),
+    colorway=CHART_COLORS,
+    margin=dict(l=0, r=0, t=40, b=0),
+    legend=dict(orientation='h', yanchor='bottom', y=1.05, xanchor='left', x=0, bgcolor='rgba(0,0,0,0)'),
+    hovermode="x unified"
+)
+
 QUEUE_DESC = {
     'PI_PL (Single)': 'Single SKU Pal',
     'PI_PL (Total)': 'Single SKU Pal + Mix Pal',
