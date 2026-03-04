@@ -32,14 +32,7 @@ def render_fu(df_pick, queue_count_col):
         with col_su1:
             st.dataframe(su_agg, use_container_width=True, hide_index=True)
         with col_su2:
-            # Koláčový graf pro okamžitou vizuální kontrolu poměrů
-            fig_pie = px.pie(
-                su_agg, 
-                values=t('fu_col_to'), 
-                names=t('fu_col_su'), 
-                hole=0.4, 
-                title="Podíl Pick TO podle typu obalu"
-            )
+            fig_pie = px.pie(su_agg, values=t('fu_col_to'), names=t('fu_col_su'), hole=0.4, title="Podíl Pick TO podle typu obalu")
             fig_pie.update_traces(textposition='inside', textinfo='percent+label')
             fig_pie.update_layout(margin=dict(t=40, b=10, l=10, r=10), showlegend=False)
             st.plotly_chart(fig_pie, use_container_width=True)
@@ -49,47 +42,89 @@ def render_fu(df_pick, queue_count_col):
     # --- 3. ANALÝZA EFEKTIVITY PŘEBALOVÁNÍ (VOLLPALETTE) ---
     st.divider()
     st.markdown("### 📦 Efektivita: Přímé balení bez přebalování (Vollpalette)")
-    st.markdown("Tato analýza sleduje, kolik palet se skutečně **nemuselo přebalovat**. Algoritmus ověřuje dvě podmínky:")
-    st.markdown("1. Byla pozice ve skladu vybrána do nuly (v Pick reportu je u palety značka **'X'**).")
-    st.markdown("2. Zdrojové HU z Pick reportu se **přímo shoduje** s vyfakturovaným HU v tabulce VEKP.")
+    st.markdown("Algoritmus provádí přísnou křížovou kontrolu:")
+    st.markdown("1. Byla pozice vybrána do nuly (**'X'**).")
+    st.markdown("2. Byla vyloučena malá balení (Typ jednotky není **K1** ani KLT).")
+    st.markdown("3. Zdrojové HU z pickování se **přesně shoduje** s HU vyfakturovaným u dané zakázky ve VEKP.")
+    st.markdown("4. Ve **VEPO** je ověřeno, že dané HU opravdu obsahuje položky.")
 
-    # Bleskové načtení VEKP z databáze
     df_vekp = load_from_db('raw_vekp')
+    df_vepo = load_from_db('raw_vepo')
     
     if df_vekp is None or df_vekp.empty:
         st.warning("⚠️ K vyhodnocení této metriky je nutné mít v Admin Zóně nahrán soubor **VEKP** (Obaly).")
         return
 
-    # Získání seznamu platných HU z VEKP (bez počátečních nul pro bezpečné párování)
+    # KROK A: Zpracování VEPO (Zjištění HU, která mají reálně obsah)
+    vepo_hus = set()
+    if df_vepo is not None and not df_vepo.empty:
+        vepo_hu_col = next((c for c in df_vepo.columns if "Internal HU" in str(c) or "HU-Nummer intern" in str(c)), df_vepo.columns[0])
+        vepo_hus = set(df_vepo[vepo_hu_col].astype(str).str.strip().str.lstrip('0'))
+
+    # KROK B: Zpracování VEKP (Vytvoření mapy: Delivery -> Seznam validních HU)
+    df_vekp['Clean_Del'] = df_vekp['Generated delivery'].astype(str).str.replace(r'\.0$', '', regex=True).str.strip().str.lstrip('0')
     vekp_hu_col = next((c for c in df_vekp.columns if "Internal HU" in str(c) or "HU-Nummer intern" in str(c)), df_vekp.columns[0])
     c_hu_ext = df_vekp.columns[1] if len(df_vekp.columns) > 1 else vekp_hu_col
 
-    valid_vekp_hus = set(df_vekp[vekp_hu_col].dropna().astype(str).str.strip().str.lstrip('0')).union(
-        set(df_vekp[c_hu_ext].dropna().astype(str).str.strip().str.lstrip('0'))
-    )
-    
-    # Detekce značky X
+    df_vekp['Clean_HU_Int'] = df_vekp[vekp_hu_col].astype(str).str.strip().str.lstrip('0')
+    df_vekp['Clean_HU_Ext'] = df_vekp[c_hu_ext].astype(str).str.strip().str.lstrip('0')
+
+    del_to_valid_hus = {}
+    for d, grp in df_vekp.groupby('Clean_Del'):
+        valid_hus = set()
+        for _, r in grp.iterrows():
+            h_int = r['Clean_HU_Int']
+            h_ext = r['Clean_HU_Ext']
+            # Pokud máme VEPO, HU musí být ve VEPO (musí mít položky)
+            if vepo_hus and h_int not in vepo_hus:
+                continue
+            valid_hus.add(h_int)
+            valid_hus.add(h_ext)
+        del_to_valid_hus[d] = valid_hus
+
+    # KROK C: Vyčištění a detekce v Pick reportu
+    fu_df['Clean_Del'] = fu_df['Delivery'].astype(str).str.replace(r'\.0$', '', regex=True).str.strip().str.lstrip('0')
     fu_df['Has_X'] = fu_df['Removal of total SU'].astype(str).str.strip().str.upper() == 'X'
     
-    # Hledáme pickovací HU ve všech možných relevantních sloupcích ze SAPu
+    # Funkce pro vyloučení KLT / K1
+    def is_klt(su_val):
+        v = str(su_val).upper().strip()
+        # Vyloučí K1, KLT, nebo jakýkoliv dvoumístný kód začínající na K (např. K2, K3)
+        return v in ['K1', 'K2', 'K3', 'K4', 'KLT', 'KLT1', 'KLT2'] or (v.startswith('K') and len(v) <= 2)
+        
+    fu_df['Is_KLT'] = fu_df[c_su].apply(is_klt) if c_su else False
+
     pick_hu_cols = ['Source storage unit', 'Source Storage Bin', 'Handling Unit']
     
+    # KROK D: Finální křížová kontrola
     def check_is_vollpalette(row):
-        if not row['Has_X']: 
-            return False
+        if not row['Has_X']: return False
+        if row['Is_KLT']: return False # Ignorujeme dopickované KLT
+        
+        clean_del = row['Clean_Del']
+        valid_hus_for_del = del_to_valid_hus.get(clean_del, set())
+        
+        if not valid_hus_for_del: return False
+        
         for col in pick_hu_cols:
             if col in row.index and pd.notna(row[col]):
                 val = str(row[col]).strip().lstrip('0')
-                if val and val != 'nan' and val != 'none' and val in valid_vekp_hus:
-                    return True
+                if val and val != 'nan' and val != 'none':
+                    # HU se musí shodovat s HU vyfakturovaným PŘESNĚ u této zakázky
+                    if val in valid_hus_for_del:
+                        return True
         return False
 
     fu_df['Neprebalovano'] = fu_df.apply(check_is_vollpalette, axis=1)
     
+    # Z výpočtů metrik striktně odstraníme KLT krabičky
+    fu_df_pallets = fu_df[~fu_df['Is_KLT']].copy()
+    ignored_klt_count = fu_df[fu_df['Is_KLT']][queue_count_col].nunique()
+    
     # --- MĚSÍČNÍ GRAF EFEKTIVITY ---
-    if 'Month' in fu_df.columns:
+    if 'Month' in fu_df_pallets.columns:
         st.markdown("#### 📈 Měsíční trend odbavení celých palet")
-        trend_fu = fu_df[fu_df['Has_X']].groupby(['Month', 'Neprebalovano'])[queue_count_col].nunique().reset_index()
+        trend_fu = fu_df_pallets[fu_df_pallets['Has_X']].groupby(['Month', 'Neprebalovano'])[queue_count_col].nunique().reset_index()
         trend_fu['Status'] = np.where(trend_fu['Neprebalovano'], 'Nepřebalováno (Ziskové)', 'Přebaleno (Zbytečná práce)')
         
         fig_bar = px.bar(
@@ -106,33 +141,33 @@ def render_fu(df_pick, queue_count_col):
         st.markdown("<br>", unsafe_allow_html=True)
     
     # Výpočty pro zobrazení metrik (unikátní TO)
-    total_fu = fu_df[queue_count_col].nunique()
-    total_x = fu_df[fu_df['Has_X']][queue_count_col].nunique()
-    total_neprebalovano = fu_df[fu_df['Neprebalovano']][queue_count_col].nunique()
+    total_fu_pal = fu_df_pallets[queue_count_col].nunique()
+    total_x_pal = fu_df_pallets[fu_df_pallets['Has_X']][queue_count_col].nunique()
+    total_neprebalovano = fu_df_pallets[fu_df_pallets['Neprebalovano']][queue_count_col].nunique()
     
     c1, c2, c3 = st.columns(3)
     with c1:
         with st.container(border=True):
-            st.metric("Celkem pickováno palet (TO)", f"{total_fu:,}", help="Kolik úkolů vzniklo ve frontě FU / FUOE")
+            st.metric("Celkem pickováno palet (TO)", f"{total_fu_pal:,}", help=f"Ignorováno {ignored_klt_count} TO, u kterých se dopickovávalo KLT (K1).")
     with c2:
         with st.container(border=True):
-            st.metric("Celá paleta ze skladu (Značka 'X')", f"{total_x:,}", help="U tolika TO skladník vybral pozici do nuly.")
+            st.metric("Celá paleta ze skladu (Značka 'X')", f"{total_x_pal:,}", help="U tolika TO skladník vybral pozici do nuly (mimo KLT).")
     with c3:
         with st.container(border=True):
-            st.metric("Nepřebalováno (Shoda HU s VEKP) ✅", f"{total_neprebalovano:,}", help="Paleta prošla balením tak, jak přišla ze skladu.")
+            st.metric("Nepřebalováno (Úplná shoda) ✅", f"{total_neprebalovano:,}", help="Paleta prošla balením tak, jak přišla ze skladu (shoda s VEKP a VEPO pro danou zakázku).")
             
     # Zobrazení detailů - kde se práce ušetřila vs. kde se pálil čas přebalováním
-    prebaleno_x = fu_df[(fu_df['Has_X']) & (~fu_df['Neprebalovano'])]
+    prebaleno_x = fu_df_pallets[(fu_df_pallets['Has_X']) & (~fu_df_pallets['Neprebalovano'])]
     
     st.markdown("<br>", unsafe_allow_html=True)
     col_t1, col_t2 = st.columns(2)
     
     with col_t1:
         st.success(f"**✅ Úspěšné Vollpalety: {total_neprebalovano} TO**")
-        nepreb_df = fu_df[fu_df['Neprebalovano']].drop_duplicates(subset=[queue_count_col]).copy()
+        nepreb_df = fu_df_pallets[fu_df_pallets['Neprebalovano']].drop_duplicates(subset=[queue_count_col]).copy()
         if not nepreb_df.empty:
-            disp1 = nepreb_df[['Delivery', queue_count_col, 'Material', 'Qty']].copy()
-            disp1.columns = ["Delivery", "Číslo TO", "Materiál", "Kusů"]
+            disp1 = nepreb_df[['Delivery', queue_count_col, 'Material', 'Qty', c_su] if c_su else ['Delivery', queue_count_col, 'Material', 'Qty']].copy()
+            disp1.columns = ["Delivery", "Číslo TO", "Materiál", "Kusů", "Typ jednotky"] if c_su else ["Delivery", "Číslo TO", "Materiál", "Kusů"]
             st.dataframe(disp1, use_container_width=True, hide_index=True)
         else:
             st.info("Žádné palety nebyly odbaveny napřímo.")
@@ -140,8 +175,8 @@ def render_fu(df_pick, queue_count_col):
     with col_t2:
         st.error(f"**⚠️ Zbytečná práce (Přebaleno): {prebaleno_x[queue_count_col].nunique()} TO**\n*Měly značku 'X', ale přebalily se na jiné HU.*")
         if not prebaleno_x.empty:
-            disp2 = prebaleno_x.drop_duplicates(subset=[queue_count_col])[['Delivery', queue_count_col, 'Material', 'Qty']].copy()
-            disp2.columns = ["Delivery", "Číslo TO", "Materiál", "Kusů"]
+            disp2 = prebaleno_x.drop_duplicates(subset=[queue_count_col])[['Delivery', queue_count_col, 'Material', 'Qty', c_su] if c_su else ['Delivery', queue_count_col, 'Material', 'Qty']].copy()
+            disp2.columns = ["Delivery", "Číslo TO", "Materiál", "Kusů", "Typ jednotky"] if c_su else ["Delivery", "Číslo TO", "Materiál", "Kusů"]
             st.dataframe(disp2, use_container_width=True, hide_index=True)
         else:
             st.info("Skvělá práce! Všechny celé palety ('X') byly úspěšně odbaveny bez přebalování.")
