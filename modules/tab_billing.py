@@ -42,7 +42,6 @@ def cached_billing_logic(df_pick, df_vekp, df_vepo, df_cats, queue_count_col, df
     if df_vekp is None or df_vekp.empty:
         return billing_df
 
-    # Příprava Pick reportu pro bezpečné párování
     df_pick_billing = df_pick.copy()
     df_pick_billing['Clean_Del'] = df_pick_billing['Delivery'].astype(str).str.replace(r'\.0$', '', regex=True).str.strip().str.lstrip('0')
 
@@ -166,6 +165,7 @@ def cached_billing_logic(df_pick, df_vekp, df_vepo, df_cats, queue_count_col, df
     if hu_agg.empty:
         hu_agg = pd.DataFrame(columns=["Generated delivery", "hu_leaf", "hu_top_level", "Clean_Del_Merge"])
 
+    # AGREGACE DAT - Nově s kontrolou "all_voll"
     pick_agg = df_pick_billing.groupby("Delivery").agg(
         pocet_to=(queue_count_col, "nunique"),
         pohyby_celkem=("Pohyby_Rukou", "sum"),
@@ -173,6 +173,7 @@ def cached_billing_logic(df_pick, df_vekp, df_vepo, df_cats, queue_count_col, df
         hlavni_fronta=("Queue", "first"),
         pocet_mat=("Material", "nunique"),
         has_voll=("Is_Vollpalette", "any"),
+        all_voll=("Is_Vollpalette", "all"),  # <-- Nová zásadní metrika
         Clean_Del_Merge=("Clean_Del", "first"),
         Month=("Month", "first")
     ).reset_index()
@@ -184,6 +185,7 @@ def cached_billing_logic(df_pick, df_vekp, df_vepo, df_cats, queue_count_col, df
     else:
         billing_df["Category_Full"] = pd.NA
 
+    # NOVÁ NEPŘŮSTŘELNÁ LOGIKA KATEGORIZACE
     def odvod_kategorii(row):
         cat_full = row.get('Category_Full')
         if pd.notna(cat_full) and str(cat_full).strip() not in ["", "nan", txt_uncat]: 
@@ -196,10 +198,15 @@ def cached_billing_logic(df_pick, df_vekp, df_vepo, df_cats, queue_count_col, df
             q = str(row.get('hlavni_fronta', '')).upper()
             base = "OE" if 'PI_PA_OE' in q else "E" if 'PI_PA' in q else "O" if ('PI_PL_FUOE' in q or 'PI_PL_OE' in q) else "N" if 'PI_PL' in q else "N"
             
-        if base in ['N', 'O'] and row['has_voll']:
+        # 1. Jsou naprosto všechny pickované úkoly v zakázce celé palety? (Bez ohledu na počet materiálů)
+        if base in ['N', 'O'] and row.get('all_voll', False):
             sub = "Vollpalette"
+        # 2. Nejsou to čisté palety a je tam více než 1 materiál?
+        elif row['pocet_mat'] > 1:
+            sub = "Misch"
+        # 3. Zůstal jen jeden materiál (s volnými kusy)
         else:
-            sub = "Misch" if row['pocet_mat'] > 1 else "Sortenrein"
+            sub = "Sortenrein"
             
         return f"{base} {sub}"
 
@@ -215,7 +222,6 @@ def cached_billing_logic(df_pick, df_vekp, df_vepo, df_cats, queue_count_col, df
     return billing_df
 
 def render_billing(df_pick, df_vekp, df_vepo, df_cats, queue_count_col, aus_data):
-    # Chytrý lokální překladač pro tuto záložku
     def _t(cs, en): 
         return en if st.session_state.get('lang', 'cs') == 'en' else cs
 
@@ -373,7 +379,6 @@ def render_billing(df_pick, df_vekp, df_vepo, df_cats, queue_count_col, aus_data
             
             interactive_chart()
 
-        # --- NOVÁ MASTER ANALÝZA POMĚRU PICK VS PACK ---
         st.divider()
         st.markdown(f"### 💎 {_t('Analýza efektivity a ziskovosti (Master Data)', 'Efficiency & Profitability Analysis (Master Data)')}")
         st.markdown(_t("Tato tabulka odhaluje skutečnou hloubku finančních úniků z konsolidace a fyzickou náročnost na 1 fakturační jednotku.", "This table reveals the true depth of financial leaks from consolidation and the physical effort per 1 billed unit."))
