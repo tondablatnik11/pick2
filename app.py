@@ -24,41 +24,61 @@ st.set_page_config(page_title="Warehouse Control Tower", page_icon="🚀", layou
 
 st.markdown("""
     <style>
-    /* Změna fontu pro modernější vzhled */
+    /* A) Načtení fontu a definice fallbacku */
+    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;600;800&display=swap');
+    
     html, body, [class*="css"] {
-        font-family: 'Inter', 'Segoe UI', sans-serif;
+        font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
     }
     
-    /* Vylepšení metrik - styl moderních "karet" (SaaS look) */
+    /* A) Tabular-nums pro perfektní zarovnání cifer pod sebou */
+    [data-testid="stMetricValue"], .tabular-nums {
+        font-variant-numeric: tabular-nums;
+        letter-spacing: -0.02em;
+    }
+    
+    /* Vylepšení standardních metrik */
     [data-testid="stMetric"] {
         background-color: var(--secondary-background-color);
         border-radius: 8px;
         padding: 15px 20px;
         border: 1px solid rgba(128, 128, 128, 0.2);
         box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+        transition: transform 0.2s ease;
+    }
+    [data-testid="stMetric"]:hover {
+        transform: translateY(-2px);
     }
     [data-testid="stMetricLabel"] {
         font-weight: 600;
         opacity: 0.8;
         font-size: 14px;
+        text-transform: uppercase;
+        letter-spacing: 0.05em;
     }
     [data-testid="stMetricValue"] {
         font-weight: 800;
         font-size: 28px !important;
     }
-    
-    /* Zkrášlení záložek (Tabs) - aby vypadaly jako skutečné záložky v prohlížeči */
-    [data-baseweb="tab-list"] {
-        gap: 8px;
-        background-color: transparent;
+
+    /* C) Hero Metric - Speciální kontejner pro hlavní KPI */
+    .hero-metric {
+        background: linear-gradient(135deg, rgba(59, 130, 246, 0.1) 0%, rgba(37, 99, 235, 0.0) 100%);
+        border: 1px solid #3b82f6;
+        border-left: 5px solid #3b82f6;
+        border-radius: 8px;
+        padding: 20px;
     }
+    .hero-metric h2 { margin: 0; font-size: 14px; color: #94a3b8; text-transform: uppercase; letter-spacing: 0.05em; }
+    .hero-metric h1 { margin: 5px 0 0 0; font-size: 42px; font-weight: 800; color: #3b82f6; font-variant-numeric: tabular-nums;}
+    
+    /* Zkrášlení záložek */
+    [data-baseweb="tab-list"] { gap: 8px; background-color: transparent; }
     [data-baseweb="tab"] {
         background-color: var(--secondary-background-color);
         border-radius: 6px 6px 0px 0px;
-        padding: 10px 20px;
-        font-weight: 600;
-        border: 1px solid rgba(128, 128, 128, 0.2);
-        border-bottom: none;
+        padding: 10px 20px; font-weight: 600;
+        border: 1px solid rgba(128, 128, 128, 0.2); border-bottom: none;
     }
     [aria-selected="true"] {
         background-color: transparent !important;
@@ -66,20 +86,15 @@ st.markdown("""
         color: var(--primary-color) !important;
     }
     
-    /* Vylepšení Headerů sekcí (aby krásně svítily) */
     .section-header {
         background-color: var(--secondary-background-color);
         border-left: 5px solid var(--primary-color);
-        padding: 15px 20px;
-        border-radius: 4px;
-        margin-bottom: 20px;
-        border: 1px solid rgba(128, 128, 128, 0.2);
-        box-shadow: 0 2px 4px rgba(0,0,0,0.05);
+        padding: 15px 20px; border-radius: 4px;
+        margin-bottom: 20px; border: 1px solid rgba(128, 128, 128, 0.2);
     }
     .section-header h3 { margin-top: 0; padding-top: 0; color: var(--text-color); }
     .section-header p { margin-bottom: 0; opacity: 0.7; font-size: 14px;}
     
-    /* Schování pravého menu, ale ZACHOVÁNÍ tlačítka pro sidebar! */
     #MainMenu {visibility: hidden;}
     header {background: transparent !important;}
     [data-testid="stHeaderActionElements"] {display: none;}
