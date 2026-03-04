@@ -79,9 +79,10 @@ st.markdown("""
     .section-header h3 { margin-top: 0; padding-top: 0; color: var(--text-color); }
     .section-header p { margin-bottom: 0; opacity: 0.7; font-size: 14px;}
     
-    /* Schování výchozího horního menu Streamlitu pro čistší vzhled */
+    /* Schování pravého menu, ale ZACHOVÁNÍ tlačítka pro sidebar! */
     #MainMenu {visibility: hidden;}
-    header {visibility: hidden;}
+    header {background: transparent !important;}
+    [data-testid="stHeaderActionElements"] {display: none;}
     </style>
 """, unsafe_allow_html=True)
 
