@@ -95,7 +95,7 @@ def cached_billing_logic(df_pick, df_vekp, df_vepo, df_cats, queue_count_col, df
     
     def detect_voll(row):
         if str(row.get('Removal of total SU', '')).upper() != 'X': return False
-        if c_su and is_klt(row.get(c_su, '')): return False
+        if c_su and is_klt(row.get(c_su, '')): return False # Striktní zákaz KLT krabiček jako Vollpalette
         valid_hus = del_to_valid_hus.get(row['Clean_Del'], set())
         for col in pick_hu_cols:
             if col in row.index and pd.notna(row[col]):
@@ -105,6 +105,7 @@ def cached_billing_logic(df_pick, df_vekp, df_vepo, df_cats, queue_count_col, df
 
     df_pick_billing['Is_Vollpalette'] = df_pick_billing.apply(detect_voll, axis=1)
 
+    # Vytvoření čistého seznamu výhradně pro SKUTEČNÉ palety
     auto_voll_hus_clean = set()
     for _, r in df_pick_billing[df_pick_billing['Is_Vollpalette']].iterrows():
         for c in pick_hu_cols:
@@ -112,12 +113,9 @@ def cached_billing_logic(df_pick, df_vekp, df_vepo, df_cats, queue_count_col, df
                 val = str(r[c]).strip().lstrip('0')
                 if val: auto_voll_hus_clean.add(val)
                 
-    for h in auto_voll_hus_tuple:
-        auto_voll_hus_clean.add(str(h).strip().lstrip('0'))
-
-    auto_voll_hus_clean.discard("")
-    auto_voll_hus_clean.discard("nan")
-    auto_voll_hus_clean.discard("none")
+    # OPRAVA: Ze seznamu níže jsme smazali obecný "auto_voll_hus_tuple", 
+    # protože ten v sobě nesl infikovaná data o KLT krabičkách s 'X'. 
+    # Nyní používáme jen náš přísně vyfiltrovaný auto_voll_hus_clean!
 
     hu_agg_list = []
     for delivery, group in vekp_filtered.groupby("Clean_Del"):
@@ -140,9 +138,11 @@ def cached_billing_logic(df_pick, df_vekp, df_vepo, df_cats, queue_count_col, df
             leaf_exts = group.loc[group['Clean_HU_Int'] == leaf, 'Clean_HU_Ext'].values
             leaf_ext = leaf_exts[0] if len(leaf_exts) > 0 else ""
             
+            # Pokud to je paleta (ne KLT), počítá se samo za sebe
             if leaf in auto_voll_hus_clean or leaf_ext in auto_voll_hus_clean:
                 voll_count += 1
             else:
+                # KLT krabičky tento bod nahoře přeskočí a jdou šplhat stromem k rodiči
                 curr = leaf
                 visited = set()
                 while curr in p_map and p_map[curr] != "" and curr not in visited:
@@ -207,7 +207,7 @@ def cached_billing_logic(df_pick, df_vekp, df_vepo, df_cats, queue_count_col, df
     return billing_df
 
 def render_billing(df_pick, df_vekp, df_vepo, df_cats, queue_count_col, aus_data):
-    st.markdown(f"<div class='section-header'><h3>💰 Korelace mezi Pickováním a Účtováním</h3></div>", unsafe_allow_html=True)
+    st.markdown(f"<div class='section-header'><h3>💰 Korelace mezi Pickováním a Účtováním</h3><p>Zákazník platí podle počtu výsledných balících jednotek (HU). Zde vidíte náročnost vytvoření těchto zpoplatněných jednotek napříč fakturačními kategoriemi.</p></div>", unsafe_allow_html=True)
 
     df_likp_tmp = aus_data.get("LIKP", pd.DataFrame()) if aus_data else pd.DataFrame()
     df_sdshp_tmp = aus_data.get("SDSHP_AM2", pd.DataFrame()) if aus_data else pd.DataFrame()
