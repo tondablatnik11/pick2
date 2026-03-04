@@ -10,7 +10,7 @@ except AttributeError:
     fast_render = lambda f: f
 
 @st.cache_data(show_spinner=False)
-def cached_billing_logic(df_pick, df_vekp, df_vepo, df_cats, queue_count_col, df_likp_tmp, df_sdshp_tmp, df_t031_tmp, auto_voll_hus_tuple, txt_uncat):
+def cached_billing_logic(df_pick, df_vekp, df_vepo, df_cats, queue_count_col, df_likp_tmp, df_sdshp_tmp, df_t031_tmp, txt_uncat):
     aus_category_map = {}
     kep_set = set()
     if not df_sdshp_tmp.empty:
@@ -105,7 +105,7 @@ def cached_billing_logic(df_pick, df_vekp, df_vepo, df_cats, queue_count_col, df
 
     df_pick_billing['Is_Vollpalette'] = df_pick_billing.apply(detect_voll, axis=1)
 
-    # Vytvoření čistého seznamu výhradně pro SKUTEČNÉ palety
+    # Vytvoření absolutně čistého seznamu výhradně pro SKUTEČNÉ palety
     auto_voll_hus_clean = set()
     for _, r in df_pick_billing[df_pick_billing['Is_Vollpalette']].iterrows():
         for c in pick_hu_cols:
@@ -113,9 +113,8 @@ def cached_billing_logic(df_pick, df_vekp, df_vepo, df_cats, queue_count_col, df
                 val = str(r[c]).strip().lstrip('0')
                 if val: auto_voll_hus_clean.add(val)
                 
-    # OPRAVA: Ze seznamu níže jsme smazali obecný "auto_voll_hus_tuple", 
-    # protože ten v sobě nesl infikovaná data o KLT krabičkách s 'X'. 
-    # Nyní používáme jen náš přísně vyfiltrovaný auto_voll_hus_clean!
+    # ZDE BYL PROBLÉM - globální proměnná z app.py sem zanášela 'X' z KLT.
+    # Tuto část jsem trvale odstranil. Teď si fakturace drží jen čistý seznam Palet.
 
     hu_agg_list = []
     for delivery, group in vekp_filtered.groupby("Clean_Del"):
@@ -138,11 +137,11 @@ def cached_billing_logic(df_pick, df_vekp, df_vepo, df_cats, queue_count_col, df
             leaf_exts = group.loc[group['Clean_HU_Int'] == leaf, 'Clean_HU_Ext'].values
             leaf_ext = leaf_exts[0] if len(leaf_exts) > 0 else ""
             
-            # Pokud to je paleta (ne KLT), počítá se samo za sebe
+            # Pokud to je skutečná, nezpochybnitelná paleta (ne KLT), počítá se samo za sebe
             if leaf in auto_voll_hus_clean or leaf_ext in auto_voll_hus_clean:
                 voll_count += 1
             else:
-                # KLT krabičky tento bod nahoře přeskočí a jdou šplhat stromem k rodiči
+                # KLT krabičky se značkou 'X' teď spadnou SEM a správně vyšplhají ke své mateřské paletě!
                 curr = leaf
                 visited = set()
                 while curr in p_map and p_map[curr] != "" and curr not in visited:
@@ -212,10 +211,10 @@ def render_billing(df_pick, df_vekp, df_vepo, df_cats, queue_count_col, aus_data
     df_likp_tmp = aus_data.get("LIKP", pd.DataFrame()) if aus_data else pd.DataFrame()
     df_sdshp_tmp = aus_data.get("SDSHP_AM2", pd.DataFrame()) if aus_data else pd.DataFrame()
     df_t031_tmp = aus_data.get("T031", pd.DataFrame()) if aus_data else pd.DataFrame()
-    auto_voll_hus_tuple = tuple(st.session_state.get('auto_voll_hus', set()))
     txt_uncat = t("uncategorized")
 
-    billing_df = cached_billing_logic(df_pick, df_vekp, df_vepo, df_cats, queue_count_col, df_likp_tmp, df_sdshp_tmp, df_t031_tmp, auto_voll_hus_tuple, txt_uncat)
+    # Bleskové zavolání z paměti - Očištěno od zrádného auto_voll_hus_tuple
+    billing_df = cached_billing_logic(df_pick, df_vekp, df_vepo, df_cats, queue_count_col, df_likp_tmp, df_sdshp_tmp, df_t031_tmp, txt_uncat)
 
     if not billing_df.empty:
         c1, c2, c3, c4 = st.columns(4)
