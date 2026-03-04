@@ -376,12 +376,16 @@ def main():
                         time.sleep(2.0)
                         st.rerun()
 
-    # Zpracování aplikace
+    # Použití tvého překladače pro Loading State
     progress_bar = st.progress(0, text=_t("🚀 Inicializace Warehouse Control Tower...", "🚀 Initializing Warehouse Control Tower..."))
     time.sleep(0.1)
     
-    progress_bar.progress(30, text=_t("📥 Načítání a propojování dat z databáze (Pick, VEKP, VEPO)...", "📥 Loading data from database..."))
+    progress_bar.progress(30, text=_t("📥 Načítání a propojování dat z databáze...", "📥 Fetching and joining database records..."))
     data_dict = fetch_and_prep_data(use_marm)
+    # ...
+    progress_bar.progress(65, text=_t("⚙️ Výpočet fyzických pohybů a kontrola ergonomie...", "⚙️ Calculating physical movements and ergonomics..."))
+    # ...
+    progress_bar.progress(90, text=_t("📊 Vykreslování vizualizací a tabulek...", "📊 Rendering charts and dashboards..."))
 
     if data_dict is None:
         progress_bar.empty()
