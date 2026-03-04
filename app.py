@@ -23,41 +23,56 @@ st.set_page_config(page_title="Warehouse Control Tower", page_icon="🚀", layou
 
 st.markdown("""
     <style>
-    /* Plynulý nájezd aplikace */
-    @keyframes fadeIn {
-        from { opacity: 0; transform: translateY(20px); }
-        to { opacity: 1; transform: translateY(0); }
-    }
-    .block-container { animation: fadeIn 0.8s ease-out; }
-    
-    /* Univerzální Glassmorphism (Funguje v Light i Dark mode) */
-    div[data-testid="metric-container"] {
-        background: rgba(128, 128, 128, 0.05) !important;
-        backdrop-filter: blur(10px);
-        -webkit-backdrop-filter: blur(10px);
-        border: 1px solid rgba(128, 128, 128, 0.2) !important;
-        padding: 1.2rem 1.5rem;
-        border-radius: 1rem !important;
-        box-shadow: 0 4px 15px rgba(0, 0, 0, 0.05);
-        transition: all 0.3s cubic-bezier(0.25, 0.8, 0.25, 1);
-    }
-    div[data-testid="metric-container"]:hover {
-        transform: translateY(-5px);
-        border-color: rgba(56, 189, 248, 0.6) !important;
-        box-shadow: 0 10px 25px rgba(56, 189, 248, 0.15);
+    /* Změna fontu pro modernější vzhled */
+    html, body, [class*="css"] {
+        font-family: 'Inter', sans-serif;
     }
     
-    /* Styl pro datové rámce a grafy */
-    .stDataFrame, [data-testid="stPlotlyChart"] {
-        border-radius: 0.8rem !important;
-        border: 1px solid rgba(128, 128, 128, 0.2);
-        padding: 0.5rem;
-        background: rgba(128, 128, 128, 0.02);
+    /* Vylepšení metrik - styl moderních "karet" se stínem */
+    [data-testid="stMetric"] {
+        background-color: #ffffff;
+        border-radius: 10px;
+        padding: 15px 20px;
+        box-shadow: 0 4px 6px rgba(0, 0, 0, 0.05);
+        border: 1px solid #f0f2f6;
+    }
+    [data-testid="stMetricLabel"] {
+        font-weight: 600;
+        color: #4b5563;
+        font-size: 14px;
+    }
+    [data-testid="stMetricValue"] {
+        font-weight: 800;
+        color: #111827;
     }
     
-    .main-header { font-size: 3rem; font-weight: 900; background: linear-gradient(90deg, #0ea5e9, #6366f1); -webkit-background-clip: text; -webkit-text-fill-color: transparent; margin-bottom: 0.2rem; }
-    .sub-header { font-size: 1.1rem; color: gray; margin-bottom: 2rem; font-weight: 500; }
-    .section-header { border-bottom: 2px solid rgba(128, 128, 128, 0.2); padding-bottom: 0.5rem; margin-top: 2rem; margin-bottom: 1.5rem; font-weight: 700; text-transform: uppercase; letter-spacing: 1px;}
+    /* Zkrášlení záložek (Tabs) */
+    [data-baseweb="tab-list"] {
+        gap: 10px;
+    }
+    [data-baseweb="tab"] {
+        background-color: #f3f4f6;
+        border-radius: 8px 8px 0px 0px;
+        padding: 10px 20px;
+        font-weight: 600;
+    }
+    [aria-selected="true"] {
+        background-color: #ebf5ff !important;
+        color: #2563eb !important;
+        border-bottom: 3px solid #2563eb !important;
+    }
+    
+    /* Vylepšení Headerů sekcí (naše vlastní třída) */
+    .section-header {
+        background: linear-gradient(90deg, #f8fafc 0%, #ffffff 100%);
+        border-left: 5px solid #3b82f6;
+        padding: 15px 20px;
+        border-radius: 4px;
+        margin-bottom: 20px;
+        box-shadow: 0 1px 3px rgba(0,0,0,0.05);
+    }
+    .section-header h3 { margin-top: 0; padding-top: 0; color: #1e293b; }
+    .section-header p { margin-bottom: 0; color: #64748b; font-size: 14px;}
     </style>
 """, unsafe_allow_html=True)
 if 'lang' not in st.session_state: st.session_state.lang = 'cs'
