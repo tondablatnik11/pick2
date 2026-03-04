@@ -6,6 +6,10 @@ import plotly.graph_objects as go
 from modules.utils import t, QUEUE_DESC
 
 def render_dashboard(df_pick, queue_count_col):
+    # Chytrý lokální překladač pro tuto záložku
+    def _t(cs, en): 
+        return en if st.session_state.get('lang', 'cs') == 'en' else cs
+
     # --- 1. Spolehlivost dat (Data Quality) ---
     st.markdown(f"<div class='section-header'><h3>{t('sec_ratio')}</h3><p>{t('ratio_desc')}</p></div>", unsafe_allow_html=True)
     
@@ -25,24 +29,24 @@ def render_dashboard(df_pick, queue_count_col):
             Odhad_Pohybu=('Pohyby_Loose_Miss', 'sum'),
             Kusu=('Qty', 'sum')
         ).reset_index().sort_values('Odhad_Pohybu', ascending=False)
+        
+        miss_df.columns = [_t("Materiál", "Material"), _t("Odhadované pohyby (Miss)", "Estimated Moves (Miss)"), _t("Kusů", "Quantity")]
         st.dataframe(miss_df, hide_index=True, use_container_width=True)
 
     # --- 2. Tabulka průměrné náročnosti (Queue Table) ---
     st.markdown(f"<div class='section-header'><h3>{t('sec_queue_title')}</h3></div>", unsafe_allow_html=True)
     
-    # KROK 1: Spočítáme statistiky pro každý jednotlivý pickovací úkol (TO)
     to_group = df_pick.groupby(queue_count_col).agg(
         Queue=('Queue', 'first'),
-        lokace_v_to=('Source Storage Bin', 'nunique'), # Počet zastávek u regálu
+        lokace_v_to=('Source Storage Bin', 'nunique'),
         kusy_v_to=('Qty', 'sum'),
         pohyby_v_to=('Pohyby_Rukou', 'sum'),
         exact_poh=('Pohyby_Exact', 'sum'),
         miss_poh=('Pohyby_Loose_Miss', 'sum'),
-        pocet_mat=('Material', 'nunique'),             # Zjištění, zda jde o Single nebo Mix
+        pocet_mat=('Material', 'nunique'),
         Delivery=('Delivery', 'first')
     ).reset_index()
 
-    # OPRAVA CHYBĚJÍCÍ FUNKCE: Rozřazení paletových front na Single a Mix
     def split_queue(row):
         q = str(row['Queue']).strip()
         if q in ['PI_PL', 'PI_PL_OE']:
@@ -54,7 +58,6 @@ def render_dashboard(df_pick, queue_count_col):
 
     to_group['Queue_Split'] = to_group.apply(split_queue, axis=1)
 
-    # KROK 2: Nyní sečteme tyto reálné zastávky z TO do finální kategorie (Queue)
     q_agg = to_group.groupby('Queue_Split').agg(
         pocet_to=(queue_count_col, 'nunique'),
         zakazky=('Delivery', 'nunique'),
@@ -65,7 +68,6 @@ def render_dashboard(df_pick, queue_count_col):
         miss_celkem=('miss_poh', 'sum')
     ).reset_index()
 
-    # Výpočty přesných průměrů
     q_agg['prum_lok_to'] = np.where(q_agg['pocet_to'] > 0, q_agg['lokace_celkem'] / q_agg['pocet_to'], 0)
     q_agg['prum_ks_to'] = np.where(q_agg['pocet_to'] > 0, q_agg['kusy_celkem'] / q_agg['pocet_to'], 0)
     q_agg['prum_poh_lok'] = np.where(q_agg['lokace_celkem'] > 0, q_agg['pohyby_celkem'] / q_agg['lokace_celkem'], 0)
@@ -76,44 +78,52 @@ def render_dashboard(df_pick, queue_count_col):
 
     q_agg['Queue_Desc'] = q_agg['Queue_Split'].map(QUEUE_DESC).fillna(t('unknown'))
     
-    # Výběr sloupců
     disp_q = q_agg[['Queue_Split', 'Queue_Desc', 'pocet_to', 'zakazky', 'prum_lok_to', 'prum_ks_to', 'prum_poh_lok', 'prum_exact_lok', 'pct_exact', 'prum_miss_lok', 'pct_miss']].copy()
+    
+    # Překlad názvů sloupců
+    c_loc_to = _t("Průměr lokací (zastávek) / TO", "Avg Locations (Stops) / TO")
+    c_ks_to = _t("Průměr kusů / TO", "Avg Qty / TO")
+    c_poh_lok = _t("Průměr pohybů na 1 lokaci", "Avg Moves per 1 Location")
+    c_ex_lok = _t("Pohyby přesně / lok.", "Exact Moves / Loc")
+    c_mi_lok = _t("Pohyby odhad / lok.", "Estimated Moves / Loc")
+    c_pct_ex = _t("% Přesně", "% Exact")
+    c_pct_mi = _t("% Odhad", "% Estimated")
+
     disp_q.columns = [
         "Queue", 
-        "Popis fronty", 
-        "Počet TO", 
-        "Zasažených zakázek", 
-        "Průměr lokací (zastávek) / TO", 
-        "Průměr kusů / TO", 
-        "Průměr pohybů na 1 lokaci", 
-        "Pohyby přesně / lok.", 
-        "% Přesně", 
-        "Pohyby odhad / lok.", 
-        "% Odhad"
+        _t("Popis fronty", "Queue Description"), 
+        _t("Počet TO", "Total TOs"), 
+        _t("Zasažených zakázek", "Affected Orders"), 
+        c_loc_to, 
+        c_ks_to, 
+        c_poh_lok, 
+        c_ex_lok, 
+        c_pct_ex, 
+        c_mi_lok, 
+        c_pct_mi
     ]
     
     st.dataframe(disp_q.style.format({
-        "Průměr lokací (zastávek) / TO": "{:.1f}", 
-        "Průměr kusů / TO": "{:.1f}", 
-        "Průměr pohybů na 1 lokaci": "{:.2f}",
-        "Pohyby přesně / lok.": "{:.2f}", 
-        "Pohyby odhad / lok.": "{:.2f}",
-        "% Přesně": "{:.1f}%", 
-        "% Odhad": "{:.1f}%"
+        c_loc_to: "{:.1f}", 
+        c_ks_to: "{:.1f}", 
+        c_poh_lok: "{:.2f}",
+        c_ex_lok: "{:.2f}", 
+        c_mi_lok: "{:.2f}",
+        c_pct_ex: "{:.1f}%", 
+        c_pct_mi: "{:.1f}%"
     }), hide_index=True, use_container_width=True)
 
     # --- 3. GRAF: Měsíční trend podle Queue ---
-    st.markdown(f"<div class='section-header'><h3>📈 Trend náročnosti v čase podle Queue</h3></div>", unsafe_allow_html=True)
+    st.markdown(f"<div class='section-header'><h3>📈 {_t('Trend náročnosti v čase podle Queue', 'Effort Trend over Time by Queue')}</h3></div>", unsafe_allow_html=True)
     
     if 'Month' in df_pick.columns:
-        # Propagujeme správné Queue kategorie i zpět do původní tabulky, aby graf fungoval
         q_split_map = to_group.set_index(queue_count_col)['Queue_Split'].to_dict()
         df_pick['Queue_Split_Graf'] = df_pick[queue_count_col].map(q_split_map).fillna(df_pick['Queue'])
 
         valid_queues = sorted([q for q in df_pick['Queue_Split_Graf'].dropna().unique() if q != 'N/A'])
         
         selected_queues = st.multiselect(
-            "Zvolte Queue pro zobrazení v grafu (můžete vybrat libovolný počet):",
+            _t("Zvolte Queue pro zobrazení v grafu (můžete vybrat libovolný počet):", "Select Queue(s) to display in the chart:"),
             options=valid_queues,
             default=valid_queues[:3] if len(valid_queues) >= 3 else valid_queues
         )
@@ -143,10 +153,13 @@ def render_dashboard(df_pick, queue_count_col):
                 color = colors[i % len(colors)]
                 
                 if not q_data.empty:
+                    lbl_to = _t("(Počet TO)", "(TO Count)")
+                    lbl_mov = _t("(Pohybů/lokaci)", "(Moves/Loc)")
+                    
                     fig.add_trace(go.Bar(
                         x=q_data['Month'], 
                         y=q_data['to_count'], 
-                        name=f"{q} (Počet TO)", 
+                        name=f"{q} {lbl_to}", 
                         marker_color=color,
                         opacity=0.7,
                         offsetgroup=i
@@ -155,7 +168,7 @@ def render_dashboard(df_pick, queue_count_col):
                     fig.add_trace(go.Scatter(
                         x=q_data['Month'], 
                         y=q_data['prum_poh_lok'], 
-                        name=f"{q} (Pohybů/lokaci)", 
+                        name=f"{q} {lbl_mov}", 
                         mode='lines+markers+text', 
                         text=q_data['prum_poh_lok'].round(1),
                         textposition='top center',
@@ -166,8 +179,8 @@ def render_dashboard(df_pick, queue_count_col):
             
             fig.update_layout(
                 barmode='group',
-                yaxis=dict(title="Celkový počet TO"),
-                yaxis2=dict(title="Průměr pohybů na lokaci", side="right", overlaying="y", showgrid=False),
+                yaxis=dict(title=_t("Celkový počet TO", "Total TOs")),
+                yaxis2=dict(title=_t("Průměr pohybů na lokaci", "Avg Moves per Location"), side="right", overlaying="y", showgrid=False),
                 plot_bgcolor="rgba(0,0,0,0)", 
                 paper_bgcolor="rgba(0,0,0,0)",
                 margin=dict(l=0, r=0, t=30, b=0), 
@@ -176,8 +189,8 @@ def render_dashboard(df_pick, queue_count_col):
             
             st.plotly_chart(fig, use_container_width=True)
         else:
-            st.info("Prosím vyberte alespoň jednu Queue pro zobrazení grafu.")
+            st.info(_t("Prosím vyberte alespoň jednu Queue pro zobrazení grafu.", "Please select at least one Queue to display the chart."))
     else:
-        st.info("Data neobsahují informace o měsíci.")
+        st.info(_t("Data neobsahují informace o měsíci.", "Data does not contain month information."))
 
     return disp_q
