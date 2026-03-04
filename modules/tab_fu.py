@@ -3,144 +3,145 @@ import pandas as pd
 import numpy as np
 import plotly.express as px
 import plotly.graph_objects as go
+from database import load_from_db
 from modules.utils import t
 
-def get_sut_col(df):
-    """Pokusí se chytře najít sloupec s Typem skladovací jednotky (SUT)"""
-    cols_up = {str(c).strip().upper(): c for c in df.columns}
-    
-    # Přímé přesné shody
-    for k in ['SU TYPE', 'SUT', 'STORAGE UNIT TYPE', 'TYP SU', 'TYP SKLADOVACÍ JEDNOTKY', 'TYP SKLAD. JEDN.', 'TYP SKLAD.JEDN.', 'SUTYPE']:
-        if k in cols_up: return cols_up[k]
-        
-    # Částečné shody, pokud se sloupec jmenuje trochu jinak
-    for k, original_col in cols_up.items():
-        if 'SU TYP' in k or 'SUT' in k or 'UNIT TYPE' in k or 'TYP SKLAD' in k or 'SKLAD. JEDN' in k:
-            return original_col
-            
-    return None
-
-def categorize_su(sut):
-    """Rozřadí kódy SUT na Palety, KLT a zbytek"""
-    if pd.isna(sut) or str(sut).strip() == '': 
-        return 'Neznámé'
-        
-    s = str(sut).strip().upper()
-    
-    # Identifikace palet (obvykle začínají na E (Euro), P (Pallet), C (Chep), D, V nebo přímo obsahují PAL)
-    if 'PAL' in s or s.startswith('E') or s.startswith('P') or s.startswith('C') or s.startswith('D') or s.startswith('V') or 'VVP' in s or 'CHEP' in s: 
-        return 'Paleta'
-        
-    # Identifikace KLT krabic (obvykle začínají na K nebo B)
-    elif 'KLT' in s or s.startswith('K') or s.startswith('B'): 
-        return 'KLT'
-        
-    else:
-        return 'Ostatní / Neznámé'
-
 def render_fu(df_pick, queue_count_col):
-    # OPRAVENÉ TEXTY V HLAVIČCE
-    st.markdown("<div class='section-header'><h3>🏭 Analýza front PI_PL_FU a PI_PL_FUOE</h3><p>Rozpad picků podle typu skladovací jednotky (Storage Unit Type).</p></div>", unsafe_allow_html=True)
+    st.markdown(f"<div class='section-header'><h3>🏭 {t('fu_title')}</h3><p>{t('fu_desc')}</p></div>", unsafe_allow_html=True)
     
-    # Vyfiltrujeme pouze FU fronty
-    fu_df = df_pick[df_pick['Queue'].astype(str).str.upper().str.contains('PI_PL_FU')].copy()
+    # 1. Filtrace pouze na paletové fronty (FU / FUOE)
+    fu_df = df_pick[df_pick['Queue'].astype(str).str.upper().isin(['PI_PL_FU', 'PI_PL_FUOE'])].copy()
     
     if fu_df.empty:
-        st.info("V aktuálních datech nejsou žádné zakázky z front PI_PL_FU nebo PI_PL_FUOE.")
+        st.info("V datech chybí záznamy pro fronty PI_PL_FU nebo PI_PL_FUOE.")
+        return
+        
+    # --- 2. Základní přehled (Storage Unit Type - KLT vs Palety) ---
+    c_su = 'Storage Unit Type' if 'Storage Unit Type' in fu_df.columns else ('Type' if 'Type' in fu_df.columns else None)
+    
+    if c_su:
+        st.markdown("### 🏷️ Poměr typů balení (KLT vs Palety)")
+        su_agg = fu_df.groupby(c_su).agg(
+            lines=('Material', 'count'),
+            tos=(queue_count_col, 'nunique'),
+            qty=('Qty', 'sum')
+        ).reset_index().sort_values('tos', ascending=False)
+        su_agg.columns = [t('fu_col_su'), t('fu_col_lines'), t('fu_col_to'), t('fu_col_qty')]
+        
+        col_su1, col_su2 = st.columns([1.2, 1])
+        with col_su1:
+            st.dataframe(su_agg, use_container_width=True, hide_index=True)
+        with col_su2:
+            # Koláčový graf pro okamžitou vizuální kontrolu poměrů
+            fig_pie = px.pie(
+                su_agg, 
+                values=t('fu_col_to'), 
+                names=t('fu_col_su'), 
+                hole=0.4, 
+                title="Podíl Pick TO podle typu obalu"
+            )
+            fig_pie.update_traces(textposition='inside', textinfo='percent+label')
+            fig_pie.update_layout(margin=dict(t=40, b=10, l=10, r=10), showlegend=False)
+            st.plotly_chart(fig_pie, use_container_width=True)
+    else:
+        st.info("Sloupec pro Typ jednotky (Storage Unit Type) nebyl v datech nalezen.")
+
+    # --- 3. ANALÝZA EFEKTIVITY PŘEBALOVÁNÍ (VOLLPALETTE) ---
+    st.divider()
+    st.markdown("### 📦 Efektivita: Přímé balení bez přebalování (Vollpalette)")
+    st.markdown("Tato analýza sleduje, kolik palet se skutečně **nemuselo přebalovat**. Algoritmus ověřuje dvě podmínky:")
+    st.markdown("1. Byla pozice ve skladu vybrána do nuly (v Pick reportu je u palety značka **'X'**).")
+    st.markdown("2. Zdrojové HU z Pick reportu se **přímo shoduje** s vyfakturovaným HU v tabulce VEKP.")
+
+    # Bleskové načtení VEKP z databáze
+    df_vekp = load_from_db('raw_vekp')
+    
+    if df_vekp is None or df_vekp.empty:
+        st.warning("⚠️ K vyhodnocení této metriky je nutné mít v Admin Zóně nahrán soubor **VEKP** (Obaly).")
         return
 
-    # Zjistíme, jak se jmenuje sloupec pro SU type
-    sut_col = get_sut_col(fu_df)
+    # Získání seznamu platných HU z VEKP (bez počátečních nul pro bezpečné párování)
+    vekp_hu_col = next((c for c in df_vekp.columns if "Internal HU" in str(c) or "HU-Nummer intern" in str(c)), df_vekp.columns[0])
+    c_hu_ext = df_vekp.columns[1] if len(df_vekp.columns) > 1 else vekp_hu_col
+
+    valid_vekp_hus = set(df_vekp[vekp_hu_col].dropna().astype(str).str.strip().str.lstrip('0')).union(
+        set(df_vekp[c_hu_ext].dropna().astype(str).str.strip().str.lstrip('0'))
+    )
     
-    if sut_col:
-        fu_df['Skladovaci_Jednotka'] = fu_df[sut_col].fillna('Neznámé')
-    else:
-        fu_df['Skladovaci_Jednotka'] = 'Neznámé (Sloupec SUT nenalezen)'
-
-    # Rozřazení do kategorií
-    fu_df['Typ_Obalu'] = fu_df['Skladovaci_Jednotka'].apply(categorize_su)
-
-    # 1. HLAVNÍ METRIKY (Celková procenta)
-    total_lines = len(fu_df)
-    klt_lines = len(fu_df[fu_df['Typ_Obalu'] == 'KLT'])
-    pal_lines = len(fu_df[fu_df['Typ_Obalu'] == 'Paleta'])
+    # Detekce značky X
+    fu_df['Has_X'] = fu_df['Removal of total SU'].astype(str).str.strip().str.upper() == 'X'
     
-    klt_pct = (klt_lines / total_lines * 100) if total_lines > 0 else 0
-    pal_pct = (pal_lines / total_lines * 100) if total_lines > 0 else 0
+    # Hledáme pickovací HU ve všech možných relevantních sloupcích ze SAPu
+    pick_hu_cols = ['Source storage unit', 'Source Storage Bin', 'Handling Unit']
+    
+    def check_is_vollpalette(row):
+        if not row['Has_X']: 
+            return False
+        for col in pick_hu_cols:
+            if col in row.index and pd.notna(row[col]):
+                val = str(row[col]).strip().lstrip('0')
+                if val and val != 'nan' and val != 'none' and val in valid_vekp_hus:
+                    return True
+        return False
 
-    c1, c2, c3, c4 = st.columns(4)
+    fu_df['Neprebalovano'] = fu_df.apply(check_is_vollpalette, axis=1)
+    
+    # --- MĚSÍČNÍ GRAF EFEKTIVITY ---
+    if 'Month' in fu_df.columns:
+        st.markdown("#### 📈 Měsíční trend odbavení celých palet")
+        trend_fu = fu_df[fu_df['Has_X']].groupby(['Month', 'Neprebalovano'])[queue_count_col].nunique().reset_index()
+        trend_fu['Status'] = np.where(trend_fu['Neprebalovano'], 'Nepřebalováno (Ziskové)', 'Přebaleno (Zbytečná práce)')
+        
+        fig_bar = px.bar(
+            trend_fu, 
+            x='Month', 
+            y=queue_count_col, 
+            color='Status', 
+            barmode='group',
+            color_discrete_map={'Nepřebalováno (Ziskové)': '#10b981', 'Přebaleno (Zbytečná práce)': '#ef4444'},
+            labels={'Month': 'Měsíc', queue_count_col: 'Počet palet (TO)', 'Status': 'Stav palety'}
+        )
+        fig_bar.update_layout(plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)", margin=dict(t=20, b=10, l=10, r=10), legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1))
+        st.plotly_chart(fig_bar, use_container_width=True)
+        st.markdown("<br>", unsafe_allow_html=True)
+    
+    # Výpočty pro zobrazení metrik (unikátní TO)
+    total_fu = fu_df[queue_count_col].nunique()
+    total_x = fu_df[fu_df['Has_X']][queue_count_col].nunique()
+    total_neprebalovano = fu_df[fu_df['Neprebalovano']][queue_count_col].nunique()
+    
+    c1, c2, c3 = st.columns(3)
     with c1:
-        with st.container(border=True): 
-            st.metric("Celkem picků (Řádků ve FU)", f"{total_lines:,}")
+        with st.container(border=True):
+            st.metric("Celkem pickováno palet (TO)", f"{total_fu:,}", help="Kolik úkolů vzniklo ve frontě FU / FUOE")
     with c2:
-        with st.container(border=True): 
-            st.metric("📦 Z toho KLT přepravky", f"{klt_lines:,}", f"{klt_pct:.1f} % podíl", delta_color="off")
+        with st.container(border=True):
+            st.metric("Celá paleta ze skladu (Značka 'X')", f"{total_x:,}", help="U tolika TO skladník vybral pozici do nuly.")
     with c3:
-        with st.container(border=True): 
-            st.metric("🏭 Z toho Palety", f"{pal_lines:,}", f"{pal_pct:.1f} % podíl", delta_color="off")
-    with c4:
-        with st.container(border=True): 
-            st.metric("Celkový poměr (KLT : Palety)", f"{klt_pct:.0f} : {pal_pct:.0f}")
-
-    st.divider()
-
-    col_t, col_g = st.columns([1, 1.5])
-
-    # 2. DETAILY V TABULCE S OPRAVENÝMI TEXTY
-    with col_t:
-        st.markdown("**Přehled podle přesných kódů (SUT)**")
-        agg_df = fu_df.groupby(['Typ_Obalu', 'Skladovaci_Jednotka']).agg(
-            radky=('Material', 'count'),
-            kusy=('Qty', 'sum'),
-            pocet_to=(queue_count_col, 'nunique')
-        ).reset_index().sort_values('radky', ascending=False)
-        
-        agg_df['Podíl (%)'] = (agg_df['radky'] / total_lines * 100).round(1).astype(str) + " %"
-        
-        disp_df = agg_df[['Typ_Obalu', 'Skladovaci_Jednotka', 'radky', 'pocet_to', 'kusy', 'Podíl (%)']].copy()
-        
-        # OPRAVENÉ NÁZVY SLOUPCŮ V TABULCE
-        disp_df.columns = ['Typ balení', 'Kód jednotky', 'Počet picků (Řádky)', 'Počet TO', 'Kusů celkem', 'Podíl (%)']
-        
-        st.dataframe(disp_df, use_container_width=True, hide_index=True)
-
-    # 3. INTERAKTIVNÍ GRAF S TRENDEM
-    with col_g:
-        st.markdown("**📈 Měsíční trend (KLT vs. Palety)**")
-        if 'Month' in fu_df.columns:
-            trend_agg = fu_df.groupby(['Month', 'Typ_Obalu']).agg(
-                radky=('Material', 'count')
-            ).reset_index()
+        with st.container(border=True):
+            st.metric("Nepřebalováno (Shoda HU s VEKP) ✅", f"{total_neprebalovano:,}", help="Paleta prošla balením tak, jak přišla ze skladu.")
             
-            pivot_trend = trend_agg.pivot(index='Month', columns='Typ_Obalu', values='radky').fillna(0).reset_index()
-            
-            if 'KLT' not in pivot_trend.columns: pivot_trend['KLT'] = 0
-            if 'Paleta' not in pivot_trend.columns: pivot_trend['Paleta'] = 0
-            
-            pivot_trend['Celkem'] = pivot_trend['KLT'] + pivot_trend['Paleta'] + pivot_trend.get('Ostatní / Neznámé', 0)
-            pivot_trend['KLT_pct'] = np.where(pivot_trend['Celkem'] > 0, pivot_trend['KLT'] / pivot_trend['Celkem'] * 100, 0)
-            pivot_trend['Paleta_pct'] = np.where(pivot_trend['Celkem'] > 0, pivot_trend['Paleta'] / pivot_trend['Celkem'] * 100, 0)
-            
-            fig = go.Figure()
-            
-            # Sloupce (Absolutní počty, průhledné aby nezakrývaly čáry)
-            fig.add_trace(go.Bar(x=pivot_trend['Month'], y=pivot_trend['Paleta'], name='Palety (Ks)', marker_color='rgba(56, 189, 248, 0.5)', text=pivot_trend['Paleta'], textposition='inside', yaxis='y'))
-            fig.add_trace(go.Bar(x=pivot_trend['Month'], y=pivot_trend['KLT'], name='KLT (Ks)', marker_color='rgba(244, 63, 94, 0.5)', text=pivot_trend['KLT'], textposition='inside', yaxis='y'))
-            
-            # Čáry (Procenta, barevně syté a s popisky nahoře/dole)
-            fig.add_trace(go.Scatter(x=pivot_trend['Month'], y=pivot_trend['Paleta_pct'], name='Podíl Palet (%)', mode='lines+markers+text', text=pivot_trend['Paleta_pct'].round(1).astype(str) + '%', textposition='top center', marker_color='#0284c7', line=dict(width=3), yaxis='y2'))
-            fig.add_trace(go.Scatter(x=pivot_trend['Month'], y=pivot_trend['KLT_pct'], name='Podíl KLT (%)', mode='lines+markers+text', text=pivot_trend['KLT_pct'].round(1).astype(str) + '%', textposition='bottom center', marker_color='#e11d48', line=dict(width=3), yaxis='y2'))
-            
-            fig.update_layout(
-                barmode='stack',
-                yaxis=dict(title="Absolutní počet picků (Řádky)"),
-                yaxis2=dict(title="Procentuální podíl (%)", side="right", overlaying="y", showgrid=False, range=[0, 110]),
-                plot_bgcolor="rgba(0,0,0,0)",
-                paper_bgcolor="rgba(0,0,0,0)",
-                margin=dict(l=0, r=0, t=30, b=0),
-                legend=dict(orientation="h", yanchor="bottom", y=1.05, xanchor="left", x=0)
-            )
-            
-            st.plotly_chart(fig, use_container_width=True)
+    # Zobrazení detailů - kde se práce ušetřila vs. kde se pálil čas přebalováním
+    prebaleno_x = fu_df[(fu_df['Has_X']) & (~fu_df['Neprebalovano'])]
+    
+    st.markdown("<br>", unsafe_allow_html=True)
+    col_t1, col_t2 = st.columns(2)
+    
+    with col_t1:
+        st.success(f"**✅ Úspěšné Vollpalety: {total_neprebalovano} TO**")
+        nepreb_df = fu_df[fu_df['Neprebalovano']].drop_duplicates(subset=[queue_count_col]).copy()
+        if not nepreb_df.empty:
+            disp1 = nepreb_df[['Delivery', queue_count_col, 'Material', 'Qty']].copy()
+            disp1.columns = ["Delivery", "Číslo TO", "Materiál", "Kusů"]
+            st.dataframe(disp1, use_container_width=True, hide_index=True)
         else:
-            st.info("Chybí data o měsících pro vykreslení trendu.")
+            st.info("Žádné palety nebyly odbaveny napřímo.")
+            
+    with col_t2:
+        st.error(f"**⚠️ Zbytečná práce (Přebaleno): {prebaleno_x[queue_count_col].nunique()} TO**\n*Měly značku 'X', ale přebalily se na jiné HU.*")
+        if not prebaleno_x.empty:
+            disp2 = prebaleno_x.drop_duplicates(subset=[queue_count_col])[['Delivery', queue_count_col, 'Material', 'Qty']].copy()
+            disp2.columns = ["Delivery", "Číslo TO", "Materiál", "Kusů"]
+            st.dataframe(disp2, use_container_width=True, hide_index=True)
+        else:
+            st.info("Skvělá práce! Všechny celé palety ('X') byly úspěšně odbaveny bez přebalování.")
