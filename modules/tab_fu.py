@@ -175,24 +175,44 @@ def render_fu(df_pick, queue_count_col):
 
     fu_df['Neprebalovano'] = fu_df.apply(check_is_vollpalette, axis=1)
     
-    # --- PŘÍPRAVA DAT PRO DVĚ SKUPINY (Všechny vs. Čisté FU) ---
+    # --- PŘÍPRAVA DAT PRO 4 SPECIFICKÉ POHLEDY ---
     
     # 1. Z výpočtů metrik striktně odstraníme KLT krabičky
     fu_df_pallets = fu_df[~fu_df['Is_KLT']].copy()
     ignored_klt_count = fu_df[fu_df['Is_KLT']][queue_count_col].nunique()
     
-    # 2. Detekce "Čistých paletových zakázek" (bez kombinace s PI_PL, PI_PA atd.)
-    df_pick_clean = df_pick.copy()
-    df_pick_clean['Clean_Del'] = df_pick_clean['Delivery'].astype(str).str.replace(r'\.0$', '', regex=True).str.strip().str.lstrip('0')
-    # Najdeme všechny zakázky, které mají alespoň jeden řádek v JINÉ frontě
-    mixed_deliveries = set(df_pick_clean[~df_pick_clean['Queue'].astype(str).str.upper().isin(['PI_PL_FU', 'PI_PL_FUOE'])]['Clean_Del'].unique())
-    # Čisté zakázky jsou ty, které NEJSOU v mixed_deliveries
-    pure_fu_pallets = fu_df_pallets[~fu_df_pallets['Clean_Del'].isin(mixed_deliveries)].copy()
+    # Skenování celého Pick Reportu pro určení "čistoty" zakázek
+    df_scan = df_pick.copy()
+    df_scan['Clean_Del'] = df_scan['Delivery'].astype(str).str.replace(r'\.0$', '', regex=True).str.strip().str.lstrip('0')
+    df_scan['Q_Upper'] = df_scan['Queue'].astype(str).str.upper()
+    
+    del_all_queues = df_scan.groupby('Clean_Del')['Q_Upper'].apply(set).to_dict()
+    
+    pure_fu_combo_dels = {d for d, qs in del_all_queues.items() if qs.issubset({'PI_PL_FU', 'PI_PL_FUOE'})}
+    only_fu_strict_dels = {d for d, qs in del_all_queues.items() if qs == {'PI_PL_FU'}}
+    only_fuoe_strict_dels = {d for d, qs in del_all_queues.items() if qs == {'PI_PL_FUOE'}}
 
-    # --- CENTRÁLNÍ VYKRESLOVACÍ FUNKCE (Trik na zkrácení kódu bez smazání prvků) ---
-    def render_efficiency_view(df_view, is_pure=False):
-        # MĚSÍČNÍ GRAF EFEKTIVITY (S TRENDOVOU ČÁROU A HODNOTAMI)
-        if 'Month' in df_view.columns and not df_view.empty:
+    # Datové sady pro jednotlivé záložky
+    df_all = fu_df_pallets.copy()
+    df_pure_combo = fu_df_pallets[fu_df_pallets['Clean_Del'].isin(pure_fu_combo_dels)].copy()
+    df_only_fu = fu_df_pallets[fu_df_pallets['Clean_Del'].isin(only_fu_strict_dels)].copy()
+    df_only_fuoe = fu_df_pallets[fu_df_pallets['Clean_Del'].isin(only_fuoe_strict_dels)].copy()
+
+    # --- ZOBRAZENÍ V ZÁLOŽKÁCH (TABS) ---
+    tab1, tab2, tab3, tab4 = st.tabs([
+        "Všechny paletové zakázky (včetně kombinovaných)", 
+        "🎯 Pouze čisté paletové zakázky (bez jiných front)",
+        "📦 Pouze PI_PL_FU", 
+        "🌍 Pouze PI_PL_FUOE"
+    ])
+
+    def render_tab_content(df_view, is_pure=False, label=""):
+        if df_view.empty:
+            st.info(f"V této kategorii ({label}) nebyly nalezeny žádné záznamy.")
+            return
+
+        # --- MĚSÍČNÍ GRAF EFEKTIVITY (S TRENDOVOU ČÁROU A HODNOTAMI) ---
+        if 'Month' in df_view.columns:
             st.markdown("#### 📈 Měsíční trend odbavení celých palet")
             
             # Příprava dat pro graf
@@ -294,16 +314,19 @@ def render_fu(df_pick, queue_count_col):
             else:
                 st.info("Skvělá práce! Všechny celé palety ('X') byly úspěšně odbaveny bez přebalování.")
 
-    # --- ZOBRAZENÍ V ZÁLOŽKÁCH (TABS) ---
-    tab_all, tab_pure = st.tabs(["Všechny paletové zakázky (včetně kombinovaných)", "🎯 Pouze čisté paletové zakázky (bez jiných front)"])
-    
-    with tab_all:
+    # Vykreslení obsahu do jednotlivých záložek
+    with tab1:
         st.markdown("Analýza **všech** picků z fronty FU, bez ohledu na to, zda k dané zakázce dorazil u stolu ještě další materiál z jiných uliček.")
-        render_efficiency_view(fu_df_pallets, is_pure=False)
-        
-    with tab_pure:
+        render_tab_content(df_all, is_pure=False, label="Všechny")
+    with tab2:
         st.markdown("Analýza **čistých paletových zakázek**, které se nevybavovaly v žádné jiné frontě. Pokud se zde přebaluje, znamená to 100% zbytečnou práci u balícího stolu.")
-        render_efficiency_view(pure_fu_pallets, is_pure=True)
+        render_tab_content(df_pure_combo, is_pure=True, label="Čisté FU + FUOE")
+    with tab3:
+        st.markdown("Analýza zakázek, které obsahují **výhradně standardní palety (PI_PL_FU)**.")
+        render_tab_content(df_only_fu, is_pure=True, label="Pouze FU")
+    with tab4:
+        st.markdown("Analýza zakázek, které obsahují **výhradně exportní palety (PI_PL_FUOE)**.")
+        render_tab_content(df_only_fuoe, is_pure=True, label="Pouze FUOE")
 
     # --- 4. RENTGEN / AUDIT KONKRÉTNÍ ZAKÁZKY ---
     st.divider()
