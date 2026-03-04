@@ -65,9 +65,16 @@ def render_fu(df_pick, queue_count_col):
     df_vekp['Clean_Del'] = df_vekp['Generated delivery'].astype(str).str.replace(r'\.0$', '', regex=True).str.strip().str.lstrip('0')
     vekp_hu_col = next((c for c in df_vekp.columns if "Internal HU" in str(c) or "HU-Nummer intern" in str(c)), df_vekp.columns[0])
     c_hu_ext = df_vekp.columns[1] if len(df_vekp.columns) > 1 else vekp_hu_col
+    parent_col_vepo = next((c for c in df_vekp.columns if "higher-level" in str(c).lower() or "übergeordn" in str(c).lower() or "superordinate" in str(c).lower()), None)
 
     df_vekp['Clean_HU_Int'] = df_vekp[vekp_hu_col].astype(str).str.strip().str.lstrip('0')
     df_vekp['Clean_HU_Ext'] = df_vekp[c_hu_ext].astype(str).str.strip().str.lstrip('0')
+    
+    # OPRAVA: Generování Clean_Parent (bez tohoto řádku padal Audit)
+    if parent_col_vepo:
+        df_vekp['Clean_Parent'] = df_vekp[parent_col_vepo].astype(str).str.strip().str.lstrip('0').replace({'nan': '', 'none': ''})
+    else:
+        df_vekp['Clean_Parent'] = ""
 
     del_to_valid_hus = {}
     for d, grp in df_vekp.groupby('Clean_Del'):
@@ -227,7 +234,6 @@ def render_fu(df_pick, queue_count_col):
     st.divider()
     st.markdown("<div class='section-header'><h3>🔍 Rentgen paletové zakázky (Audit logiky)</h3><p>Zde si můžete ověřit libovolnou zakázku z fronty FU a zjistit, proč ji algoritmus vyhodnotil jako Přebalenou/Nepřebalenou.</p></div>", unsafe_allow_html=True)
     
-    # Bezpečné získání seznamu zakázek (aby nedošlo k chybě řazení s NaN / float)
     audit_dels = sorted(fu_df['Clean_Del'].dropna().unique())
     sel_audit_del = st.selectbox("Vyberte zakázku (Delivery) pro rentgen:", options=[""] + audit_dels, key="audit_fu_del")
     
@@ -249,7 +255,12 @@ def render_fu(df_pick, queue_count_col):
         st.markdown("**2. Co je vyfakturováno (VEKP):**")
         vekp_audit = df_vekp[df_vekp['Clean_Del'] == sel_audit_del]
         if not vekp_audit.empty:
-            st.dataframe(vekp_audit[['Generated delivery', 'Clean_HU_Int', 'Clean_HU_Ext', 'Packaging materials', 'Clean_Parent']], hide_index=True, use_container_width=True)
+            # OPRAVA KeyError: Bezpečný výběr sloupců
+            disp_cols = ['Generated delivery', 'Clean_HU_Int', 'Clean_HU_Ext', 'Clean_Parent']
+            if 'Packaging materials' in vekp_audit.columns: disp_cols.append('Packaging materials')
+            elif 'Packmittel' in vekp_audit.columns: disp_cols.append('Packmittel')
+                
+            st.dataframe(vekp_audit[disp_cols], hide_index=True, use_container_width=True)
             valid_h = del_to_valid_hus.get(sel_audit_del, set())
             st.caption(f"Systém očekává přiřazení k těmto platným HU (dle VEPO): `{', '.join(valid_h)}`")
         else:
