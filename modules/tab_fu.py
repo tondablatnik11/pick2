@@ -175,111 +175,135 @@ def render_fu(df_pick, queue_count_col):
 
     fu_df['Neprebalovano'] = fu_df.apply(check_is_vollpalette, axis=1)
     
-    # Z výpočtů metrik striktně odstraníme KLT krabičky
+    # --- PŘÍPRAVA DAT PRO DVĚ SKUPINY (Všechny vs. Čisté FU) ---
+    
+    # 1. Z výpočtů metrik striktně odstraníme KLT krabičky
     fu_df_pallets = fu_df[~fu_df['Is_KLT']].copy()
     ignored_klt_count = fu_df[fu_df['Is_KLT']][queue_count_col].nunique()
     
-    # --- MĚSÍČNÍ GRAF EFEKTIVITY (S TRENDOVOU ČÁROU A HODNOTAMI) ---
-    if 'Month' in fu_df_pallets.columns:
-        st.markdown("#### 📈 Měsíční trend odbavení celých palet")
-        
-        # Příprava dat pro graf
-        trend_df = fu_df_pallets[fu_df_pallets['Has_X']].groupby(['Month', 'Neprebalovano'])[queue_count_col].nunique().reset_index()
-        trend_pivot = trend_df.pivot(index='Month', columns='Neprebalovano', values=queue_count_col).fillna(0)
-        
-        if True not in trend_pivot.columns: trend_pivot[True] = 0
-        if False not in trend_pivot.columns: trend_pivot[False] = 0
-        
-        trend_pivot['Celkem_X'] = trend_pivot[True] + trend_pivot[False]
-        # Výpočet procentuální úspěšnosti
-        trend_pivot['Uspesnost_pct'] = np.where(trend_pivot['Celkem_X'] > 0, (trend_pivot[True] / trend_pivot['Celkem_X']) * 100, 0)
-        trend_pivot = trend_pivot.reset_index().sort_values('Month')
-        
-        fig_bar = go.Figure()
-        
-        # Zelené sloupce (Nepřebalováno = Zisk)
-        fig_bar.add_trace(go.Bar(
-            x=trend_pivot['Month'], 
-            y=trend_pivot[True],
-            name='Nepřebalováno (Ziskové)', 
-            marker_color='#10b981',
-            text=trend_pivot[True], 
-            textposition='auto'
-        ))
-        
-        # Červené sloupce (Přebaleno = Ztráta)
-        fig_bar.add_trace(go.Bar(
-            x=trend_pivot['Month'], 
-            y=trend_pivot[False],
-            name='Přebaleno (Zbytečná práce)', 
-            marker_color='#ef4444',
-            text=trend_pivot[False], 
-            textposition='auto'
-        ))
-        
-        # Modrá trendová čára (%)
-        fig_bar.add_trace(go.Scatter(
-            x=trend_pivot['Month'], 
-            y=trend_pivot['Uspesnost_pct'],
-            name='Úspěšnost bez přebalení (%)', 
-            yaxis='y2',
-            mode='lines+markers+text',
-            text=trend_pivot['Uspesnost_pct'].round(1).astype(str) + '%',
-            textposition='top center',
-            line=dict(color='#3b82f6', width=3),
-            marker=dict(symbol='circle', size=8)
-        ))
+    # 2. Detekce "Čistých paletových zakázek" (bez kombinace s PI_PL, PI_PA atd.)
+    df_pick_clean = df_pick.copy()
+    df_pick_clean['Clean_Del'] = df_pick_clean['Delivery'].astype(str).str.replace(r'\.0$', '', regex=True).str.strip().str.lstrip('0')
+    # Najdeme všechny zakázky, které mají alespoň jeden řádek v JINÉ frontě
+    mixed_deliveries = set(df_pick_clean[~df_pick_clean['Queue'].astype(str).str.upper().isin(['PI_PL_FU', 'PI_PL_FUOE'])]['Clean_Del'].unique())
+    # Čisté zakázky jsou ty, které NEJSOU v mixed_deliveries
+    pure_fu_pallets = fu_df_pallets[~fu_df_pallets['Clean_Del'].isin(mixed_deliveries)].copy()
 
-        fig_bar.update_layout(
-            barmode='group',
-            yaxis=dict(title="Počet palet (TO)"),
-            yaxis2=dict(title="Úspěšnost (%)", side="right", overlaying="y", showgrid=False, range=[0, 115]),
-            plot_bgcolor="rgba(0,0,0,0)", 
-            paper_bgcolor="rgba(0,0,0,0)", 
-            margin=dict(t=20, b=10, l=10, r=10), 
-            legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
-        )
-        st.plotly_chart(fig_bar, use_container_width=True)
-        st.markdown("<br>", unsafe_allow_html=True)
-    
-    # Výpočty pro zobrazení metrik (unikátní TO)
-    total_fu_pal = fu_df_pallets[queue_count_col].nunique()
-    total_x_pal = fu_df_pallets[fu_df_pallets['Has_X']][queue_count_col].nunique()
-    total_neprebalovano = fu_df_pallets[fu_df_pallets['Neprebalovano']][queue_count_col].nunique()
-    
-    c1, c2, c3 = st.columns(3)
-    with c1:
-        with st.container(border=True):
-            st.metric("Celkem pickováno palet (TO)", f"{total_fu_pal:,}", help=f"Ignorováno {ignored_klt_count} TO, u kterých se dopickovávalo KLT (např. K1).")
-    with c2:
-        with st.container(border=True):
-            st.metric("Celá paleta ze skladu (Značka 'X')", f"{total_x_pal:,}", help="U tolika TO skladník vybral pozici do nuly (mimo KLT).")
-    with c3:
-        with st.container(border=True):
-            st.metric("Nepřebalováno (Úplná shoda) ✅", f"{total_neprebalovano:,}", help="Paleta prošla balením tak, jak přišla ze skladu (shoda s VEKP a VEPO pro danou zakázku).")
+    # --- CENTRÁLNÍ VYKRESLOVACÍ FUNKCE (Trik na zkrácení kódu bez smazání prvků) ---
+    def render_efficiency_view(df_view, is_pure=False):
+        # MĚSÍČNÍ GRAF EFEKTIVITY (S TRENDOVOU ČÁROU A HODNOTAMI)
+        if 'Month' in df_view.columns and not df_view.empty:
+            st.markdown("#### 📈 Měsíční trend odbavení celých palet")
             
-    # Zobrazení detailů - kde se práce ušetřila vs. kde se pálil čas přebalováním
-    prebaleno_x = fu_df_pallets[(fu_df_pallets['Has_X']) & (~fu_df_pallets['Neprebalovano'])]
-    
-    col_t1, col_t2 = st.columns(2)
-    with col_t1:
-        st.success(f"**✅ Úspěšné Vollpalety: {total_neprebalovano} TO**")
-        nepreb_df = fu_df_pallets[fu_df_pallets['Neprebalovano']].drop_duplicates(subset=[queue_count_col]).copy()
-        if not nepreb_df.empty:
-            disp1 = nepreb_df[['Delivery', queue_count_col, 'Material', 'Qty', c_su] if c_su else ['Delivery', queue_count_col, 'Material', 'Qty']].copy()
-            disp1.columns = ["Zakázka", "Číslo TO", "Materiál", "Kusů", "Typ jednotky"] if c_su else ["Zakázka", "Číslo TO", "Materiál", "Kusů"]
-            st.dataframe(disp1, use_container_width=True, hide_index=True)
-        else:
-            st.info("Žádné palety nebyly odbaveny napřímo.")
+            # Příprava dat pro graf
+            trend_df = df_view[df_view['Has_X']].groupby(['Month', 'Neprebalovano'])[queue_count_col].nunique().reset_index()
+            trend_pivot = trend_df.pivot(index='Month', columns='Neprebalovano', values=queue_count_col).fillna(0)
             
-    with col_t2:
-        st.error(f"**⚠️ Zbytečná práce (Přebaleno): {prebaleno_x[queue_count_col].nunique()} TO**\n*Měly značku 'X', ale přebalily se na jiné HU.*")
-        if not prebaleno_x.empty:
-            disp2 = prebaleno_x.drop_duplicates(subset=[queue_count_col])[['Delivery', queue_count_col, 'Material', 'Qty', c_su] if c_su else ['Delivery', queue_count_col, 'Material', 'Qty']].copy()
-            disp2.columns = ["Zakázka", "Číslo TO", "Materiál", "Kusů", "Typ jednotky"] if c_su else ["Zakázka", "Číslo TO", "Materiál", "Kusů"]
-            st.dataframe(disp2, use_container_width=True, hide_index=True)
-        else:
-            st.info("Skvělá práce! Všechny celé palety ('X') byly úspěšně odbaveny bez přebalování.")
+            if True not in trend_pivot.columns: trend_pivot[True] = 0
+            if False not in trend_pivot.columns: trend_pivot[False] = 0
+            
+            trend_pivot['Celkem_X'] = trend_pivot[True] + trend_pivot[False]
+            # Výpočet procentuální úspěšnosti
+            trend_pivot['Uspesnost_pct'] = np.where(trend_pivot['Celkem_X'] > 0, (trend_pivot[True] / trend_pivot['Celkem_X']) * 100, 0)
+            trend_pivot = trend_pivot.reset_index().sort_values('Month')
+            
+            fig_bar = go.Figure()
+            
+            # Zelené sloupce (Nepřebalováno = Zisk)
+            fig_bar.add_trace(go.Bar(
+                x=trend_pivot['Month'], 
+                y=trend_pivot[True],
+                name='Nepřebalováno (Ziskové)', 
+                marker_color='#10b981',
+                text=trend_pivot[True], 
+                textposition='auto'
+            ))
+            
+            # Červené sloupce (Přebaleno = Ztráta)
+            fig_bar.add_trace(go.Bar(
+                x=trend_pivot['Month'], 
+                y=trend_pivot[False],
+                name='Přebaleno (Zbytečná práce)', 
+                marker_color='#ef4444',
+                text=trend_pivot[False], 
+                textposition='auto'
+            ))
+            
+            # Modrá trendová čára (%)
+            fig_bar.add_trace(go.Scatter(
+                x=trend_pivot['Month'], 
+                y=trend_pivot['Uspesnost_pct'],
+                name='Úspěšnost bez přebalení (%)', 
+                yaxis='y2',
+                mode='lines+markers+text',
+                text=trend_pivot['Uspesnost_pct'].round(1).astype(str) + '%',
+                textposition='top center',
+                line=dict(color='#3b82f6', width=3),
+                marker=dict(symbol='circle', size=8)
+            ))
+
+            fig_bar.update_layout(
+                barmode='group',
+                yaxis=dict(title="Počet palet (TO)"),
+                yaxis2=dict(title="Úspěšnost (%)", side="right", overlaying="y", showgrid=False, range=[0, 115]),
+                plot_bgcolor="rgba(0,0,0,0)", 
+                paper_bgcolor="rgba(0,0,0,0)", 
+                margin=dict(t=20, b=10, l=10, r=10), 
+                legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
+            )
+            st.plotly_chart(fig_bar, use_container_width=True)
+            st.markdown("<br>", unsafe_allow_html=True)
+        
+        # Výpočty pro zobrazení metrik (unikátní TO)
+        total_fu_pal = df_view[queue_count_col].nunique()
+        total_x_pal = df_view[df_view['Has_X']][queue_count_col].nunique()
+        total_neprebalovano = df_view[df_view['Neprebalovano']][queue_count_col].nunique()
+        
+        c1, c2, c3 = st.columns(3)
+        with c1:
+            help_txt = "Celkový počet paletových picků u zakázek, kde se nepickovalo z žádné jiné zóny." if is_pure else f"Ignorováno {ignored_klt_count} TO, u kterých se dopickovávalo KLT (např. K1)."
+            with st.container(border=True):
+                st.metric("Celkem pickováno palet (TO)", f"{total_fu_pal:,}", help=help_txt)
+        with c2:
+            with st.container(border=True):
+                st.metric("Celá paleta ze skladu (Značka 'X')", f"{total_x_pal:,}", help="U tolika TO skladník vybral pozici do nuly (mimo KLT).")
+        with c3:
+            with st.container(border=True):
+                st.metric("Nepřebalováno (Úplná shoda) ✅", f"{total_neprebalovano:,}", help="Paleta prošla balením tak, jak přišla ze skladu (shoda s VEKP a VEPO pro danou zakázku).")
+                
+        # Zobrazení detailů - kde se práce ušetřila vs. kde se pálil čas přebalováním
+        prebaleno_x = df_view[(df_view['Has_X']) & (~df_view['Neprebalovano'])]
+        
+        col_t1, col_t2 = st.columns(2)
+        with col_t1:
+            st.success(f"**✅ Úspěšné Vollpalety: {total_neprebalovano} TO**")
+            nepreb_df = df_view[df_view['Neprebalovano']].drop_duplicates(subset=[queue_count_col]).copy()
+            if not nepreb_df.empty:
+                disp1 = nepreb_df[['Delivery', queue_count_col, 'Material', 'Qty', c_su] if c_su else ['Delivery', queue_count_col, 'Material', 'Qty']].copy()
+                disp1.columns = ["Zakázka", "Číslo TO", "Materiál", "Kusů", "Typ jednotky"] if c_su else ["Zakázka", "Číslo TO", "Materiál", "Kusů"]
+                st.dataframe(disp1, use_container_width=True, hide_index=True)
+            else:
+                st.info("Žádné palety nebyly odbaveny napřímo.")
+                
+        with col_t2:
+            st.error(f"**⚠️ Zbytečná práce (Přebaleno): {prebaleno_x[queue_count_col].nunique()} TO**\n*Měly značku 'X', ale přebalily se na jiné HU.*")
+            if not prebaleno_x.empty:
+                disp2 = prebaleno_x.drop_duplicates(subset=[queue_count_col])[['Delivery', queue_count_col, 'Material', 'Qty', c_su] if c_su else ['Delivery', queue_count_col, 'Material', 'Qty']].copy()
+                disp2.columns = ["Zakázka", "Číslo TO", "Materiál", "Kusů", "Typ jednotky"] if c_su else ["Zakázka", "Číslo TO", "Materiál", "Kusů"]
+                st.dataframe(disp2, use_container_width=True, hide_index=True)
+            else:
+                st.info("Skvělá práce! Všechny celé palety ('X') byly úspěšně odbaveny bez přebalování.")
+
+    # --- ZOBRAZENÍ V ZÁLOŽKÁCH (TABS) ---
+    tab_all, tab_pure = st.tabs(["Všechny paletové zakázky (včetně kombinovaných)", "🎯 Pouze čisté paletové zakázky (bez jiných front)"])
+    
+    with tab_all:
+        st.markdown("Analýza **všech** picků z fronty FU, bez ohledu na to, zda k dané zakázce dorazil u stolu ještě další materiál z jiných uliček.")
+        render_efficiency_view(fu_df_pallets, is_pure=False)
+        
+    with tab_pure:
+        st.markdown("Analýza **čistých paletových zakázek**, které se nevybavovaly v žádné jiné frontě. Pokud se zde přebaluje, znamená to 100% zbytečnou práci u balícího stolu.")
+        render_efficiency_view(pure_fu_pallets, is_pure=True)
 
     # --- 4. RENTGEN / AUDIT KONKRÉTNÍ ZAKÁZKY ---
     st.divider()
