@@ -24,20 +24,20 @@ st.set_page_config(page_title="Warehouse Control Tower", page_icon="🚀", layou
 
 st.markdown("""
     <style>
-    /* A) Načtení fontu a definice fallbacku */
+    /* Načtení fontu Inter */
     @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;600;800&display=swap');
     
     html, body, [class*="css"] {
         font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
     }
     
-    /* A) Tabular-nums pro perfektní zarovnání cifer pod sebou */
+    /* Tabular-nums pro perfektní zarovnání cifer pod sebou */
     [data-testid="stMetricValue"], .tabular-nums {
         font-variant-numeric: tabular-nums;
         letter-spacing: -0.02em;
     }
     
-    /* Vylepšení standardních metrik */
+    /* Vylepšení metrik - styl moderních "karet" (SaaS look) */
     [data-testid="stMetric"] {
         background-color: var(--secondary-background-color);
         border-radius: 8px;
@@ -61,7 +61,7 @@ st.markdown("""
         font-size: 28px !important;
     }
 
-    /* C) Hero Metric - Speciální kontejner pro hlavní KPI */
+    /* Hero Metric - Speciální kontejner pro hlavní KPI */
     .hero-metric {
         background: linear-gradient(135deg, rgba(59, 130, 246, 0.1) 0%, rgba(37, 99, 235, 0.0) 100%);
         border: 1px solid #3b82f6;
@@ -72,7 +72,7 @@ st.markdown("""
     .hero-metric h2 { margin: 0; font-size: 14px; color: #94a3b8; text-transform: uppercase; letter-spacing: 0.05em; }
     .hero-metric h1 { margin: 5px 0 0 0; font-size: 42px; font-weight: 800; color: #3b82f6; font-variant-numeric: tabular-nums;}
     
-    /* Zkrášlení záložek */
+    /* Zkrášlení záložek (Tabs) */
     [data-baseweb="tab-list"] { gap: 8px; background-color: transparent; }
     [data-baseweb="tab"] {
         background-color: var(--secondary-background-color);
@@ -103,10 +103,8 @@ st.markdown("""
 
 if 'lang' not in st.session_state: st.session_state.lang = 'cs'
 
-# Chytrý lokální překladač pro samotný app.py
 def _t(cs, en): 
     return en if st.session_state.get('lang', 'cs') == 'en' else cs
-
 
 # ==========================================
 # 2. LOGIKA NAČÍTÁNÍ A PŘÍPRAVY DAT
@@ -225,8 +223,11 @@ def fetch_and_prep_data(use_marm=True):
             agg_dict = {'Process_Time_Min': 'sum'}
             for col in ['CUSTOMER', 'Material', 'Scanning serial numbers', 'Reprinting labels ', 'Difficult KLTs', 'Shift', 'Number of item types']:
                 if col in df_oe.columns: agg_dict[col] = 'first'
+                
+            # OPRAVA CHYBY LINTERU (LAMBDA LATE BINDING)
             for col in ['KLT', 'Palety', 'Cartons']:
-                if col in df_oe.columns: agg_dict[col] = lambda x: '; '.join(x.dropna().astype(str))
+                if col in df_oe.columns: 
+                    agg_dict[col] = lambda x, c=col: '; '.join(x.dropna().astype(str))
                 
             df_oe = df_oe.groupby('Delivery').agg(agg_dict).reset_index()
         else:
@@ -256,7 +257,6 @@ def fetch_and_prep_data(use_marm=True):
 # 3. HLAVNÍ FUNKCE APLIKACE (FRONTEND)
 # ==========================================
 def main():
-    # Hlavička s přepínačem jazyků
     col_title, col_lang = st.columns([8, 1])
     with col_title:
         st.markdown(f"<div class='main-header'>{t('title')}</div>", unsafe_allow_html=True)
@@ -266,9 +266,7 @@ def main():
             st.session_state.lang = 'en' if st.session_state.lang == 'cs' else 'cs'
             st.rerun()
 
-    # POSTKRAJOVÝ PANEL (SIDEBAR) - MODERNÍ MENU A NASTAVENÍ
     with st.sidebar:
-        # POUŽITÍ KNIHOVNY option_menu PRO SAAS NAVIGACI
         selected_page = option_menu(
             menu_title=None,
             options=[
@@ -376,23 +374,18 @@ def main():
                         time.sleep(2.0)
                         st.rerun()
 
-    # Použití tvého překladače pro Loading State
     progress_bar = st.progress(0, text=_t("🚀 Inicializace Warehouse Control Tower...", "🚀 Initializing Warehouse Control Tower..."))
     time.sleep(0.1)
     
     progress_bar.progress(30, text=_t("📥 Načítání a propojování dat z databáze...", "📥 Fetching and joining database records..."))
     data_dict = fetch_and_prep_data(use_marm)
-    # ...
-    progress_bar.progress(65, text=_t("⚙️ Výpočet fyzických pohybů a kontrola ergonomie...", "⚙️ Calculating physical movements and ergonomics..."))
-    # ...
-    progress_bar.progress(90, text=_t("📊 Vykreslování vizualizací a tabulek...", "📊 Rendering charts and dashboards..."))
 
     if data_dict is None:
         progress_bar.empty()
         st.warning(_t("🗄️ Databáze je zatím prázdná. Otevřete levé menu 'Admin Zóna', zadejte heslo 'admin123' a nahrajte Pick Report a další soubory.", "🗄️ Database is empty. Open Admin Zone in the left menu."))
         return
 
-    progress_bar.progress(65, text=_t("⚙️ Výpočet fyzických pohybů a kontrola ergonomie podle limitů...", "⚙️ Calculating physical moves..."))
+    progress_bar.progress(65, text=_t("⚙️ Výpočet fyzických pohybů a kontrola ergonomie...", "⚙️ Calculating physical movements and ergonomics..."))
     df_pick = data_dict['df_pick']
     
     if exclude_mats_input:
@@ -416,11 +409,10 @@ def main():
     df_pick['Pohyby_Rukou'], df_pick['Pohyby_Exact'], df_pick['Pohyby_Loose_Miss'] = tt, te, tm
     df_pick['Celkova_Vaha_KG'] = df_pick['Qty'] * df_pick['Piece_Weight_KG']
 
-    progress_bar.progress(90, text=_t("📊 Vykreslování vizualizací a tabulek...", "📊 Rendering visuals..."))
+    progress_bar.progress(90, text=_t("📊 Vykreslování vizualizací a tabulek...", "📊 Rendering charts and dashboards..."))
     time.sleep(0.2)
     progress_bar.empty()
 
-    # Vykreslení konkrétní záložky na základě výběru z menu
     display_q = None
     if selected_page == _t("Přehled a Fronty", "Dashboard & Queue"): 
         display_q = render_dashboard(df_pick, data_dict['queue_count_col'])
@@ -438,7 +430,6 @@ def main():
     elif selected_page == _t("Audit & Rentgen", "Audit & X-Ray"): 
         render_audit(df_pick, data_dict['df_vekp'], data_dict['df_vepo'], data_dict['df_oe'], data_dict['queue_count_col'], st.session_state.get('billing_df', pd.DataFrame()), data_dict['manual_boxes'], data_dict['weight_dict'], data_dict['dim_dict'], data_dict['box_dict'], limit_vahy, limit_rozmeru, kusy_na_hmat)
 
-    # Globální exportní tlačítko na konci stránky
     st.divider()
     buffer = io.BytesIO()
     with pd.ExcelWriter(buffer, engine='openpyxl') as writer:
