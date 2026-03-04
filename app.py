@@ -25,54 +25,62 @@ st.markdown("""
     <style>
     /* Změna fontu pro modernější vzhled */
     html, body, [class*="css"] {
-        font-family: 'Inter', sans-serif;
+        font-family: 'Inter', 'Segoe UI', sans-serif;
     }
     
-    /* Vylepšení metrik - styl moderních "karet" se stínem */
+    /* Vylepšení metrik - styl moderních "karet" (SaaS look) */
     [data-testid="stMetric"] {
-        background-color: #ffffff;
-        border-radius: 10px;
+        background-color: var(--secondary-background-color);
+        border-radius: 8px;
         padding: 15px 20px;
-        box-shadow: 0 4px 6px rgba(0, 0, 0, 0.05);
-        border: 1px solid #f0f2f6;
+        border: 1px solid rgba(128, 128, 128, 0.2);
+        box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
     }
     [data-testid="stMetricLabel"] {
         font-weight: 600;
-        color: #4b5563;
+        opacity: 0.8;
         font-size: 14px;
     }
     [data-testid="stMetricValue"] {
         font-weight: 800;
-        color: #111827;
+        font-size: 28px !important;
     }
     
-    /* Zkrášlení záložek (Tabs) */
+    /* Zkrášlení záložek (Tabs) - aby vypadaly jako skutečné záložky v prohlížeči */
     [data-baseweb="tab-list"] {
-        gap: 10px;
+        gap: 8px;
+        background-color: transparent;
     }
     [data-baseweb="tab"] {
-        background-color: #f3f4f6;
-        border-radius: 8px 8px 0px 0px;
+        background-color: var(--secondary-background-color);
+        border-radius: 6px 6px 0px 0px;
         padding: 10px 20px;
         font-weight: 600;
+        border: 1px solid rgba(128, 128, 128, 0.2);
+        border-bottom: none;
     }
     [aria-selected="true"] {
-        background-color: #ebf5ff !important;
-        color: #2563eb !important;
-        border-bottom: 3px solid #2563eb !important;
+        background-color: transparent !important;
+        border-top: 3px solid var(--primary-color) !important;
+        color: var(--primary-color) !important;
     }
     
-    /* Vylepšení Headerů sekcí (naše vlastní třída) */
+    /* Vylepšení Headerů sekcí (aby krásně svítily) */
     .section-header {
-        background: linear-gradient(90deg, #f8fafc 0%, #ffffff 100%);
-        border-left: 5px solid #3b82f6;
+        background-color: var(--secondary-background-color);
+        border-left: 5px solid var(--primary-color);
         padding: 15px 20px;
         border-radius: 4px;
         margin-bottom: 20px;
-        box-shadow: 0 1px 3px rgba(0,0,0,0.05);
+        border: 1px solid rgba(128, 128, 128, 0.2);
+        box-shadow: 0 2px 4px rgba(0,0,0,0.05);
     }
-    .section-header h3 { margin-top: 0; padding-top: 0; color: #1e293b; }
-    .section-header p { margin-bottom: 0; color: #64748b; font-size: 14px;}
+    .section-header h3 { margin-top: 0; padding-top: 0; color: var(--text-color); }
+    .section-header p { margin-bottom: 0; opacity: 0.7; font-size: 14px;}
+    
+    /* Schování výchozího horního menu Streamlitu pro čistší vzhled */
+    #MainMenu {visibility: hidden;}
+    header {visibility: hidden;}
     </style>
 """, unsafe_allow_html=True)
 if 'lang' not in st.session_state: st.session_state.lang = 'cs'
