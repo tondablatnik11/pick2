@@ -39,7 +39,6 @@ def cached_billing_logic(df_pick, df_vekp, df_vepo, df_cats, queue_count_col, df
     if df_vekp is None or df_vekp.empty:
         return billing_df
 
-    # Příprava Pick reportu pro bezpečné párování
     df_pick_billing = df_pick.copy()
     df_pick_billing['Clean_Del'] = df_pick_billing['Delivery'].astype(str).str.replace(r'\.0$', '', regex=True).str.strip().str.lstrip('0')
 
@@ -75,7 +74,6 @@ def cached_billing_logic(df_pick, df_vekp, df_vepo, df_cats, queue_count_col, df
     else:
         valid_base_hus = set(vekp_filtered['Clean_HU_Int'])
 
-    # === PŘÍSNÁ LOGIKA VOLLPALETTE (Křížová kontrola) ===
     del_to_valid_hus = {}
     for d, grp in vekp_filtered.groupby('Clean_Del'):
         v = set()
@@ -95,7 +93,7 @@ def cached_billing_logic(df_pick, df_vekp, df_vepo, df_cats, queue_count_col, df
     
     def detect_voll(row):
         if str(row.get('Removal of total SU', '')).upper() != 'X': return False
-        if c_su and is_klt(row.get(c_su, '')): return False # Striktní zákaz KLT krabiček jako Vollpalette
+        if c_su and is_klt(row.get(c_su, '')): return False
         valid_hus = del_to_valid_hus.get(row['Clean_Del'], set())
         for col in pick_hu_cols:
             if col in row.index and pd.notna(row[col]):
@@ -105,21 +103,16 @@ def cached_billing_logic(df_pick, df_vekp, df_vepo, df_cats, queue_count_col, df
 
     df_pick_billing['Is_Vollpalette'] = df_pick_billing.apply(detect_voll, axis=1)
 
-    # Vytvoření absolutně čistého seznamu výhradně pro SKUTEČNÉ palety
     auto_voll_hus_clean = set()
     for _, r in df_pick_billing[df_pick_billing['Is_Vollpalette']].iterrows():
         for c in pick_hu_cols:
             if c in r.index and pd.notna(r[c]):
                 val = str(r[c]).strip().lstrip('0')
                 if val: auto_voll_hus_clean.add(val)
-                
-    # ZDE BYL PROBLÉM - globální proměnná z app.py sem zanášela 'X' z KLT.
-    # Tuto část jsem trvale odstranil. Teď si fakturace drží jen čistý seznam Palet.
 
     hu_agg_list = []
     for delivery, group in vekp_filtered.groupby("Clean_Del"):
         ext_to_int = dict(zip(group['Clean_HU_Ext'], group['Clean_HU_Int']))
-        valid_hus_in_group = set(group['Clean_HU_Int']).union(set(group['Clean_HU_Ext']))
         
         p_map = {}
         for _, r in group.iterrows():
@@ -127,7 +120,9 @@ def cached_billing_logic(df_pick, df_vekp, df_vepo, df_cats, queue_count_col, df
             parent = str(r['Clean_Parent'])
             if parent in ext_to_int: 
                 parent = ext_to_int[parent]
-            p_map[child] = parent if parent in valid_hus_in_group else ""
+            # OPRAVA: Odstraněna podmínka "if parent in valid_hus_in_group". 
+            # Nyní KLT vyšplhá k paletě, i když paleta nemá ve VEKP svůj vlastní řádek.
+            p_map[child] = parent 
             
         leaves = [h for h in group['Clean_HU_Int'] if h in valid_base_hus]
         roots = set()
@@ -137,11 +132,9 @@ def cached_billing_logic(df_pick, df_vekp, df_vepo, df_cats, queue_count_col, df
             leaf_exts = group.loc[group['Clean_HU_Int'] == leaf, 'Clean_HU_Ext'].values
             leaf_ext = leaf_exts[0] if len(leaf_exts) > 0 else ""
             
-            # Pokud to je skutečná, nezpochybnitelná paleta (ne KLT), počítá se samo za sebe
             if leaf in auto_voll_hus_clean or leaf_ext in auto_voll_hus_clean:
                 voll_count += 1
             else:
-                # KLT krabičky se značkou 'X' teď spadnou SEM a správně vyšplhají ke své mateřské paletě!
                 curr = leaf
                 visited = set()
                 while curr in p_map and p_map[curr] != "" and curr not in visited:
@@ -149,7 +142,6 @@ def cached_billing_logic(df_pick, df_vekp, df_vepo, df_cats, queue_count_col, df
                     curr = p_map[curr]
                 roots.add(curr)
                 
-        # Uložíme i původní název Delivery pro bezpečné spojení
         orig_del = group["Generated delivery"].iloc[0]
         hu_agg_list.append({"Generated delivery": orig_del, "hu_leaf": len(leaves), "hu_top_level": len(roots) + voll_count, "Clean_Del_Merge": delivery})
         
@@ -185,7 +177,6 @@ def cached_billing_logic(df_pick, df_vekp, df_vepo, df_cats, queue_count_col, df
             q = str(row.get('hlavni_fronta', '')).upper()
             base = "OE" if 'PI_PA_OE' in q else "E" if 'PI_PA' in q else "O" if ('PI_PL_FUOE' in q or 'PI_PL_OE' in q) else "N" if 'PI_PL' in q else "N"
             
-        # Zohlednění Vollpalet dle fotografie (Palety = Vollpalette, Misch, Sortenrein. Balíky = Misch, Sortenrein)
         if base in ['N', 'O'] and row['has_voll']:
             sub = "Vollpalette"
         else:
@@ -213,7 +204,6 @@ def render_billing(df_pick, df_vekp, df_vepo, df_cats, queue_count_col, aus_data
     df_t031_tmp = aus_data.get("T031", pd.DataFrame()) if aus_data else pd.DataFrame()
     txt_uncat = t("uncategorized")
 
-    # Bleskové zavolání z paměti - Očištěno od zrádného auto_voll_hus_tuple
     billing_df = cached_billing_logic(df_pick, df_vekp, df_vepo, df_cats, queue_count_col, df_likp_tmp, df_sdshp_tmp, df_t031_tmp, txt_uncat)
 
     if not billing_df.empty:
@@ -301,7 +291,6 @@ def render_billing(df_pick, df_vekp, df_vepo, df_cats, queue_count_col, aus_data
         st.divider()
         st.markdown("### ⚖️ Analýza poměru Pick vs. Pack (Efektivita zakázek)")
         
-        # Příprava dat pro poměry
         billing_df['is_1_to_1'] = (billing_df['pocet_to'] == billing_df['pocet_hu']).astype(int)
         billing_df['is_more_to'] = (billing_df['pocet_to'] > billing_df['pocet_hu']).astype(int)
         billing_df['is_more_hu'] = (billing_df['pocet_to'] < billing_df['pocet_hu']).astype(int)
@@ -362,7 +351,6 @@ def render_billing(df_pick, df_vekp, df_vepo, df_cats, queue_count_col, aus_data
             )
             st.plotly_chart(fig_r, use_container_width=True)
 
-        # -------------------------------------------------------------
         st.divider()
         st.markdown(f"### ⚠️ Žebříček neefektivity z konsolidace (Práce zdarma)")
         imb_df = billing_df[billing_df['TO_navic'] > 0].sort_values("TO_navic", ascending=False).head(50)
@@ -372,7 +360,6 @@ def render_billing(df_pick, df_vekp, df_vepo, df_cats, queue_count_col, aus_data
             st.dataframe(imb_disp, use_container_width=True, hide_index=True)
         else: st.success("Žádné zakázky s prodělkem nenalezeny!")
         
-        # --- AUSWERTUNG SEKCE ---
         st.divider()
         st.subheader("📊 Analýza zásilkových dat (Auswertung)")
         if not aus_data: st.info("Pro tuto sekci nahrajte zákazníkův soubor Auswertung_Outbound_HWL.xlsx")
