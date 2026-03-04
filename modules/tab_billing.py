@@ -27,7 +27,7 @@ def cached_billing_logic(df_pick, df_vekp, df_vepo, df_cats, queue_count_col, df
         c_sped = next((c for c in df_likp_tmp.columns if "pediteur" in str(c) or "Transp" in str(c)), None)
         
         for _, r in df_likp_tmp.iterrows():
-            lief = str(r[c_lief]).strip()
+            lief = str(r[c_lief]).strip().lstrip('0')
             vs = str(r[c_vs]).strip() if c_vs else "N"
             sped = str(r[c_sped]).strip().lstrip('0') if c_sped else ""
             o_type = order_type_map.get(vs, "N")
@@ -39,9 +39,14 @@ def cached_billing_logic(df_pick, df_vekp, df_vepo, df_cats, queue_count_col, df
     if df_vekp is None or df_vekp.empty:
         return billing_df
 
+    # Příprava Pick reportu pro bezpečné párování
+    df_pick_billing = df_pick.copy()
+    df_pick_billing['Clean_Del'] = df_pick_billing['Delivery'].astype(str).str.replace(r'\.0$', '', regex=True).str.strip().str.lstrip('0')
+
     vekp_clean = df_vekp.dropna(subset=["Handling Unit", "Generated delivery"]).copy()
-    valid_deliveries = df_pick["Delivery"].dropna().unique()
-    vekp_filtered = vekp_clean[vekp_clean["Generated delivery"].isin(valid_deliveries)].copy()
+    vekp_clean['Clean_Del'] = vekp_clean['Generated delivery'].astype(str).str.replace(r'\.0$', '', regex=True).str.strip().str.lstrip('0')
+    valid_deliveries = df_pick_billing["Clean_Del"].dropna().unique()
+    vekp_filtered = vekp_clean[vekp_clean["Clean_Del"].isin(valid_deliveries)].copy()
     
     if vekp_filtered.empty:
         return billing_df
@@ -59,21 +64,54 @@ def cached_billing_logic(df_pick, df_vekp, df_vepo, df_cats, queue_count_col, df
         vekp_filtered['Clean_Parent'] = ""
 
     valid_base_hus = set()
+    vepo_hus_strict = set()
     if df_vepo is not None and not df_vepo.empty:
         vepo_hu_col = next((c for c in df_vepo.columns if "Internal HU" in str(c) or "HU-Nummer intern" in str(c)), df_vepo.columns[0])
         vepo_lower_col = next((c for c in df_vepo.columns if "Lower-level" in str(c) or "untergeordn" in str(c).lower()), None)
         valid_base_hus = set(df_vepo[vepo_hu_col].astype(str).str.strip().str.lstrip('0'))
+        vepo_hus_strict = set(df_vepo[vepo_hu_col].astype(str).str.strip().str.lstrip('0'))
         if vepo_lower_col:
             valid_base_hus.update(set(df_vepo[vepo_lower_col].dropna().astype(str).str.strip().str.lstrip('0')))
     else:
         valid_base_hus = set(vekp_filtered['Clean_HU_Int'])
 
+    # === PŘÍSNÁ LOGIKA VOLLPALETTE (Křížová kontrola) ===
+    del_to_valid_hus = {}
+    for d, grp in vekp_filtered.groupby('Clean_Del'):
+        v = set()
+        for _, r in grp.iterrows():
+            hi = r['Clean_HU_Int']
+            he = r['Clean_HU_Ext']
+            if not vepo_hus_strict or hi in vepo_hus_strict:
+                v.add(hi); v.add(he)
+        del_to_valid_hus[d] = v
+
+    c_su = 'Storage Unit Type' if 'Storage Unit Type' in df_pick_billing.columns else ('Type' if 'Type' in df_pick_billing.columns else None)
+    def is_klt(v):
+        v = str(v).upper().strip()
+        return v in ['K1','K2','K3','K4','KLT','KLT1','KLT2'] or (v.startswith('K') and len(v) <= 2)
+
+    pick_hu_cols = ['Source storage unit', 'Source Storage Bin', 'Handling Unit']
+    
+    def detect_voll(row):
+        if str(row.get('Removal of total SU', '')).upper() != 'X': return False
+        if c_su and is_klt(row.get(c_su, '')): return False
+        valid_hus = del_to_valid_hus.get(row['Clean_Del'], set())
+        for col in pick_hu_cols:
+            if col in row.index and pd.notna(row[col]):
+                val = str(row[col]).strip().lstrip('0')
+                if val and val in valid_hus: return True
+        return False
+
+    df_pick_billing['Is_Vollpalette'] = df_pick_billing.apply(detect_voll, axis=1)
+
     auto_voll_hus_clean = set()
-    mask_x = df_pick['Removal of total SU'] == 'X'
-    for c_hu in ['Source storage unit', 'Source Storage Bin', 'Handling Unit']:
-        if c_hu in df_pick.columns:
-            auto_voll_hus_clean.update(df_pick.loc[mask_x, c_hu].dropna().astype(str).str.strip().str.lstrip('0'))
-            
+    for _, r in df_pick_billing[df_pick_billing['Is_Vollpalette']].iterrows():
+        for c in pick_hu_cols:
+            if c in r.index and pd.notna(r[c]):
+                val = str(r[c]).strip().lstrip('0')
+                if val: auto_voll_hus_clean.add(val)
+                
     for h in auto_voll_hus_tuple:
         auto_voll_hus_clean.add(str(h).strip().lstrip('0'))
 
@@ -82,7 +120,7 @@ def cached_billing_logic(df_pick, df_vekp, df_vepo, df_cats, queue_count_col, df
     auto_voll_hus_clean.discard("none")
 
     hu_agg_list = []
-    for delivery, group in vekp_filtered.groupby("Generated delivery"):
+    for delivery, group in vekp_filtered.groupby("Clean_Del"):
         ext_to_int = dict(zip(group['Clean_HU_Ext'], group['Clean_HU_Int']))
         valid_hus_in_group = set(group['Clean_HU_Int']).union(set(group['Clean_HU_Ext']))
         
@@ -112,22 +150,26 @@ def cached_billing_logic(df_pick, df_vekp, df_vepo, df_cats, queue_count_col, df
                     curr = p_map[curr]
                 roots.add(curr)
                 
-        hu_agg_list.append({"Generated delivery": delivery, "hu_leaf": len(leaves), "hu_top_level": len(roots) + voll_count})
+        # Uložíme i původní název Delivery pro bezpečné spojení
+        orig_del = group["Generated delivery"].iloc[0]
+        hu_agg_list.append({"Generated delivery": orig_del, "hu_leaf": len(leaves), "hu_top_level": len(roots) + voll_count, "Clean_Del_Merge": delivery})
         
     hu_agg = pd.DataFrame(hu_agg_list)
     if hu_agg.empty:
-        hu_agg = pd.DataFrame(columns=["Generated delivery", "hu_leaf", "hu_top_level"])
+        hu_agg = pd.DataFrame(columns=["Generated delivery", "hu_leaf", "hu_top_level", "Clean_Del_Merge"])
 
-    pick_agg = df_pick.groupby("Delivery").agg(
+    pick_agg = df_pick_billing.groupby("Delivery").agg(
         pocet_to=(queue_count_col, "nunique"),
         pohyby_celkem=("Pohyby_Rukou", "sum"),
         pocet_lokaci=("Source Storage Bin", "nunique"),
         hlavni_fronta=("Queue", "first"),
         pocet_mat=("Material", "nunique"),
+        has_voll=("Is_Vollpalette", "any"),
+        Clean_Del_Merge=("Clean_Del", "first"),
         Month=("Month", "first")
     ).reset_index()
 
-    billing_df = pd.merge(pick_agg, hu_agg, left_on="Delivery", right_on="Generated delivery", how="left")
+    billing_df = pd.merge(pick_agg, hu_agg, on="Clean_Del_Merge", how="left")
 
     if df_cats is not None and not df_cats.empty:
         billing_df = pd.merge(billing_df, df_cats[["Lieferung", "Category_Full"]], left_on="Delivery", right_on="Lieferung", how="left")
@@ -138,14 +180,19 @@ def cached_billing_logic(df_pick, df_vekp, df_vepo, df_cats, queue_count_col, df
         cat_full = row.get('Category_Full')
         if pd.notna(cat_full) and str(cat_full).strip() not in ["", "nan", txt_uncat]: return cat_full
         
-        kat = aus_category_map.get(str(row["Delivery"]).strip())
-        if not kat:
+        deliv = str(row["Delivery"]).strip().lstrip('0')
+        base = aus_category_map.get(deliv)
+        if not base:
             q = str(row.get('hlavni_fronta', '')).upper()
-            kat = "OE" if 'PI_PA_OE' in q else "E" if 'PI_PA' in q else "O" if ('PI_PL_FUOE' in q or 'PI_PL_OE' in q) else "N" if 'PI_PL' in q else None
-                
-        art = "Sortenrein" if row.get('pocet_mat', 1) <= 1 else "Misch"
-        if kat: return f"{kat} {art}"
-        return txt_uncat
+            base = "OE" if 'PI_PA_OE' in q else "E" if 'PI_PA' in q else "O" if ('PI_PL_FUOE' in q or 'PI_PL_OE' in q) else "N" if 'PI_PL' in q else "N"
+            
+        # Zohlednění Vollpalet dle fotografie (Palety = Vollpalette, Misch, Sortenrein. Balíky = Misch, Sortenrein)
+        if base in ['N', 'O'] and row['has_voll']:
+            sub = "Vollpalette"
+        else:
+            sub = "Misch" if row['pocet_mat'] > 1 else "Sortenrein"
+            
+        return f"{base} {sub}"
 
     billing_df["Category_Full"] = billing_df.apply(odvod_kategorii, axis=1)
 
@@ -240,7 +287,6 @@ def render_billing(df_pick, df_vekp, df_vepo, df_cats, queue_count_col, aus_data
                 fig.add_trace(go.Bar(x=tr_df['Month'], y=tr_df['hu_sum'], name='Počet HU', marker_color='#818cf8', text=tr_df['hu_sum'], textposition='auto'))
                 fig.add_trace(go.Scatter(x=tr_df['Month'], y=tr_df['prum_poh'], name='Pohyby na lokaci', yaxis='y2', mode='lines+markers+text', text=tr_df['prum_poh'].round(1), textposition='top center', textfont=dict(color='#f43f5e'), line=dict(color='#f43f5e', width=3)))
                 
-                # OPRAVA LEGENdy a ZVĚTŠENÍ TOP MARGINU
                 fig.update_layout(
                     yaxis2=dict(title="Pohyby", side="right", overlaying="y", showgrid=False), 
                     plot_bgcolor="rgba(0,0,0,0)", 
@@ -291,7 +337,6 @@ def render_billing(df_pick, df_vekp, df_vepo, df_cats, queue_count_col, aus_data
                 count_more_hu=('is_more_hu', 'sum')
             ).reset_index()
             
-            # Výpočet celkových počtů a procent
             trend_ratio['total'] = trend_ratio['count_1_1'] + trend_ratio['count_more_to'] + trend_ratio['count_more_hu']
             trend_ratio['pct_1_1'] = np.where(trend_ratio['total'] > 0, trend_ratio['count_1_1'] / trend_ratio['total'] * 100, 0)
             trend_ratio['pct_more_to'] = np.where(trend_ratio['total'] > 0, trend_ratio['count_more_to'] / trend_ratio['total'] * 100, 0)
@@ -299,17 +344,14 @@ def render_billing(df_pick, df_vekp, df_vepo, df_cats, queue_count_col, aus_data
             
             fig_r = go.Figure()
             
-            # 1. SLOUPCE (Absolutní počty zakázek - mírně průhledné, ať to neruší čáry)
             fig_r.add_trace(go.Bar(x=trend_ratio['Month'], y=trend_ratio['count_1_1'], name='1:1 (Kusy)', marker_color='rgba(16, 185, 129, 0.5)', text=trend_ratio['count_1_1'], textposition='inside', yaxis='y'))
             fig_r.add_trace(go.Bar(x=trend_ratio['Month'], y=trend_ratio['count_more_hu'], name='Více HU (Kusy)', marker_color='rgba(59, 130, 246, 0.5)', text=trend_ratio['count_more_hu'], textposition='inside', yaxis='y'))
             fig_r.add_trace(go.Bar(x=trend_ratio['Month'], y=trend_ratio['count_more_to'], name='Více TO (Kusy)', marker_color='rgba(239, 68, 68, 0.5)', text=trend_ratio['count_more_to'], textposition='inside', yaxis='y'))
             
-            # 2. ČÁRY S PROCENTY (Na pravé ose y2, ostře viditelné)
             fig_r.add_trace(go.Scatter(x=trend_ratio['Month'], y=trend_ratio['pct_1_1'], name='1:1 (%)', mode='lines+markers+text', text=trend_ratio['pct_1_1'].round(1).astype(str) + '%', textposition='top center', marker_color='#10b981', line=dict(width=3), yaxis='y2'))
             fig_r.add_trace(go.Scatter(x=trend_ratio['Month'], y=trend_ratio['pct_more_hu'], name='Více HU (%)', mode='lines+markers+text', text=trend_ratio['pct_more_hu'].round(1).astype(str) + '%', textposition='top center', marker_color='#3b82f6', line=dict(width=3), yaxis='y2'))
             fig_r.add_trace(go.Scatter(x=trend_ratio['Month'], y=trend_ratio['pct_more_to'], name='Více TO (%)', mode='lines+markers+text', text=trend_ratio['pct_more_to'].round(1).astype(str) + '%', textposition='bottom center', marker_color='#ef4444', line=dict(width=3), yaxis='y2'))
             
-            # OPRAVA LEGENdy a ZVĚTŠENÍ TOP MARGINU
             fig_r.update_layout(
                 barmode='stack', 
                 plot_bgcolor="rgba(0,0,0,0)", 
