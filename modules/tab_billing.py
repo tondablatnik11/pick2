@@ -290,6 +290,17 @@ def render_billing(df_pick, df_vekp, df_vepo, df_cats, queue_count_col, aus_data
         st.markdown("### 💎 Analýza efektivity a ziskovosti (Master Data)")
         st.markdown("Tato tabulka odhaluje skutečnou hloubku finančních úniků z konsolidace a fyzickou náročnost na 1 fakturační jednotku.")
         
+        # VYSVĚTLIVKY - Schované v rozbalovacím menu
+        with st.expander("📖 Vysvětlení výpočtů ve sloupcích"):
+            st.markdown("""
+            * **Index konsolidace (TO/HU):** Kolik pickovacích úkolů (TO) musí skladník průměrně udělat na vytvoření 1 vyfakturované jednotky (HU). Ideál je 1.0. Čím vyšší číslo, tím více TO se "slévá" a ztrácí.
+            * **Fyzické pohyby na 1 Billed HU:** Kolik reálných pohybů rukou (přeložení kusů) stojí firmu vytvoření 1 vyfakturované jednotky. Skvělý ukazatel reálné fyzické náročnosti.
+            * **1:1 (Ideál):** Počet zakázek, kde se 1 vychystané TO rovná přesně 1 vyfakturované HU (žádná ztráta z konsolidace).
+            * **Více TO (Prodělaly) / Ztráta (ks TO):** Zakázky, u kterých se více picků spojilo do menšího počtu palet/krabic. Sloupec Ztráta ukazuje *přesný počet TO*, které jste fyzicky odchodili, ale zákazník je nezaplatil.
+            * **Více HU (Vydělaly) / Zisk (ks HU):** Zakázky, u kterých se 1 pick rozpadl do více menších balení. Sloupec Zisk ukazuje, kolik HU jste vyfakturovali *navíc* oproti provedeným pickům.
+            * **Čistá bilance (HU - TO):** Celkový výsledek kategorie v kusech. Zelená = zisk (vytvořeno více fakturovatelných HU z méně TO). Červená = ztráta (příliš mnoho TO se slilo do mála HU).
+            """)
+        
         # Příprava dat pro poměry a absolutní zisky/ztráty
         billing_df['is_1_to_1'] = (billing_df['pocet_to'] == billing_df['pocet_hu']).astype(int)
         billing_df['is_more_to'] = (billing_df['pocet_to'] > billing_df['pocet_hu']).astype(int)
@@ -321,7 +332,7 @@ def render_billing(df_pick, df_vekp, df_vepo, df_cats, queue_count_col, aus_data
         # Nové byznysové metriky
         ratio_table['Index (TO na 1 HU)'] = np.where(ratio_table['hu_celkem'] > 0, ratio_table['to_celkem'] / ratio_table['hu_celkem'], 0)
         ratio_table['Pohyby na 1 HU'] = np.where(ratio_table['hu_celkem'] > 0, ratio_table['pohyby_celkem'] / ratio_table['hu_celkem'], 0)
-        ratio_table['Čistá bilance'] = ratio_table['hu_celkem'] - ratio_table['to_celkem'] # Kladné číslo znamená, že jsme vyfakturovali více, než jsme pickovali
+        ratio_table['Čistá bilance'] = ratio_table['hu_celkem'] - ratio_table['to_celkem'] 
         
         # Výběr a přejmenování sloupců pro zobrazení
         disp_ratio = ratio_table[[
@@ -340,7 +351,6 @@ def render_billing(df_pick, df_vekp, df_vepo, df_cats, queue_count_col, aus_data
         
         def style_master_table(val):
             try:
-                # Barvy pro čistou bilanci (Zelená = plus, Červená = minus)
                 if isinstance(val, (int, float)) and val > 0 and 'Ztráta' not in str(val):
                     return 'color: #10b981; font-weight: bold'
                 elif isinstance(val, (int, float)) and val < 0:
@@ -363,41 +373,49 @@ def render_billing(df_pick, df_vekp, df_vepo, df_cats, queue_count_col, aus_data
                 "Zisk (ks HU)": "+ {}"
             }).applymap(style_master_table, subset=["Čistá bilance (HU - TO)"])
         
-        # Tabulka přes celou šířku
         st.dataframe(styled_master, use_container_width=True, hide_index=True)
             
-        # Graf pod tabulkou (Na plnou šířku)
-        st.markdown("**Trend typů zakázek (Měsíce)**")
-        trend_ratio = billing_df.groupby('Month').agg(
-            count_1_1=('is_1_to_1', 'sum'),
-            count_more_to=('is_more_to', 'sum'),
-            count_more_hu=('is_more_hu', 'sum')
-        ).reset_index()
+        # Graf pod tabulkou s MULTISELECT FILTREM
+        st.markdown("<br>**Trend typů zakázek (Měsíce)**", unsafe_allow_html=True)
         
-        trend_ratio['total'] = trend_ratio['count_1_1'] + trend_ratio['count_more_to'] + trend_ratio['count_more_hu']
-        trend_ratio['pct_1_1'] = np.where(trend_ratio['total'] > 0, trend_ratio['count_1_1'] / trend_ratio['total'] * 100, 0)
-        trend_ratio['pct_more_to'] = np.where(trend_ratio['total'] > 0, trend_ratio['count_more_to'] / trend_ratio['total'] * 100, 0)
-        trend_ratio['pct_more_hu'] = np.where(trend_ratio['total'] > 0, trend_ratio['count_more_hu'] / trend_ratio['total'] * 100, 0)
+        all_trend_cats = sorted(billing_df['Category_Full'].dropna().unique().tolist())
+        sel_trend_cats = st.multiselect("Vyberte kategorie pro zobrazení trendu:", options=all_trend_cats, default=all_trend_cats, key="trend_ratio_cats")
         
-        fig_r = go.Figure()
-        fig_r.add_trace(go.Bar(x=trend_ratio['Month'], y=trend_ratio['count_1_1'], name='1:1 (Kusy)', marker_color='rgba(16, 185, 129, 0.5)', text=trend_ratio['count_1_1'], textposition='inside', yaxis='y'))
-        fig_r.add_trace(go.Bar(x=trend_ratio['Month'], y=trend_ratio['count_more_hu'], name='Více HU (Kusy)', marker_color='rgba(59, 130, 246, 0.5)', text=trend_ratio['count_more_hu'], textposition='inside', yaxis='y'))
-        fig_r.add_trace(go.Bar(x=trend_ratio['Month'], y=trend_ratio['count_more_to'], name='Více TO (Kusy)', marker_color='rgba(239, 68, 68, 0.5)', text=trend_ratio['count_more_to'], textposition='inside', yaxis='y'))
-        
-        fig_r.add_trace(go.Scatter(x=trend_ratio['Month'], y=trend_ratio['pct_1_1'], name='1:1 (%)', mode='lines+markers+text', text=trend_ratio['pct_1_1'].round(1).astype(str) + '%', textposition='top center', marker_color='#10b981', line=dict(width=3), yaxis='y2'))
-        fig_r.add_trace(go.Scatter(x=trend_ratio['Month'], y=trend_ratio['pct_more_hu'], name='Více HU (%)', mode='lines+markers+text', text=trend_ratio['pct_more_hu'].round(1).astype(str) + '%', textposition='top center', marker_color='#3b82f6', line=dict(width=3), yaxis='y2'))
-        fig_r.add_trace(go.Scatter(x=trend_ratio['Month'], y=trend_ratio['pct_more_to'], name='Více TO (%)', mode='lines+markers+text', text=trend_ratio['pct_more_to'].round(1).astype(str) + '%', textposition='bottom center', marker_color='#ef4444', line=dict(width=3), yaxis='y2'))
-        
-        fig_r.update_layout(
-            barmode='stack', 
-            plot_bgcolor="rgba(0,0,0,0)", 
-            paper_bgcolor="rgba(0,0,0,0)", 
-            margin=dict(l=0, r=0, t=30, b=0), 
-            legend=dict(orientation="h", yanchor="bottom", y=1.05, xanchor="left", x=0),
-            yaxis=dict(title="Celkem zakázek"),
-            yaxis2=dict(title="Podíl zakázek (%)", side="right", overlaying="y", showgrid=False, range=[0, 110])
-        )
-        st.plotly_chart(fig_r, use_container_width=True)
+        if sel_trend_cats:
+            trend_df_filtered = billing_df[billing_df['Category_Full'].isin(sel_trend_cats)].copy()
+            
+            trend_ratio = trend_df_filtered.groupby('Month').agg(
+                count_1_1=('is_1_to_1', 'sum'),
+                count_more_to=('is_more_to', 'sum'),
+                count_more_hu=('is_more_hu', 'sum')
+            ).reset_index()
+            
+            trend_ratio['total'] = trend_ratio['count_1_1'] + trend_ratio['count_more_to'] + trend_ratio['count_more_hu']
+            trend_ratio['pct_1_1'] = np.where(trend_ratio['total'] > 0, trend_ratio['count_1_1'] / trend_ratio['total'] * 100, 0)
+            trend_ratio['pct_more_to'] = np.where(trend_ratio['total'] > 0, trend_ratio['count_more_to'] / trend_ratio['total'] * 100, 0)
+            trend_ratio['pct_more_hu'] = np.where(trend_ratio['total'] > 0, trend_ratio['count_more_hu'] / trend_ratio['total'] * 100, 0)
+            
+            fig_r = go.Figure()
+            fig_r.add_trace(go.Bar(x=trend_ratio['Month'], y=trend_ratio['count_1_1'], name='1:1 (Kusy)', marker_color='rgba(16, 185, 129, 0.5)', text=trend_ratio['count_1_1'], textposition='inside', yaxis='y'))
+            fig_r.add_trace(go.Bar(x=trend_ratio['Month'], y=trend_ratio['count_more_hu'], name='Více HU (Kusy)', marker_color='rgba(59, 130, 246, 0.5)', text=trend_ratio['count_more_hu'], textposition='inside', yaxis='y'))
+            fig_r.add_trace(go.Bar(x=trend_ratio['Month'], y=trend_ratio['count_more_to'], name='Více TO (Kusy)', marker_color='rgba(239, 68, 68, 0.5)', text=trend_ratio['count_more_to'], textposition='inside', yaxis='y'))
+            
+            fig_r.add_trace(go.Scatter(x=trend_ratio['Month'], y=trend_ratio['pct_1_1'], name='1:1 (%)', mode='lines+markers+text', text=trend_ratio['pct_1_1'].round(1).astype(str) + '%', textposition='top center', marker_color='#10b981', line=dict(width=3), yaxis='y2'))
+            fig_r.add_trace(go.Scatter(x=trend_ratio['Month'], y=trend_ratio['pct_more_hu'], name='Více HU (%)', mode='lines+markers+text', text=trend_ratio['pct_more_hu'].round(1).astype(str) + '%', textposition='top center', marker_color='#3b82f6', line=dict(width=3), yaxis='y2'))
+            fig_r.add_trace(go.Scatter(x=trend_ratio['Month'], y=trend_ratio['pct_more_to'], name='Více TO (%)', mode='lines+markers+text', text=trend_ratio['pct_more_to'].round(1).astype(str) + '%', textposition='bottom center', marker_color='#ef4444', line=dict(width=3), yaxis='y2'))
+            
+            fig_r.update_layout(
+                barmode='stack', 
+                plot_bgcolor="rgba(0,0,0,0)", 
+                paper_bgcolor="rgba(0,0,0,0)", 
+                margin=dict(l=0, r=0, t=30, b=0), 
+                legend=dict(orientation="h", yanchor="bottom", y=1.05, xanchor="left", x=0),
+                yaxis=dict(title="Celkem zakázek"),
+                yaxis2=dict(title="Podíl zakázek (%)", side="right", overlaying="y", showgrid=False, range=[0, 110])
+            )
+            st.plotly_chart(fig_r, use_container_width=True)
+        else:
+            st.info("Zvolte alespoň jednu kategorii pro zobrazení grafu.")
 
         # -------------------------------------------------------------
         st.divider()
