@@ -57,8 +57,10 @@ def cached_billing_logic(df_pick, df_vekp, df_vepo, df_cats, queue_count_col, df
     vekp_filtered['Clean_HU_Int'] = vekp_filtered[vekp_hu_col].astype(str).str.strip().str.lstrip('0')
     vekp_filtered['Clean_HU_Ext'] = vekp_filtered[vekp_ext_col].astype(str).str.strip().str.lstrip('0')
     
+    # EXTRÉMNĚ BEZPEČNÉ ČIŠTĚNÍ NADŘAZENÉHO OBALU (Aby se vždy našel, i když je v desetinném formátu z Excelu)
     if parent_col_vepo:
-        vekp_filtered['Clean_Parent'] = vekp_filtered[parent_col_vepo].astype(str).str.strip().str.lstrip('0').replace({'nan': '', 'none': ''})
+        vekp_filtered['Clean_Parent'] = vekp_filtered[parent_col_vepo].astype(str).str.replace(r'\.0$', '', regex=True).str.strip().str.lstrip('0')
+        vekp_filtered.loc[vekp_filtered['Clean_Parent'].str.lower().isin(['nan', 'none', '']), 'Clean_Parent'] = ""
     else:
         vekp_filtered['Clean_Parent'] = ""
 
@@ -93,7 +95,7 @@ def cached_billing_logic(df_pick, df_vekp, df_vepo, df_cats, queue_count_col, df
     
     def detect_voll(row):
         if str(row.get('Removal of total SU', '')).upper() != 'X': return False
-        if c_su and is_klt(row.get(c_su, '')): return False
+        if c_su and is_klt(row.get(c_su, '')): return False 
         valid_hus = del_to_valid_hus.get(row['Clean_Del'], set())
         for col in pick_hu_cols:
             if col in row.index and pd.notna(row[col]):
@@ -120,8 +122,6 @@ def cached_billing_logic(df_pick, df_vekp, df_vepo, df_cats, queue_count_col, df
             parent = str(r['Clean_Parent'])
             if parent in ext_to_int: 
                 parent = ext_to_int[parent]
-            # OPRAVA: Odstraněna podmínka "if parent in valid_hus_in_group". 
-            # Nyní KLT vyšplhá k paletě, i když paleta nemá ve VEKP svůj vlastní řádek.
             p_map[child] = parent 
             
         leaves = [h for h in group['Clean_HU_Int'] if h in valid_base_hus]
@@ -186,9 +186,11 @@ def cached_billing_logic(df_pick, df_vekp, df_vepo, df_cats, queue_count_col, df
 
     billing_df["Category_Full"] = billing_df.apply(odvod_kategorii, axis=1)
 
+    # OPRAVA CHYBY: Aplikace už NENUTÍ kategorii E počítat krabičky. Vždy respektuje nadřazený obal (Paletu) ze SAPu!
     def urci_konecnou_hu(row):
-        kat = str(row.get('Category_Full', '')).upper()
-        return row.get('hu_leaf', 0) if kat.startswith('E') or kat.startswith('OE') else row.get('hu_top_level', 0)
+        # Pokud má obal nadřazený kořen (Paletu nebo Kamion), bere se počet kořenů.
+        # Pokud jsou krabičky samostatné (nic nad nimi není), hu_top_level přirozeně odpovídá počtu krabiček.
+        return row.get('hu_top_level', 0)
 
     billing_df["pocet_hu"] = billing_df.apply(urci_konecnou_hu, axis=1).fillna(0).astype(int)
     billing_df["Bilance"] = (billing_df["pocet_to"] - billing_df["pocet_hu"]).astype(int)
