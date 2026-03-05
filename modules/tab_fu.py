@@ -184,7 +184,7 @@ def render_fu(df_pick, queue_count_col):
 
     fu_df['Neprebalovano'] = fu_df.apply(check_is_vollpalette, axis=1)
     
-    # === PŘÍPRAVA DAT PRO 4 SPECIFICKÉ POHLEDY ===
+    # === PŘÍPRAVA DAT PRO 3 SPECIFICKÉ POHLEDY ===
     
     fu_df_pallets = fu_df[~fu_df['Is_KLT']].copy()
     ignored_klt_count = fu_df[fu_df['Is_KLT']][queue_count_col].nunique()
@@ -199,12 +199,12 @@ def render_fu(df_pick, queue_count_col):
     only_fu_strict_dels = {d for d, qs in del_all_queues.items() if qs == {'PI_PL_FU'}}
     only_fuoe_strict_dels = {d for d, qs in del_all_queues.items() if qs == {'PI_PL_FUOE'}}
 
-    df_all = fu_df_pallets.copy()
+    # Datové sady pro záložky (Pohled 'Všechny' odstraněn)
     df_pure_combo = fu_df_pallets[fu_df_pallets['Clean_Del'].isin(pure_fu_combo_dels)].copy()
     df_only_fu = fu_df_pallets[fu_df_pallets['Clean_Del'].isin(only_fu_strict_dels)].copy()
     df_only_fuoe = fu_df_pallets[fu_df_pallets['Clean_Del'].isin(only_fuoe_strict_dels)].copy()
 
-    # Funkce pro vykreslení obsahu konkrétní záložky (v plné šíři)
+    # Funkce pro vykreslení obsahu konkrétní záložky
     def render_efficiency_view(df_view, is_pure=False, label=""):
         if df_view.empty:
             st.info(_t(f"V této kategorii ({label}) nebyly nalezeny žádné záznamy.", f"No records found in this category ({label})."))
@@ -325,25 +325,20 @@ def render_fu(df_pick, queue_count_col):
 
     # --- TABS RENDERING ---
     tabs = st.tabs([
-        _t("Všechny paletové zakázky", "All Pallet Orders"), 
         _t("🎯 Čisté FU + FUOE", "🎯 Pure FU + FUOE"), 
         _t("📦 Pouze PI_PL_FU", "📦 Only PI_PL_FU"), 
         _t("🌍 Pouze PI_PL_FUOE", "🌍 Only PI_PL_FUOE")
     ])
     
     with tabs[0]: 
-        st.markdown(_t("Analýza **všech** picků z fronty FU, bez ohledu na to, zda k dané zakázce dorazil u stolu ještě další materiál z jiných uliček.", "Analysis of **all** FU picks, regardless of whether additional material arrived from other aisles."))
-        render_efficiency_view(df_all, is_pure=False, label=_t("Všechny", "All"))
-        
-    with tabs[1]: 
         st.markdown(_t("Analýza **čistých paletových zakázek**, které se nevybavovaly v žádné jiné frontě.", "Analysis of **pure pallet orders** that were not picked in any other queue."))
         render_efficiency_view(df_pure_combo, is_pure=True, label=_t("Čisté FU/FUOE", "Pure FU/FUOE"))
         
-    with tabs[2]: 
+    with tabs[1]: 
         st.markdown(_t("Analýza zakázek, které obsahují **výhradně standardní palety (PI_PL_FU)**.", "Analysis of orders containing **exclusively standard pallets (PI_PL_FU)**."))
         render_efficiency_view(df_only_fu, is_pure=True, label=_t("Pouze FU", "Only FU"))
         
-    with tabs[3]: 
+    with tabs[2]: 
         st.markdown(_t("Analýza zakázek, které obsahují **výhradně exportní palety (PI_PL_FUOE)**.", "Analysis of orders containing **exclusively export pallets (PI_PL_FUOE)**."))
         render_efficiency_view(df_only_fuoe, is_pure=True, label=_t("Pouze FUOE", "Only FUOE"))
 
