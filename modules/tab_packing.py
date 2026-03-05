@@ -2,6 +2,8 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 import plotly.graph_objects as go
+import plotly.express as px
+import re
 from modules.utils import t
 
 # Globální nastavení grafů pro jednotný vzhled
@@ -19,8 +21,17 @@ try:
 except AttributeError:
     fast_render = lambda f: f
 
+# Pomocná funkce pro vyčištění a sjednocení názvů obalů
+def clean_pkg_name(name):
+    name = str(name).strip().upper()
+    if name in ['NAN', 'NONE', '']: return ''
+    # Odstraní počty kusů v závorce, např. " (1X)", "(2x)"
+    name = re.sub(r'\s*\(\d+X\)', '', name)
+    # Odstraní slovo KARTON a pomlčky kolem něj
+    name = re.sub(r'-?\s*KARTON\s*', '', name)
+    return name.strip()
+
 def render_packing(billing_df, df_oe):
-    # Chytrý lokální překladač
     def _t(cs, en): 
         return en if st.session_state.get('lang', 'cs') == 'en' else cs
 
@@ -33,10 +44,6 @@ def render_packing(billing_df, df_oe):
     if billing_df is None or billing_df.empty:
         st.warning(_t("Pro propojení chybí data z Fakturace (VEKP). Aplikace nejprve potřebuje načíst data z předchozích záložek.", "Billing data (VEKP) missing for correlation. App needs data from previous tabs first."))
         return
-
-    # OBRANA PROTI UNBOUND LOCAL ERROR
-    e2e_df = pd.DataFrame()
-    valid_time_df = pd.DataFrame()
 
     # Příprava dat pro čisté párování
     df_oe_clean = df_oe.copy()
@@ -59,10 +66,8 @@ def render_packing(billing_df, df_oe):
          st.warning(_t("Data se sice spojila, ale u žádné zakázky není zaznamenán platný procesní čas (> 0 min).", "Data matched, but no valid process time (> 0 min) found."))
          return
 
-    # Výpočet efektivity (Minut na 1 HU)
+    # Výpočet efektivity
     valid_time_df['Min_per_HU'] = np.where(valid_time_df['pocet_hu'] > 0, valid_time_df['Process_Time_Min'] / valid_time_df['pocet_hu'], valid_time_df['Process_Time_Min'])
-    
-    # Detekce konfliktů názvů po merge (Materiál z picku vs Materiál z OE)
     mat_col = 'Material_y' if 'Material_y' in valid_time_df.columns else 'Material'
     
     # --- HLAVNÍ METRIKY ---
@@ -79,56 +84,82 @@ def render_packing(billing_df, df_oe):
     st.divider()
 
     # --- PŘEPÍNAČE POHLEDŮ (TABS) ---
-    tab_cust, tab_mat, tab_pkg, tab_detail = st.tabs([
-        f"🏢 {_t('Podle zákazníka', 'By Customer')}",
+    tab_cust, tab_mat, tab_pkg, tab_detail, tab_complex = st.tabs([
+        f"🏢 {_t('Podle zákazníka & Kategorie', 'By Customer & Category')}",
         f"⚙️ {_t('Podle materiálu & složitosti', 'By Material & Complexity')}",
-        f"📦 {_t('Spotřeba obalů', 'Packaging Usage')}",
-        f"🔍 {_t('Detailní E2E Report', 'Detailed E2E Report')}"
+        f"📦 {_t('Spotřeba a analýza obalů', 'Packaging Analysis')}",
+        f"🔍 {_t('Detailní E2E Report', 'Detailed E2E Report')}",
+        f"🧠 {_t('Komplexní Matice', 'Complex Matrix')}"
     ])
 
     # ==========================================
-    # ZÁLOŽKA 1: ZÁKAZNÍCI
+    # ZÁLOŽKA 1: ZÁKAZNÍCI A KATEGORIE
     # ==========================================
     with tab_cust:
-        if 'CUSTOMER' in valid_time_df.columns:
-            st.markdown(f"**🏢 {_t('Náročnost balení podle zákazníků (Customer Profitability)', 'Packing Effort by Customer (Profitability)')}**")
-            st.caption(_t("Ukazuje, kteří zákazníci vyžadují nejvíce procesního času na vytvoření jedné fakturační jednotky.", "Shows which customers require the most process time to create a single billing unit."))
-            
-            cust_df = valid_time_df.groupby('CUSTOMER').agg(
-                Orders=('Clean_Del', 'nunique'),
-                Total_Time=('Process_Time_Min', 'sum'),
-                Total_HU=('pocet_hu', 'sum'),
-                Total_TO=('pocet_to', 'sum')
-            ).reset_index()
-            
-            cust_df['Avg_Min_Order'] = np.where(cust_df['Orders'] > 0, cust_df['Total_Time'] / cust_df['Orders'], 0)
-            cust_df['Avg_Min_HU'] = np.where(cust_df['Total_HU'] > 0, cust_df['Total_Time'] / cust_df['Total_HU'], 0)
-            cust_df = cust_df.sort_values('Avg_Min_HU', ascending=False)
-            
-            col_c1, col_c2 = st.columns([1, 1.2])
-            with col_c1:
-                disp_cust = cust_df[['CUSTOMER', 'Orders', 'Total_Time', 'Avg_Min_HU']].copy()
-                disp_cust.columns = [_t("Zákazník", "Customer"), _t("Zakázek", "Orders"), _t("Celkový čas (Min)", "Total Time (Min)"), _t("Minut na 1 HU", "Min per 1 HU")]
-                st.dataframe(disp_cust.style.format({_t("Celkový čas (Min)", "Total Time (Min)"): "{:.0f}", _t("Minut na 1 HU", "Min per 1 HU"): "{:.1f}"}), hide_index=True, use_container_width=True)
+        col_c1, col_c2 = st.columns(2)
+        
+        with col_c1:
+            st.markdown(f"**🏢 {_t('Náročnost balení podle Zákazníků', 'Packing Effort by Customer')}**")
+            if 'CUSTOMER' in valid_time_df.columns:
+                cust_df = valid_time_df.groupby('CUSTOMER').agg(
+                    Orders=('Clean_Del', 'nunique'),
+                    Total_Time=('Process_Time_Min', 'sum'),
+                    Total_HU=('pocet_hu', 'sum')
+                ).reset_index()
                 
-            with col_c2:
+                cust_df['Avg_Min_Order'] = np.where(cust_df['Orders'] > 0, cust_df['Total_Time'] / cust_df['Orders'], 0)
+                cust_df['Avg_Min_HU'] = np.where(cust_df['Total_HU'] > 0, cust_df['Total_Time'] / cust_df['Total_HU'], 0)
+                
+                # Seřazení podle počtu zakázek (Orders)
+                cust_df = cust_df.sort_values('Orders', ascending=False)
+                
+                disp_cust = cust_df[['CUSTOMER', 'Orders', 'Avg_Min_Order', 'Avg_Min_HU', 'Total_Time']].copy()
+                disp_cust.columns = [_t("Zákazník", "Customer"), _t("Počet zakázek", "Orders"), _t("Prům. čas na zakázku", "Avg Time/Order"), _t("Prům. čas na 1 HU", "Avg Time/HU"), _t("Celkový čas (Min)", "Total Time (Min)")]
+                st.dataframe(disp_cust.style.format({_t("Celkový čas (Min)", "Total Time (Min)"): "{:.0f}", _t("Prům. čas na zakázku", "Avg Time/Order"): "{:.1f}", _t("Prům. čas na 1 HU", "Avg Time/HU"): "{:.1f}"}), hide_index=True, use_container_width=True)
+                
                 fig_cust = go.Figure(go.Bar(
-                    x=cust_df['Avg_Min_HU'].head(15), 
+                    x=cust_df['Orders'].head(15), 
                     y=cust_df['CUSTOMER'].head(15), 
                     orientation='h', marker_color='#8b5cf6', 
-                    text=cust_df['Avg_Min_HU'].head(15).round(1).astype(str) + ' min', textposition='auto'
+                    text=cust_df['Orders'].head(15), textposition='auto'
                 ))
                 fig_cust.update_layout(**CHART_LAYOUT)
-                fig_cust.update_layout(yaxis={'categoryorder':'total ascending'}, xaxis_title=_t("Průměrně minut na 1 vyfakturovanou HU", "Avg minutes per 1 billed HU"))
+                fig_cust.update_layout(yaxis={'categoryorder':'total ascending'}, xaxis_title=_t("Počet zakázek", "Number of Orders"), title=_t("TOP 15 Zákazníků (dle počtu zakázek)", "TOP 15 Customers (by orders)"))
                 st.plotly_chart(fig_cust, use_container_width=True)
-        else:
-            st.info(_t("Sloupec 'CUSTOMER' není v datech k dispozici.", "Column 'CUSTOMER' not available in data."))
+            else:
+                st.info(_t("Sloupec 'CUSTOMER' není v datech k dispozici.", "Column 'CUSTOMER' not available in data."))
+
+        with col_c2:
+            st.markdown(f"**🏷️ {_t('Náročnost balení podle Kategorií (E/OE/N)', 'Packing Effort by Categories (E/OE/N)')}**")
+            cat_df = valid_time_df.groupby('Category_Full').agg(
+                Orders=('Clean_Del', 'nunique'),
+                Total_Time=('Process_Time_Min', 'sum'),
+                Total_HU=('pocet_hu', 'sum')
+            ).reset_index()
+            
+            cat_df['Avg_Min_Order'] = np.where(cat_df['Orders'] > 0, cat_df['Total_Time'] / cat_df['Orders'], 0)
+            cat_df['Avg_Min_HU'] = np.where(cat_df['Total_HU'] > 0, cat_df['Total_Time'] / cat_df['Total_HU'], 0)
+            cat_df = cat_df.sort_values('Orders', ascending=False)
+            
+            disp_cat = cat_df[['Category_Full', 'Orders', 'Avg_Min_Order', 'Avg_Min_HU', 'Total_Time']].copy()
+            disp_cat.columns = [_t("Kategorie", "Category"), _t("Počet zakázek", "Orders"), _t("Prům. čas na zakázku", "Avg Time/Order"), _t("Prům. čas na 1 HU", "Avg Time/HU"), _t("Celkový čas (Min)", "Total Time (Min)")]
+            st.dataframe(disp_cat.style.format({_t("Celkový čas (Min)", "Total Time (Min)"): "{:.0f}", _t("Prům. čas na zakázku", "Avg Time/Order"): "{:.1f}", _t("Prům. čas na 1 HU", "Avg Time/HU"): "{:.1f}"}), hide_index=True, use_container_width=True)
+
+            fig_cat = go.Figure(go.Bar(
+                x=cat_df['Orders'], 
+                y=cat_df['Category_Full'], 
+                orientation='h', marker_color='#3b82f6', 
+                text=cat_df['Orders'], textposition='auto'
+            ))
+            fig_cat.update_layout(**CHART_LAYOUT)
+            fig_cat.update_layout(yaxis={'categoryorder':'total ascending'}, xaxis_title=_t("Počet zakázek", "Number of Orders"), title=_t("Kategorie (dle počtu zakázek)", "Categories (by orders)"))
+            st.plotly_chart(fig_cat, use_container_width=True)
 
     # ==========================================
     # ZÁLOŽKA 2: MATERIÁLY A SLOŽITOST
     # ==========================================
     with tab_mat:
-        st.markdown(f"**⚙️ {_t('Nejnáročnější materiály na balení', 'Most demanding materials for packing')}**")
+        st.markdown(f"**⚙️ {_t('Nejnáročnější materiály na balení (Dle průměrného času)', 'Most demanding materials for packing (By Avg Time)')}**")
         
         if mat_col in valid_time_df.columns:
             mat_df = valid_time_df.groupby(mat_col).agg(
@@ -136,7 +167,7 @@ def render_packing(billing_df, df_oe):
                 Avg_Time=('Process_Time_Min', 'mean'),
                 Total_Time=('Process_Time_Min', 'sum')
             ).reset_index()
-            # Filtrujeme jen materiály, co se dělaly aspoň 2x, aby průměr měl smysl
+            # Filtrujeme jen materiály, co se dělaly aspoň 2x
             mat_df = mat_df[mat_df['Orders'] > 1].sort_values('Avg_Time', ascending=False).head(20)
             
             col_m1, col_m2 = st.columns([1, 1.2])
@@ -155,90 +186,160 @@ def render_packing(billing_df, df_oe):
                 fig_mat.update_layout(yaxis={'categoryorder':'total ascending'}, xaxis_title=_t("Průměrný čas balení materiálu", "Avg packing time of material"))
                 st.plotly_chart(fig_mat, use_container_width=True)
 
-        st.divider()
-        st.markdown(f"**🔴 {_t('Faktory zvyšující složitost balení (Skenování / KLT)', 'Factors increasing packing complexity (Scanning / KLT)')}**")
-        col_f1, col_f2 = st.columns(2)
-        
-        with col_f1:
-            if 'Scanning serial numbers' in valid_time_df.columns:
-                valid_time_df['Has_Scan'] = valid_time_df['Scanning serial numbers'].astype(str).str.upper().isin(['X', 'YES', 'ANO', '1'])
-                scan_df = valid_time_df.groupby('Has_Scan')['Process_Time_Min'].mean().reset_index()
-                
-                scan_yes = scan_df[scan_df['Has_Scan'] == True]['Process_Time_Min'].mean()
-                scan_no = scan_df[scan_df['Has_Scan'] == False]['Process_Time_Min'].mean()
-                if pd.isna(scan_yes): scan_yes = 0
-                if pd.isna(scan_no): scan_no = 0
-                
-                st.metric(_t("Vliv skenování sériových čísel", "Impact of serial number scanning"), f"{scan_yes:.1f} min", f"{scan_yes - scan_no:.1f} min {_t('navíc oproti normálu', 'extra vs normal')}", delta_color="inverse")
-                
-        with col_f2:
-            if 'Difficult KLTs' in valid_time_df.columns:
-                valid_time_df['Has_Diff'] = valid_time_df['Difficult KLTs'].astype(str).str.upper().isin(['X', 'YES', 'ANO', '1'])
-                diff_df = valid_time_df.groupby('Has_Diff')['Process_Time_Min'].mean().reset_index()
-                
-                diff_yes = diff_df[diff_df['Has_Diff'] == True]['Process_Time_Min'].mean()
-                diff_no = diff_df[diff_df['Has_Diff'] == False]['Process_Time_Min'].mean()
-                if pd.isna(diff_yes): diff_yes = 0
-                if pd.isna(diff_no): diff_no = 0
-                
-                st.metric(_t("Vliv 'Složitých KLT'", "Impact of 'Difficult KLTs'"), f"{diff_yes:.1f} min", f"{diff_yes - diff_no:.1f} min {_t('navíc oproti normálu', 'extra vs normal')}", delta_color="inverse")
-
     # ==========================================
     # ZÁLOŽKA 3: OBALY (PACKAGING)
     # ==========================================
     with tab_pkg:
-        st.markdown(f"**📦 {_t('Četnost použití jednotlivých typů obalů (Dle záznamů z OE-Times)', 'Usage frequency of individual packaging types (per OE-Times)')}**")
-        st.caption(_t("Analýza sloupců Cartons, KLT a Palety rozpadlá na jednotlivé položky.", "Analysis of Cartons, KLT, and Pallets columns broken down into individual items."))
+        st.markdown(f"**📦 {_t('Sjednocená analytika spotřeby obalů a časové náročnosti', 'Unified analytics of packaging usage and time effort')}**")
+        st.caption(_t("Data jsou automaticky očištěna (sloučeny názvy jako 'CARTON-05' a 'CARTON-05-KARTON (1x)').", "Data is automatically cleaned (merging names like 'CARTON-05' and 'CARTON-05-KARTON (1x)')."))
         
-        def get_packaging_counts(df, col_name):
+        # Super-funkce pro výpočet statistik obalů
+        def get_pkg_stats(df, col_name):
             if col_name not in df.columns: return pd.DataFrame()
-            all_items = df[col_name].dropna().astype(str).str.split(';').explode().str.strip()
-            all_items = all_items[all_items != '']
-            if all_items.empty: return pd.DataFrame()
-            counts = all_items.value_counts().reset_index()
-            counts.columns = [_t('Typ obalu', 'Packaging Type'), _t('Záznamů', 'Entries')]
-            return counts
+            
+            # Explode řádků (pokud má zakázka více obalů oddělených středníkem)
+            temp_df = df[['Clean_Del', 'Process_Time_Min', 'pocet_hu', 'pocet_to', col_name]].copy()
+            temp_df[col_name] = temp_df[col_name].astype(str).str.split(';')
+            exploded = temp_df.explode(col_name)
+            
+            # Vyčištění názvů
+            exploded[col_name] = exploded[col_name].apply(clean_pkg_name)
+            exploded = exploded[exploded[col_name] != '']
+            
+            if exploded.empty: return pd.DataFrame()
+            
+            # Agregace dat pro daný vyčištěný obal
+            stats = exploded.groupby(col_name).agg(
+                Pouzito_Zakazek=('Clean_Del', 'nunique'),
+                Total_Time=('Process_Time_Min', 'sum'),
+                Total_HU=('pocet_hu', 'sum'),
+                Total_Pcs=('pocet_to', 'sum') # Používáme počet picků (TO) jako proxy pro kusy materiálu
+            ).reset_index()
+            
+            stats['Avg_Time_Order'] = np.where(stats['Pouzito_Zakazek'] > 0, stats['Total_Time'] / stats['Pouzito_Zakazek'], 0)
+            stats['Avg_Time_HU'] = np.where(stats['Total_HU'] > 0, stats['Total_Time'] / stats['Total_HU'], 0)
+            stats['Avg_Pcs'] = np.where(stats['Pouzito_Zakazek'] > 0, stats['Total_Pcs'] / stats['Pouzito_Zakazek'], 0)
+            
+            return stats.sort_values('Pouzito_Zakazek', ascending=False)
 
-        p_col1, p_col2, p_col3 = st.columns(3)
-        
-        with p_col1:
-            st.markdown(f"##### 🗃️ {_t('Krabice (Cartons)', 'Cartons')}")
-            carton_counts = get_packaging_counts(valid_time_df, 'Cartons')
-            if not carton_counts.empty: st.dataframe(carton_counts, hide_index=True, use_container_width=True)
-            else: st.info(_t("Žádná data.", "No data."))
+        def render_pkg_section(title, col_name, color):
+            st.markdown(f"##### {title}")
+            pkg_df = get_pkg_stats(valid_time_df, col_name)
             
-        with p_col2:
-            st.markdown(f"##### 🟦 {_t('KLT boxy', 'KLT Boxes')}")
-            klt_counts = get_packaging_counts(valid_time_df, 'KLT')
-            if not klt_counts.empty: st.dataframe(klt_counts, hide_index=True, use_container_width=True)
-            else: st.info(_t("Žádná data.", "No data."))
-            
-        with p_col3:
-            st.markdown(f"##### 🏭 {_t('Palety', 'Pallets')}")
-            pal_counts = get_packaging_counts(valid_time_df, 'Palety')
-            if not pal_counts.empty: st.dataframe(pal_counts, hide_index=True, use_container_width=True)
-            else: st.info(_t("Žádná data.", "No data."))
+            if not pkg_df.empty:
+                col_pt, col_pg = st.columns([1.5, 1])
+                with col_pt:
+                    disp = pkg_df[[col_name, 'Pouzito_Zakazek', 'Avg_Time_Order', 'Avg_Time_HU', 'Avg_Pcs']].copy()
+                    disp.columns = [_t("Vyčištěný název obalu", "Clean Packaging Name"), _t("Použito (Zakázek)", "Used (Orders)"), _t("Prům. čas na zakázku (Min)", "Avg Time/Order (Min)"), _t("Prům. čas na HU (Min)", "Avg Time/HU (Min)"), _t("Prům. ks materiálu (TO)", "Avg Mat Pcs (TO)")]
+                    st.dataframe(disp.style.format({
+                        _t("Prům. čas na zakázku (Min)", "Avg Time/Order (Min)"): "{:.1f}",
+                        _t("Prům. čas na HU (Min)", "Avg Time/HU (Min)"): "{:.1f}",
+                        _t("Prům. ks materiálu (TO)", "Avg Mat Pcs (TO)"): "{:.1f}"
+                    }), hide_index=True, use_container_width=True)
+                with col_pg:
+                    fig = go.Figure(go.Bar(
+                        x=pkg_df['Pouzito_Zakazek'].head(10), 
+                        y=pkg_df[col_name].head(10), 
+                        orientation='h', marker_color=color, 
+                        text=pkg_df['Pouzito_Zakazek'].head(10), textposition='auto'
+                    ))
+                    fig.update_layout(**CHART_LAYOUT)
+                    fig.update_layout(yaxis={'categoryorder':'total ascending'}, xaxis_title=_t("Počet zakázek", "Number of Orders"), margin=dict(t=0, b=0, l=0, r=0), height=300)
+                    st.plotly_chart(fig, use_container_width=True)
+            else:
+                st.info(_t("Žádná data pro tento typ obalu.", "No data for this packaging type."))
+
+        render_pkg_section(f"🗃️ {_t('Krabice (Cartons)', 'Cartons')}", 'Cartons', '#f59e0b')
+        st.divider()
+        render_pkg_section(f"🟦 {_t('KLT boxy', 'KLT Boxes')}", 'KLT', '#3b82f6')
+        st.divider()
+        render_pkg_section(f"🏭 {_t('Palety', 'Pallets')}", 'Palety', '#10b981')
 
     # ==========================================
-    # ZÁLOŽKA 4: DETAILNÍ DATA (TABULKA)
+    # ZÁLOŽKA 4: DETAILNÍ E2E REPORT
     # ==========================================
     with tab_detail:
-        st.markdown(f"**🔍 {_t('Surová data a nejdelší procesy (Worst Offenders)', 'Raw data and longest processes (Worst Offenders)')}**")
+        st.markdown(f"**🔍 {_t('Surová E2E data (Od regálu až k balícímu stolu)', 'Raw E2E data (From shelf to packing desk)')}**")
         
-        disp_pack = valid_time_df[['Clean_Del', 'CUSTOMER' if 'CUSTOMER' in valid_time_df.columns else mat_col, 'Category_Full', 'Process_Time_Min', 'pocet_to', 'pocet_hu', 'Min_per_HU']].copy()
-        disp_pack = disp_pack.sort_values('Process_Time_Min', ascending=False).head(200)
+        # Výběr sloupců k zobrazení
+        disp_cols = ['Clean_Del', 'Category_Full', 'Month', 'hlavni_fronta', 'pocet_lokaci']
+        if 'CUSTOMER' in valid_time_df.columns: disp_cols.append('CUSTOMER')
+        if mat_col in valid_time_df.columns: disp_cols.append(mat_col)
         
-        disp_pack.columns = [
-            _t("Zakázka", "Order"), 
-            _t("Zákazník / Mat.", "Customer / Mat."), 
-            _t("Kategorie", "Category"), 
-            _t("Celkem Čas (Min)", "Total Time (Min)"),
-            _t("Počet TO (Sklad)", "TO Count (WH)"), 
-            _t("Zabaleno HU", "Packed HU"), 
-            _t("Čas na 1 HU", "Time per 1 HU")
-        ]
+        disp_cols.extend(['pocet_to', 'pohyby_celkem', 'pocet_hu', 'Process_Time_Min', 'Min_per_HU'])
+        
+        if 'Shift' in valid_time_df.columns: disp_cols.append('Shift')
+        
+        disp_pack = valid_time_df[disp_cols].copy()
+        disp_pack = disp_pack.sort_values('Process_Time_Min', ascending=False)
+        
+        # Přejmenování dynamicky
+        rename_dict = {
+            'Clean_Del': _t("Zakázka", "Order"),
+            'Category_Full': _t("Kategorie", "Category"),
+            'Month': _t("Měsíc", "Month"),
+            'hlavni_fronta': _t("Hlavní fronta", "Main Queue"),
+            'pocet_lokaci': _t("Navštívené lokace", "Visited Locations"),
+            'CUSTOMER': _t("Zákazník", "Customer"),
+            mat_col: _t("Hlavní materiál", "Main Material"),
+            'pocet_to': _t("Pickováno TO", "Picked TOs"),
+            'pohyby_celkem': _t("Fyzické pohyby", "Physical Moves"),
+            'pocet_hu': _t("Vyfakturováno HU", "Billed HUs"),
+            'Process_Time_Min': _t("Čas balení (Min)", "Packing Time (Min)"),
+            'Min_per_HU': _t("Minut na 1 HU", "Minutes per 1 HU"),
+            'Shift': _t("Směna", "Shift")
+        }
+        
+        disp_pack.rename(columns=rename_dict, inplace=True)
         
         st.dataframe(disp_pack.style.format({
-            _t("Celkem Čas (Min)", "Total Time (Min)"): "{:.1f}", 
-            _t("Čas na 1 HU", "Time per 1 HU"): "{:.1f}"
+            _t("Čas balení (Min)", "Packing Time (Min)"): "{:.1f}", 
+            _t("Minut na 1 HU", "Minutes per 1 HU"): "{:.1f}"
         }), hide_index=True, use_container_width=True)
+
+    # ==========================================
+    # ZÁLOŽKA 5: KOMPLEXNÍ MATICE (Data Science)
+    # ==========================================
+    with tab_complex:
+        st.markdown(f"**🧠 {_t('Komplexní pohled: Zákazník -> Kategorie -> Balení', 'Complex View: Customer -> Category -> Packing')}**")
+        st.caption(_t("Multidimenzionální Treemap graf. Velikost obdélníku ukazuje celkový strávený čas, barva ukazuje efektivitu (červená = velmi pomalé balení, zelená = rychlé). Kliknutím na obdélníky se můžete zanořit hlouběji.", "Multidimensional Treemap. Size represents total time spent, color represents efficiency (Red = very slow, Green = fast). Click to drill down."))
+        
+        if 'CUSTOMER' in valid_time_df.columns:
+            # Příprava dat pro Treemap
+            tree_df = valid_time_df.groupby(['CUSTOMER', 'Category_Full']).agg(
+                Total_Time=('Process_Time_Min', 'sum'),
+                Orders=('Clean_Del', 'nunique'),
+                Total_HU=('pocet_hu', 'sum')
+            ).reset_index()
+            
+            tree_df['Avg_Time'] = np.where(tree_df['Total_HU'] > 0, tree_df['Total_Time'] / tree_df['Total_HU'], 0)
+            tree_df['Path'] = 'Vše'
+            
+            fig_tree = px.treemap(
+                tree_df, 
+                path=[px.Constant(_t("Všichni zákazníci", "All Customers")), 'CUSTOMER', 'Category_Full'],
+                values='Total_Time',
+                color='Avg_Time',
+                color_continuous_scale='RdYlGn_r', # Převrácená škála: Zelená=nízký čas, Červená=vysoký čas
+                hover_data=['Orders', 'Avg_Time']
+            )
+            fig_tree.update_layout(margin=dict(t=30, l=0, r=0, b=0), height=500)
+            st.plotly_chart(fig_tree, use_container_width=True)
+            
+            st.markdown(f"**📊 {_t('Kontingenční tabulka (Pivot) Zákazníků a Kategorií', 'Pivot Table of Customers and Categories')}**")
+            pivot_df = valid_time_df.pivot_table(
+                index='CUSTOMER', 
+                columns='Category_Full', 
+                values='Process_Time_Min', 
+                aggfunc='sum', 
+                fill_value=0
+            )
+            
+            # Formátování tabulky
+            def color_gradient(val):
+                if val == 0: return 'color: transparent'
+                return ''
+                
+            st.dataframe(pivot_df.style.map(color_gradient).background_gradient(cmap='Blues', axis=None).format("{:.0f} min"), use_container_width=True)
+        else:
+            st.info(_t("Pro vykreslení komplexní matice chybí sloupec 'CUSTOMER'.", "Column 'CUSTOMER' missing to render complex matrix."))
