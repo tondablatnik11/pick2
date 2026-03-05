@@ -38,7 +38,7 @@ def render_top(df_pick):
         Lines=('Material', 'count')
     ).reset_index()
     
-    # 2. Výpočet statistik přesnosti (Exact vs Estimate)
+    # 2. Výpočet GLOBÁLNÍCH statistik přesnosti (Exact vs Estimate)
     total_mats = len(mat_agg)
     exact_mats = len(mat_agg[mat_agg['Miss'] == 0])
     est_mats = len(mat_agg[mat_agg['Miss'] > 0])
@@ -46,8 +46,8 @@ def render_top(df_pick):
     pct_exact = (exact_mats / total_mats) * 100 if total_mats > 0 else 0
     pct_est = (est_mats / total_mats) * 100 if total_mats > 0 else 0
     
-    # Zobrazení statistik nahoře
-    st.markdown(f"#### 📊 {_t('Kvalita dat a pokrytí materiálů', 'Data Quality and Material Coverage')}")
+    # Zobrazení statistik nahoře (Globální)
+    st.markdown(f"#### 📊 {_t('Kvalita dat a pokrytí materiálů (Globální pohled)', 'Data Quality and Material Coverage (Global View)')}")
     c1, c2, c3 = st.columns(3)
     with c1:
         with st.container(border=True):
@@ -57,8 +57,7 @@ def render_top(df_pick):
             st.metric(_t("Přesná data 100% z manuálních master dat", "Exact Data 100% from Manual Master Data"), f"{exact_mats:,} ks", f"{pct_exact:.1f} %")
     with c3:
         with st.container(border=True):
-            # Formátování hodnoty bez zelené šipky nahoru, aby to nevypadalo jako pozitivní růst
-            st.metric(_t("Vyžadující odhad (Chybí data o balení)", "Requiring Estimate (Missing box)"), f"{est_mats:,} ks ({pct_est:.1f} %)")
+            st.metric(_t("Vyžadující odhad (Chybí obal)", "Requiring Estimate (Missing box)"), f"{est_mats:,} ks", f"- {pct_est:.1f} %")
             
     st.divider()
     
@@ -87,7 +86,7 @@ def render_top(df_pick):
     def make_bar_chart(df, x_col, y_col, title, color='#3b82f6'):
         fig = go.Figure()
         
-        # PŘEVOD NA STRING = Zabrání Plotly analyzovat materiály jako matematická čísla!
+        # PŘEVOD NA STRING = Zabrání Plotly analyzovat materiály jako matematická čísla
         x_vals = df[x_col].astype(str)
         
         fig.add_trace(go.Bar(
@@ -113,6 +112,17 @@ def render_top(df_pick):
         st.markdown(f"**{_t('Nejnáročnější materiály z hlediska fyzické práce (bez ohledu na přesnost).', 'Most demanding materials in terms of physical effort (regardless of accuracy).')}**")
         top_moves = mat_agg.sort_values('Moves', ascending=False).head(500)
         
+        # Lokální statistika kvality dat pro tento TOP výběr
+        t1_len = len(top_moves)
+        t1_exact = len(top_moves[top_moves['Miss'] == 0])
+        t1_est = len(top_moves[top_moves['Miss'] > 0])
+        p1_exact = (t1_exact / t1_len * 100) if t1_len > 0 else 0
+        p1_est = (t1_est / t1_len * 100) if t1_len > 0 else 0
+        
+        cs1, cs2 = st.columns(2)
+        cs1.success(f"✅ **{_t('Přesná data u tohoto TOP', 'Exact data in this TOP')} {t1_len}:** {t1_exact} {_t('materiálů', 'materials')} ({p1_exact:.1f} %)")
+        cs2.warning(f"⚠️ **{_t('Odhady u tohoto TOP', 'Estimates in this TOP')} {t1_len}:** {t1_est} {_t('materiálů', 'materials')} ({p1_est:.1f} %)")
+        
         col_t1, col_g1 = st.columns([1.1, 1])
         with col_t1:
             st.dataframe(format_table(top_moves), use_container_width=True, hide_index=True)
@@ -123,6 +133,17 @@ def render_top(df_pick):
     with tab2:
         st.markdown(f"**{_t('Nejfrekventovanější materiály (nejvíce zastávek skladníka u regálu).', 'Most frequent materials (most picker stops at the shelf).')}**")
         top_tos = mat_agg.sort_values('TO_Count', ascending=False).head(500)
+        
+        # Lokální statistika kvality dat pro tento TOP výběr
+        t2_len = len(top_tos)
+        t2_exact = len(top_tos[top_tos['Miss'] == 0])
+        t2_est = len(top_tos[top_tos['Miss'] > 0])
+        p2_exact = (t2_exact / t2_len * 100) if t2_len > 0 else 0
+        p2_est = (t2_est / t2_len * 100) if t2_len > 0 else 0
+        
+        cs3, cs4 = st.columns(2)
+        cs3.success(f"✅ **{_t('Přesná data u tohoto TOP', 'Exact data in this TOP')} {t2_len}:** {t2_exact} {_t('materiálů', 'materials')} ({p2_exact:.1f} %)")
+        cs4.warning(f"⚠️ **{_t('Odhady u tohoto TOP', 'Estimates in this TOP')} {t2_len}:** {t2_est} {_t('materiálů', 'materials')} ({p2_est:.1f} %)")
         
         col_t2, col_g2 = st.columns([1.1, 1])
         with col_t2:
