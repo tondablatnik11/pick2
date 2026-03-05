@@ -1,44 +1,152 @@
 import streamlit as st
 import pandas as pd
+import numpy as np
+import plotly.graph_objects as go
 from modules.utils import t
 
+# Globální nastavení grafů (pokud by ještě nebylo definováno v utils.py)
+CHART_LAYOUT = dict(
+    paper_bgcolor='rgba(0,0,0,0)', 
+    plot_bgcolor='rgba(0,0,0,0)',
+    font=dict(color='#f8fafc', size=12, family="Inter, sans-serif"),
+    margin=dict(l=0, r=0, t=40, b=0),
+    legend=dict(orientation='h', yanchor='bottom', y=1.05, xanchor='left', x=0, bgcolor='rgba(0,0,0,0)'),
+    hovermode="x unified"
+)
+
 def render_top(df_pick):
-    st.markdown(f"<div class='section-header'><h3>🏆 TOP 100 materiálů podle Queue</h3></div>", unsafe_allow_html=True)
-    q_options = ["Všechny Queue dohromady"] + sorted(df_pick['Queue'].dropna().unique().tolist())
-    selected_queue_disp = st.selectbox("Zobrazit TOP 100 pro:", options=q_options)
+    # Chytrý lokální překladač pro tuto záložku
+    def _t(cs, en): 
+        return en if st.session_state.get('lang', 'cs') == 'en' else cs
 
-    df_top_filter = df_pick if selected_queue_disp == "Všechny Queue dohromady" else df_pick[df_pick['Queue'] == selected_queue_disp]
+    st.markdown(f"<div class='section-header'><h3>🏆 {_t('Materiály (TOP)', 'Top Materials')}</h3><p>{_t('Přehled nejčastěji vychystávaných materiálů podle fyzické náročnosti a počtu zakázek (TO).', 'Overview of the most frequently picked materials based on physical effort and TO count.')}</p></div>", unsafe_allow_html=True)
+    
+    if df_pick is None or df_pick.empty:
+        st.info(_t("Žádná data nejsou k dispozici.", "No data available."))
+        return
 
-    if not df_top_filter.empty:
-        agg = df_top_filter.groupby('Material').agg(
-            pocet_picku=('Material', 'count'), celkove_mnozstvi=('Qty', 'sum'),
-            celkem_pohybu=('Pohyby_Rukou', 'sum'), pohyby_exact=('Pohyby_Exact', 'sum'),
-            pohyby_miss=('Pohyby_Loose_Miss', 'sum'), celkova_vaha=('Celkova_Vaha_KG', 'sum')
-        ).reset_index()
-
-        agg.rename(columns={'Material': "Materiál", 'pocet_picku': "Řádky", 'celkove_mnozstvi': "Kusů celkem", 'celkem_pohybu': "Celkem pohybů", 'pohyby_exact': "Pohyby (Přesně)", 'pohyby_miss': "Pohyby (Odhady)", 'celkova_vaha': "Hmotnost (kg)"}, inplace=True)
-
-        top_100_df = agg.sort_values(by="Celkem pohybů", ascending=False).head(100)[["Materiál", "Řádky", "Kusů celkem", "Hmotnost (kg)", "Pohyby (Přesně)", "Pohyby (Odhady)", "Celkem pohybů"]]
-
-        fmt_top = {"Hmotnost (kg)": "{:.1f}"}
-        for c in top_100_df.columns:
-            if c not in ["Materiál", "Hmotnost (kg)"]: fmt_top[c] = "{:.0f}"
-
-        col_q1, col_q2 = st.columns([1.5, 1])
-        with col_q1:
-            st.dataframe(top_100_df.style.format(fmt_top), use_container_width=True, hide_index=True)
-        with col_q2:
-            st.bar_chart(top_100_df.set_index("Materiál")["Celkem pohybů"])
-
-    st.divider()
-    st.subheader("Materiály s chybějícími daty o balení (Žebříček odhadů)")
-    all_mat_agg = df_pick.groupby('Material').agg(
-        lines=('Material', 'count'), qty=('Qty', 'sum'), miss=('Pohyby_Loose_Miss', 'sum'), mov=('Pohyby_Rukou', 'sum')
+    # Bezpečná detekce sloupce pro zakázky (TO)
+    to_col = 'Transfer Order Number' if 'Transfer Order Number' in df_pick.columns else 'Delivery'
+    
+    # 1. Agregace všech dat za materiály
+    mat_agg = df_pick.groupby('Material').agg(
+        Moves=('Pohyby_Rukou', 'sum'),
+        Exact=('Pohyby_Exact', 'sum'),
+        Miss=('Pohyby_Loose_Miss', 'sum'),
+        Qty=('Qty', 'sum'),
+        TO_Count=(to_col, 'nunique'),
+        Lines=('Material', 'count')
     ).reset_index()
-    all_mat_agg.columns = ["Materiál", "Řádky", "Kusů celkem", "Pohyby (Odhady)", "Celkem pohybů"]
-    miss_df = all_mat_agg[all_mat_agg["Pohyby (Odhady)"] > 0].sort_values(by="Pohyby (Odhady)", ascending=False).head(100)
+    
+    # 2. Výpočet statistik přesnosti (Exact vs Estimate)
+    total_mats = len(mat_agg)
+    exact_mats = len(mat_agg[mat_agg['Miss'] == 0])
+    est_mats = len(mat_agg[mat_agg['Miss'] > 0])
+    
+    pct_exact = (exact_mats / total_mats) * 100 if total_mats > 0 else 0
+    pct_est = (est_mats / total_mats) * 100 if total_mats > 0 else 0
+    
+    # Zobrazení statistik nahoře
+    st.markdown(f"#### 📊 {_t('Kvalita dat a pokrytí materiálů', 'Data Quality and Material Coverage')}")
+    c1, c2, c3 = st.columns(3)
+    with c1:
+        with st.container(border=True):
+            st.metric(_t("Celkem unikátních materiálů", "Total Unique Materials"), f"{total_mats:,}")
+    with c2:
+        with st.container(border=True):
+            st.metric(_t("Přesná data (100% z MARM)", "Exact Data (100% from MARM)"), f"{exact_mats:,} ks", f"{pct_exact:.1f} %")
+    with c3:
+        with st.container(border=True):
+            # Formátování hodnoty bez zelené šipky nahoru, aby to nevypadalo jako pozitivní růst
+            st.metric(_t("Vyžadující odhad (Chybí obal)", "Requiring Estimate (Missing box)"), f"{est_mats:,} ks ({pct_est:.1f} %)")
+            
+    st.divider()
+    
+    # Rozdělení do 3 záložek
+    tab1, tab2, tab3 = st.tabs([
+        f"💪 {_t('TOP 500: Podle pohybů', 'TOP 500: By Moves')}",
+        f"📦 {_t('TOP 500: Podle zakázek (TO)', 'TOP 500: By TOs')}",
+        f"⚠️ {_t('TOP 500: Odhady (Chybí data)', 'TOP 500: Estimates (Missing data)')}"
+    ])
+    
+    # Pomocná funkce pro formátování tabulky
+    def format_table(df):
+        disp = df[['Material', 'Moves', 'TO_Count', 'Qty', 'Exact', 'Miss', 'Lines']].copy()
+        disp.columns = [
+            _t("Materiál", "Material"),
+            _t("Celkem Pohybů", "Total Moves"),
+            _t("Počet TO", "TO Count"),
+            _t("Vychystáno kusů", "Picked Qty"),
+            _t("Přesné pohyby", "Exact Moves"),
+            _t("Odhady (Miss)", "Estimates (Miss)"),
+            _t("Řádků v reportu", "Lines in Report")
+        ]
+        return disp
+    
+    # Pomocná funkce pro kreslení čistých Plotly grafů
+    def make_bar_chart(df, x_col, y_col, title, color='#3b82f6'):
+        fig = go.Figure()
+        fig.add_trace(go.Bar(
+            x=df[x_col],
+            y=df[y_col],
+            marker_color=color,
+            text=df[y_col].apply(lambda x: f"{x:,.0f}"),
+            textposition='auto',
+            name=title
+        ))
+        fig.update_layout(**CHART_LAYOUT)
+        fig.update_layout(title=title, xaxis_title=_t("Materiál", "Material"), yaxis_title="")
+        return fig
 
-    if not miss_df.empty:
-        st.dataframe(miss_df.style.format({c: "{:.0f}" for c in ["Pohyby (Odhady)", "Celkem pohybů"]}), use_container_width=True, hide_index=True)
-    else:
-        st.success("✅ Všechna data o baleních jsou k dispozici — žádné odhady!")
+    # --- ZÁLOŽKA 1: Podle pohybů ---
+    with tab1:
+        st.markdown(f"**{_t('Nejnáročnější materiály z hlediska fyzické práce (bez ohledu na přesnost).', 'Most demanding materials in terms of physical effort (regardless of accuracy).')}**")
+        top_moves = mat_agg.sort_values('Moves', ascending=False).head(500)
+        
+        col_t1, col_g1 = st.columns([1.1, 1])
+        with col_t1:
+            st.dataframe(format_table(top_moves), use_container_width=True, hide_index=True)
+        with col_g1:
+            st.plotly_chart(make_bar_chart(top_moves.head(15), 'Material', 'Moves', _t("TOP 15 dle fyzických pohybů", "TOP 15 by Physical Moves"), '#3b82f6'), use_container_width=True)
+
+    # --- ZÁLOŽKA 2: Podle TO ---
+    with tab2:
+        st.markdown(f"**{_t('Nejfrekventovanější materiály (nejvíce zastávek skladníka u regálu).', 'Most frequent materials (most picker stops at the shelf).')}**")
+        top_tos = mat_agg.sort_values('TO_Count', ascending=False).head(500)
+        
+        col_t2, col_g2 = st.columns([1.1, 1])
+        with col_t2:
+            st.dataframe(format_table(top_tos), use_container_width=True, hide_index=True)
+        with col_g2:
+            st.plotly_chart(make_bar_chart(top_tos.head(15), 'Material', 'TO_Count', _t("TOP 15 dle počtu zakázek (TO)", "TOP 15 by Order Count (TO)"), '#10b981'), use_container_width=True)
+
+    # --- ZÁLOŽKA 3: Odhady (Miss) ---
+    with tab3:
+        st.markdown(f"**{_t('Materiály, kterým chybí master data (balení) a systém jejich fyzickou náročnost odhaduje.', 'Materials missing master data (packaging) whose physical effort is estimated.')}**")
+        est_df = mat_agg[mat_agg['Miss'] > 0].copy()
+        
+        if est_df.empty:
+            st.success(_t("Skvělá zpráva! Všechny vaše materiály mají perfektní master data.", "Great news! All your materials have perfect master data."))
+        else:
+            sort_opt = st.radio(
+                _t("Seřadit žebříček podle:", "Sort ranking by:"),
+                options=[_t("Počtu zakázek (TO_Count)", "Order Count (TO_Count)"), _t("Odhadnutých pohybů (Miss)", "Estimated Moves (Miss)")],
+                horizontal=True
+            )
+            
+            if sort_opt == _t("Odhadnutých pohybů (Miss)", "Estimated Moves (Miss)"):
+                top_est = est_df.sort_values('Miss', ascending=False).head(500)
+                y_col_chart = 'Miss'
+                chart_title = _t("TOP 15 chybějících dat (dle dopadu na pohyby)", "TOP 15 Missing Data (by impact on moves)")
+                chart_color = '#ef4444'
+            else:
+                top_est = est_df.sort_values('TO_Count', ascending=False).head(500)
+                y_col_chart = 'TO_Count'
+                chart_title = _t("TOP 15 chybějících dat (dle frekvence TO)", "TOP 15 Missing Data (by TO frequency)")
+                chart_color = '#f59e0b'
+
+            col_t3, col_g3 = st.columns([1.1, 1])
+            with col_t3:
+                st.dataframe(format_table(top_est), use_container_width=True, hide_index=True)
+            with col_g3:
+                st.plotly_chart(make_bar_chart(top_est.head(15), 'Material', y_col_chart, chart_title, chart_color), use_container_width=True)
