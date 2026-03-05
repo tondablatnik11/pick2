@@ -54,7 +54,7 @@ def render_top(df_pick):
             st.metric(_t("Celkem unikátních materiálů", "Total Unique Materials"), f"{total_mats:,}")
     with c2:
         with st.container(border=True):
-            st.metric(_t("Přesná data (100% z MARM)", "Exact Data (100% from MARM)"), f"{exact_mats:,} ks", f"{pct_exact:.1f} %")
+            st.metric(_t("Přesná data 100% z manuálních master dat", "Exact Data 100% from Manual Master Data"), f"{exact_mats:,} ks", f"{pct_exact:.1f} %")
     with c3:
         with st.container(border=True):
             # Formátování hodnoty bez zelené šipky nahoru, aby to nevypadalo jako pozitivní růst
@@ -86,16 +86,26 @@ def render_top(df_pick):
     # Pomocná funkce pro kreslení čistých Plotly grafů
     def make_bar_chart(df, x_col, y_col, title, color='#3b82f6'):
         fig = go.Figure()
+        
+        # PŘEVOD NA STRING = Zabrání Plotly analyzovat materiály jako matematická čísla!
+        x_vals = df[x_col].astype(str)
+        
         fig.add_trace(go.Bar(
-            x=df[x_col],
+            x=x_vals,
             y=df[y_col],
             marker_color=color,
             text=df[y_col].apply(lambda x: f"{x:,.0f}"),
             textposition='auto',
             name=title
         ))
+        
         fig.update_layout(**CHART_LAYOUT)
-        fig.update_layout(title=title, xaxis_title=_t("Materiál", "Material"), yaxis_title="")
+        fig.update_layout(
+            title=title, 
+            xaxis_title=_t("Materiál", "Material"), 
+            yaxis_title="",
+            xaxis=dict(type='category') # VYNUCENÍ KATEGORICKÉ OSY X
+        )
         return fig
 
     # --- ZÁLOŽKA 1: Podle pohybů ---
