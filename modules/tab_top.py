@@ -58,7 +58,7 @@ def render_top(df_pick):
     with c3:
         with st.container(border=True):
             # Formátování hodnoty bez zelené šipky nahoru, aby to nevypadalo jako pozitivní růst
-            st.metric(_t("Vyžadující odhad (Chybí obal)", "Requiring Estimate (Missing box)"), f"{est_mats:,} ks ({pct_est:.1f} %)")
+            st.metric(_t("Vyžadující odhad (Chybí data o balení)", "Requiring Estimate (Missing box)"), f"{est_mats:,} ks ({pct_est:.1f} %)")
             
     st.divider()
     
