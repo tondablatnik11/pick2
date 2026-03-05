@@ -4,6 +4,7 @@ import numpy as np
 import plotly.graph_objects as go
 import plotly.express as px
 import re
+from database import load_from_db
 from modules.utils import t
 
 # Globální nastavení grafů pro jednotný vzhled
@@ -66,9 +67,29 @@ def render_packing(billing_df, df_oe):
          st.warning(_t("Data se sice spojila, ale u žádné zakázky není zaznamenán platný procesní čas (> 0 min).", "Data matched, but no valid process time (> 0 min) found."))
          return
 
+    # --- CHYTRÉ NAPOJENÍ NA PŘESNÁ SKLADOVÁ DATA (OPRAVA KUSŮ A MATERIÁLU) ---
+    df_pick = load_from_db('raw_pick')
+    if df_pick is not None and not df_pick.empty:
+        df_pick['Clean_Del'] = df_pick.get('Delivery', pd.Series()).astype(str).str.replace(r'\.0$', '', regex=True).str.strip().str.lstrip('0')
+        df_pick['Qty'] = pd.to_numeric(df_pick.get('Act.qty (dest)', 0), errors='coerce').fillna(0)
+        df_pick['Material'] = df_pick.get('Material', pd.Series()).astype(str).str.strip()
+        
+        # Pro každou zakázku sečteme reálné kusy a najdeme nejčastější materiál
+        pick_info = df_pick.groupby('Clean_Del').agg(
+            Skladovy_Material=('Material', lambda x: x.value_counts().index[0] if len(x.value_counts()) > 0 else ""),
+            Celkove_Kusy=('Qty', 'sum')
+        ).reset_index()
+        
+        valid_time_df = pd.merge(valid_time_df, pick_info, on='Clean_Del', how='left')
+        pcs_col = 'Celkove_Kusy'
+        mat_col = 'Skladovy_Material'
+    else:
+        # Fallback (kdyby pick report chyběl)
+        pcs_col = 'pocet_to'
+        mat_col = 'Material_y' if 'Material_y' in valid_time_df.columns else 'Material'
+
     # Výpočet efektivity
     valid_time_df['Min_per_HU'] = np.where(valid_time_df['pocet_hu'] > 0, valid_time_df['Process_Time_Min'] / valid_time_df['pocet_hu'], valid_time_df['Process_Time_Min'])
-    mat_col = 'Material_y' if 'Material_y' in valid_time_df.columns else 'Material'
     
     # --- HLAVNÍ METRIKY ---
     c1, c2, c3, c4 = st.columns(4)
@@ -110,7 +131,6 @@ def render_packing(billing_df, df_oe):
                 cust_df['Avg_Min_Order'] = np.where(cust_df['Orders'] > 0, cust_df['Total_Time'] / cust_df['Orders'], 0)
                 cust_df['Avg_Min_HU'] = np.where(cust_df['Total_HU'] > 0, cust_df['Total_Time'] / cust_df['Total_HU'], 0)
                 
-                # Seřazení podle počtu zakázek (Orders)
                 cust_df = cust_df.sort_values('Orders', ascending=False)
                 
                 disp_cust = cust_df[['CUSTOMER', 'Orders', 'Avg_Min_Order', 'Avg_Min_HU', 'Total_Time']].copy()
@@ -221,10 +241,10 @@ def render_packing(billing_df, df_oe):
         st.markdown(f"**📦 {_t('Sjednocená analytika spotřeby obalů a časové náročnosti', 'Unified analytics of packaging usage and time effort')}**")
         st.caption(_t("Data jsou automaticky očištěna (sloučeny názvy jako 'CARTON-05' a 'CARTON-05-KARTON (1x)').", "Data is automatically cleaned (merging names like 'CARTON-05' and 'CARTON-05-KARTON (1x)')."))
         
-        def get_pkg_stats(df, col_name):
+        def get_pkg_stats(df, col_name, pcs_col_name):
             if col_name not in df.columns: return pd.DataFrame()
             
-            temp_df = df[['Clean_Del', 'Process_Time_Min', 'pocet_hu', 'pocet_to', col_name]].copy()
+            temp_df = df[['Clean_Del', 'Process_Time_Min', 'pocet_hu', pcs_col_name, col_name]].copy()
             temp_df[col_name] = temp_df[col_name].astype(str).str.split(';')
             exploded = temp_df.explode(col_name)
             
@@ -237,7 +257,7 @@ def render_packing(billing_df, df_oe):
                 Pouzito_Zakazek=('Clean_Del', 'nunique'),
                 Total_Time=('Process_Time_Min', 'sum'),
                 Total_HU=('pocet_hu', 'sum'),
-                Total_Pcs=('pocet_to', 'sum') 
+                Total_Pcs=(pcs_col_name, 'sum') 
             ).reset_index()
             
             stats['Avg_Time_Order'] = np.where(stats['Pouzito_Zakazek'] > 0, stats['Total_Time'] / stats['Pouzito_Zakazek'], 0)
@@ -248,17 +268,17 @@ def render_packing(billing_df, df_oe):
 
         def render_pkg_section(title, col_name, color):
             st.markdown(f"##### {title}")
-            pkg_df = get_pkg_stats(valid_time_df, col_name)
+            pkg_df = get_pkg_stats(valid_time_df, col_name, pcs_col)
             
             if not pkg_df.empty:
                 col_pt, col_pg = st.columns([1.5, 1])
                 with col_pt:
                     disp = pkg_df[[col_name, 'Pouzito_Zakazek', 'Avg_Time_Order', 'Avg_Time_HU', 'Avg_Pcs']].copy()
-                    disp.columns = [_t("Vyčištěný název obalu", "Clean Packaging Name"), _t("Použito (Zakázek)", "Used (Orders)"), _t("Prům. čas na zakázku (Min)", "Avg Time/Order (Min)"), _t("Prům. čas na HU (Min)", "Avg Time/HU (Min)"), _t("Prům. ks materiálu (TO)", "Avg Mat Pcs (TO)")]
+                    disp.columns = [_t("Vyčištěný název obalu", "Clean Packaging Name"), _t("Použito (Zakázek)", "Used (Orders)"), _t("Prům. čas na zakázku (Min)", "Avg Time/Order (Min)"), _t("Prům. čas na HU (Min)", "Avg Time/HU (Min)"), _t("Prům. ks materiálu", "Avg Mat Pcs")]
                     st.dataframe(disp.style.format({
                         _t("Prům. čas na zakázku (Min)", "Avg Time/Order (Min)"): "{:.1f}",
                         _t("Prům. čas na HU (Min)", "Avg Time/HU (Min)"): "{:.1f}",
-                        _t("Prům. ks materiálu (TO)", "Avg Mat Pcs (TO)"): "{:.1f}"
+                        _t("Prům. ks materiálu", "Avg Mat Pcs"): "{:.1f}"
                     }), hide_index=True, use_container_width=True)
                 with col_pg:
                     fig = go.Figure(go.Bar(
@@ -289,7 +309,7 @@ def render_packing(billing_df, df_oe):
         if 'CUSTOMER' in valid_time_df.columns: disp_cols.append('CUSTOMER')
         if mat_col in valid_time_df.columns: disp_cols.append(mat_col)
         
-        disp_cols.extend(['pocet_to', 'pohyby_celkem', 'pocet_hu', 'Process_Time_Min', 'Min_per_HU'])
+        disp_cols.extend(['pocet_to', pcs_col, 'pohyby_celkem', 'pocet_hu', 'Process_Time_Min', 'Min_per_HU'])
         if 'Shift' in valid_time_df.columns: disp_cols.append('Shift')
         
         disp_pack = valid_time_df[disp_cols].copy()
@@ -304,6 +324,7 @@ def render_packing(billing_df, df_oe):
             'CUSTOMER': _t("Zákazník", "Customer"),
             mat_col: _t("Hlavní materiál", "Main Material"),
             'pocet_to': _t("Pickováno TO", "Picked TOs"),
+            pcs_col: _t("Kusů (Qty)", "Pieces (Qty)"),
             'pohyby_celkem': _t("Fyzické pohyby", "Physical Moves"),
             'pocet_hu': _t("Vyfakturováno HU", "Billed HUs"),
             'Process_Time_Min': _t("Čas balení (Min)", "Packing Time (Min)"),
@@ -315,7 +336,8 @@ def render_packing(billing_df, df_oe):
         
         st.dataframe(disp_pack.style.format({
             _t("Čas balení (Min)", "Packing Time (Min)"): "{:.1f}", 
-            _t("Minut na 1 HU", "Minutes per 1 HU"): "{:.1f}"
+            _t("Minut na 1 HU", "Minutes per 1 HU"): "{:.1f}",
+            _t("Kusů (Qty)", "Pieces (Qty)"): "{:.0f}"
         }), hide_index=True, use_container_width=True)
 
     # ==========================================
@@ -326,8 +348,6 @@ def render_packing(billing_df, df_oe):
         st.caption(_t("Algoritmus zkoumá každý materiál, detekuje průměrný počet odeslaných kusů a vyhledá z historie nejčastěji používanou krabici, KLT nebo paletu, do které pracovník tento materiál vložil.", "The algorithm examines each material, average pieces shipped, and finds the most frequently used packaging from history."))
         
         if mat_col in valid_time_df.columns:
-            pcs_col = 'Number of pieces' if 'Number of pieces' in valid_time_df.columns else 'pocet_to'
-            
             # Funkce pro zjištění "Módu" (nejčastějšího prvku) v sérii s oddělovači
             def get_top_pkg(series):
                 all_pkgs = []
@@ -370,7 +390,7 @@ def render_packing(billing_df, df_oe):
                 size="Orders", 
                 color="Top_Carton",
                 hover_name=mat_col,
-                log_x=True, # Logaritmická osa X pro lepší čitelnost, když má někdo 1 ks a někdo 1000 ks
+                log_x=True, # Logaritmická osa X pro lepší čitelnost (1 ks vs 1000 ks)
                 size_max=40,
                 labels={
                     "Avg_Pcs_Order": _t("Průměrně kusů na zakázku (Logaritmicky)", "Avg Pcs per Order (Log)"),
