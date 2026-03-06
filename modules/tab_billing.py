@@ -10,7 +10,7 @@ try:
 except AttributeError:
     fast_render = lambda f: f
 
-# Normalizační funkce pro spolehlivé párování HU čísel (ořízne nuly a .0)
+# Normalizační funkce pro spolehlivé párování HU čísel
 def normalize_hu(val):
     v = str(val).strip()
     if v.lower() in ['nan', 'none', '']: return ''
@@ -74,17 +74,7 @@ def cached_billing_logic(df_pick, df_vekp, df_vepo, df_cats, queue_count_col, df
     else:
         vekp_filtered['Clean_Parent'] = ""
 
-    valid_base_hus = set()
-    if df_vepo is not None and not df_vepo.empty:
-        vepo_hu_col = next((c for c in df_vepo.columns if "Internal HU" in str(c) or "HU-Nummer intern" in str(c)), df_vepo.columns[0])
-        vepo_lower_col = next((c for c in df_vepo.columns if "Lower-level" in str(c) or "untergeordn" in str(c).lower()), None)
-        valid_base_hus = set(df_vepo[vepo_hu_col].apply(normalize_hu))
-        if vepo_lower_col:
-            valid_base_hus.update(set(df_vepo[vepo_lower_col].apply(normalize_hu)))
-    else:
-        valid_base_hus = set(vekp_filtered['Clean_HU_Int'])
-
-    # 1. MAPOVÁNÍ ROOT HUs Z VEKP (Balení na nejvyšší úrovni, které nemá rodiče)
+    # 1. MAPOVÁNÍ ROOT HUs Z VEKP (Všechny výsledné krabice a palety)
     del_to_root_hus = {}
     for d, grp in vekp_filtered.groupby('Clean_Del'):
         root_hus = set()
@@ -92,7 +82,7 @@ def cached_billing_logic(df_pick, df_vekp, df_vepo, df_cats, queue_count_col, df
             hi = r['Clean_HU_Int']
             he = r['Clean_HU_Ext']
             parent = r['Clean_Parent']
-            # Root HU nesmí mít nadřazenou HU (nesmí být přebaleno do větší palety)
+            # Root HU nesmí mít nadřazenou HU
             if not parent:
                 if hi: root_hus.add(hi)
                 if he: root_hus.add(he)
@@ -105,17 +95,15 @@ def cached_billing_logic(df_pick, df_vekp, df_vepo, df_cats, queue_count_col, df
         return v in ['K1','K2','K3','K4','KLT','KLT1','KLT2'] or (v.startswith('K') and len(v) <= 2)
 
     pick_hu_cols = ['Handling Unit', 'Source storage unit', 'Source Storage Bin']
-    voll_hus_global = set()
     
-    # 2. IDENTIFIKACE SKUTEČNÝCH VOLLPALET Z PICK REPORTU
-    def check_and_add_voll(row):
+    # 2. IDENTIFIKACE VOLLPALET NA ÚROVNI JEDNOTLIVÝCH ŘÁDKŮ (TO)
+    def detect_voll_row(row):
         if str(row.get('Removal of total SU', '')).strip().upper() != 'X': 
             return False
         if c_su and is_klt(row.get(c_su, '')): 
             return False 
             
-        deliv = str(row['Clean_Del'])
-        root_hus = del_to_root_hus.get(deliv, set())
+        root_hus = del_to_root_hus.get(row['Clean_Del'], set())
         if not root_hus:
             return False
             
@@ -123,141 +111,77 @@ def cached_billing_logic(df_pick, df_vekp, df_vepo, df_cats, queue_count_col, df
             if col in row.index and pd.notna(row[col]):
                 val = normalize_hu(row[col])
                 if val and val in root_hus:
-                    voll_hus_global.add(val)
                     return True
         return False
 
-    df_pick_billing['Is_Vollpalette'] = df_pick_billing.apply(check_and_add_voll, axis=1)
+    df_pick_billing['Is_Vollpalette'] = df_pick_billing.apply(detect_voll_row, axis=1)
 
-    # 3. MATEMATICKÝ VÝPOČET POMĚRU PALET A KRABIC V ZAKÁZCE
-    del_stats = []
-    for d, grp in vekp_filtered.groupby("Clean_Del"):
-        root_df = grp[grp['Clean_Parent'] == '']
-        
-        # Celkový počet hlavních balení v zakázce
-        unique_ints = set([x for x in root_df['Clean_HU_Int'] if x])
-        count_root = len(unique_ints)
-        if count_root == 0 and not root_df.empty:
-            count_root = len(set([x for x in root_df['Clean_HU_Ext'] if x]))
-            
-        # Počet balení, u kterých jsme prokázali, že to jsou čisté palety
-        matched_hus = set()
-        for _, r in root_df.iterrows():
-            hi = r['Clean_HU_Int']
-            he = r['Clean_HU_Ext']
-            if (hi and hi in voll_hus_global) or (he and he in voll_hus_global):
-                matched_hus.add(hi if hi else he)
-        count_voll = len(matched_hus)
-        
-        del_stats.append({
-            'Clean_Del_Merge': d,
-            'count_root_hus': count_root,
-            'count_voll_hus': count_voll
-        })
-        
-    df_del_stats = pd.DataFrame(del_stats)
-    if df_del_stats.empty:
-        df_del_stats = pd.DataFrame(columns=['Clean_Del_Merge', 'count_root_hus', 'count_voll_hus'])
+    # 3. KATEGORIZACE JEDNOTLIVÝCH ŘÁDKŮ (Rozpad zakázky na části)
+    non_voll_mats_per_del = df_pick_billing[~df_pick_billing['Is_Vollpalette']].groupby('Clean_Del')['Material'].nunique().to_dict()
 
-    # Standardní výpočet celkových HU
-    auto_voll_hus_clean = set(voll_hus_global)
-    hu_agg_list = []
-    for delivery, group in vekp_filtered.groupby("Clean_Del"):
-        ext_to_int = dict(zip(group['Clean_HU_Ext'], group['Clean_HU_Int']))
-        p_map = {}
-        for _, r in group.iterrows():
-            child = str(r['Clean_HU_Int'])
-            parent = str(r['Clean_Parent'])
-            if parent in ext_to_int: 
-                parent = ext_to_int[parent]
-            p_map[child] = parent 
-            
-        leaves = [h for h in group['Clean_HU_Int'] if h in valid_base_hus]
-        roots = set()
-        voll_count = 0
-        for leaf in leaves:
-            leaf_exts = group.loc[group['Clean_HU_Int'] == leaf, 'Clean_HU_Ext'].values
-            leaf_ext = leaf_exts[0] if len(leaf_exts) > 0 else ""
-            if leaf in auto_voll_hus_clean or leaf_ext in auto_voll_hus_clean:
-                voll_count += 1
-            else:
-                curr = leaf
-                visited = set()
-                while curr in p_map and p_map[curr] != "" and curr not in visited:
-                    visited.add(curr)
-                    curr = p_map[curr]
-                roots.add(curr)
-                
-        orig_del = group["Generated delivery"].iloc[0]
-        hu_agg_list.append({
-            "Generated delivery": orig_del, 
-            "hu_leaf": len(leaves), 
-            "hu_top_level": len(roots) + voll_count, 
-            "Clean_Del_Merge": delivery
-        })
-        
-    hu_agg = pd.DataFrame(hu_agg_list)
-    if hu_agg.empty:
-        hu_agg = pd.DataFrame(columns=["Generated delivery", "hu_leaf", "hu_top_level", "Clean_Del_Merge"])
-
-    # AGREGACE
-    pick_agg = df_pick_billing.groupby("Delivery").agg(
-        pocet_to=(queue_count_col, "nunique"),
-        pohyby_celkem=("Pohyby_Rukou", "sum"),
-        pocet_lokaci=("Source Storage Bin", "nunique"),
-        hlavni_fronta=("Queue", "first"),
-        pocet_mat=("Material", "nunique"),
-        Clean_Del_Merge=("Clean_Del", "first"),
-        Month=("Month", "first")
-    ).reset_index()
-
-    billing_df = pd.merge(pick_agg, hu_agg, on="Clean_Del_Merge", how="left")
-    billing_df = pd.merge(billing_df, df_del_stats, on="Clean_Del_Merge", how="left")
-    
-    billing_df['count_root_hus'] = billing_df['count_root_hus'].fillna(0)
-    billing_df['count_voll_hus'] = billing_df['count_voll_hus'].fillna(0)
-
-    if df_cats is not None and not df_cats.empty:
-        billing_df = pd.merge(billing_df, df_cats[["Lieferung", "Category_Full"]], left_on="Delivery", right_on="Lieferung", how="left")
-    else:
-        billing_df["Category_Full"] = pd.NA
-
-    # 4. FINÁLNÍ URČENÍ KATEGORIE (VRÁCENÁ LOGIKA O vs OE)
-    def odvod_kategorii(row):
-        deliv = str(row["Delivery"]).strip().lstrip('0')
+    def assign_category(row):
+        deliv = str(row['Clean_Del'])
         base = aus_category_map.get(deliv)
         
         if not base:
-            q = str(row.get('hlavni_fronta', '')).upper()
-            # OPRAVA ZPĚT NA TVŮJ PŮVODNÍ FUNKČNÍ MODEL (Kde O a OE byly oddělené)
-            base = "OE" if 'PI_PA_OE' in q else "E" if 'PI_PA' in q else "O" if ('PI_PL_FUOE' in q or 'PI_PL_OE' in q) else "N" if 'PI_PL' in q else "N"
+            q = str(row.get('Queue', '')).upper()
+            base = "OE" if ('_OE' in q or 'FUOE' in q) else "E" if 'PI_PA' in q else "O" if ('_O' in q) else "N"
             
-        c_root = row.get('count_root_hus', 0)
-        c_voll = row.get('count_voll_hus', 0)
-        pocet_mat = row.get('pocet_mat', 1)
-
-        # 1. MATEMATICKÝ DŮKAZ VOLLPALETY
-        # Pokud se počet čistých palet rovná celkovému počtu zabalených jednotek -> Je to 100% Vollpalette
-        if c_root > 0 and c_voll >= c_root:
+        if row['Is_Vollpalette']:
             return f"{base} Vollpalette"
-            
-        # 2. Respektovat zákazníkův Excel pro ostatní případy
-        cat_full = row.get('Category_Full')
-        if pd.notna(cat_full) and str(cat_full).strip() not in ["", "nan", txt_uncat]: 
-            return cat_full
-            
-        # 3. Záložní logika (Pokud má zakázka mix palet a krabic, nebo více materiálů)
-        if pocet_mat > 1 or (0 < c_voll < c_root):
-            return f"{base} Misch"
         else:
-            return f"{base} Sortenrein"
+            # Zbytek zakázky (volné kusy) hodíme do Misch nebo Sortenrein podle počtu zbývajících materiálů
+            mats = non_voll_mats_per_del.get(deliv, 1)
+            if mats > 1: return f"{base} Misch"
+            else: return f"{base} Sortenrein"
 
-    billing_df["Category_Full"] = billing_df.apply(odvod_kategorii, axis=1)
+    df_pick_billing['Category_Full'] = df_pick_billing.apply(assign_category, axis=1)
 
-    def urci_konecnou_hu(row):
-        return row.get('hu_top_level', 0)
+    # 4. SPOČÍTÁNÍ PŘESNÝCH KUSŮ HU PRO KAŽDOU ČÁST ZAKÁZKY
+    del_stats_dict = {}
+    for d, grp in vekp_filtered.groupby("Clean_Del"):
+        root_df = grp[grp['Clean_Parent'] == '']
+        total_root_hus = len(root_df)
+        
+        # Kolik z nich bylo Vollpalet?
+        matched_set = set()
+        pick_voll_rows = df_pick_billing[(df_pick_billing['Clean_Del'] == d) & (df_pick_billing['Is_Vollpalette'])]
+        for col in pick_hu_cols:
+            if col in pick_voll_rows.columns:
+                matched_set.update(pick_voll_rows[col].dropna().apply(normalize_hu).tolist())
+                
+        voll_hu_count = 0
+        for _, r in root_df.iterrows():
+            if r['Clean_HU_Int'] in matched_set or r['Clean_HU_Ext'] in matched_set:
+                voll_hu_count += 1
+                
+        non_voll_hu_count = max(0, total_root_hus - voll_hu_count)
+        del_stats_dict[d] = {'voll': voll_hu_count, 'non_voll': non_voll_hu_count}
 
-    billing_df["pocet_hu"] = billing_df.apply(urci_konecnou_hu, axis=1).fillna(0).astype(int)
+    # 5. AGREGACE (Nyní grupujeme podle Delivery AND Category!)
+    # Tohle zakázku 4941078030 rozdělí do dvou řádků: 19 TO do Vollpalette a 1 TO do Misch
+    pick_agg = df_pick_billing.groupby(['Delivery', 'Clean_Del', 'Category_Full']).agg(
+        pocet_to=(queue_count_col, "nunique"),
+        pohyby_celkem=("Pohyby_Rukou", "sum"),
+        pocet_lokaci=("Source Storage Bin", "nunique"),
+        Month=("Month", "first")
+    ).reset_index()
+
+    # Přiřazení vyfakturovaných HU k příslušným řádkům
+    def assign_hu_counts(row):
+        d = row['Clean_Del']
+        cat = row['Category_Full']
+        stats = del_stats_dict.get(d, {'voll': 0, 'non_voll': 0})
+        
+        if 'Vollpalette' in cat:
+            return stats['voll']
+        else:
+            return stats['non_voll']
+
+    pick_agg['pocet_hu'] = pick_agg.apply(assign_hu_counts, axis=1)
+
+    # 6. FINÁLNÍ VÝPOČTY
+    billing_df = pick_agg.copy()
     billing_df["Bilance"] = (billing_df["pocet_to"] - billing_df["pocet_hu"]).astype(int)
     billing_df["TO_navic"] = billing_df["Bilance"].clip(lower=0)
 
@@ -280,7 +204,8 @@ def render_billing(df_pick, df_vekp, df_vepo, df_cats, queue_count_col, aus_data
         c1, c2, c3, c4 = st.columns(4)
         with c1:
             with st.container(border=True): 
-                st.metric(_t("Zakázek celkem", "Total Orders"), f"{len(billing_df):,}")
+                # Změněn popisek, protože teď máme "části zakázek"
+                st.metric(_t("Fakturačních položek (Částí zakázek)", "Billing Items (Order Parts)"), f"{len(billing_df):,}")
         with c2:
             with st.container(border=True): 
                 st.metric(_t("Fakturované palety/krabice (HU)", "Billed Pallets/Boxes (HU)"), f"{int(billing_df['pocet_hu'].sum()):,}")
@@ -301,7 +226,7 @@ def render_billing(df_pick, df_vekp, df_vepo, df_cats, queue_count_col, aus_data
         st.divider()
         col_t1, col_t2 = st.columns([1.2, 1])
         with col_t1:
-            st.markdown(f"**{_t('Souhrn podle kategorií (Zisky a Ztráty)', 'Summary by Category (Profit & Loss)')}**")
+            st.markdown(f"**{_t('Souhrn podle kategorií zabalených HU (Zisky a Ztráty)', 'Summary by Packed HU Categories (Profit & Loss)')}**")
             
             cat_sum = billing_df.groupby("Category_Full").agg(
                 pocet_zakazek=("Delivery", "nunique"), 
@@ -317,7 +242,7 @@ def render_billing(df_pick, df_vekp, df_vepo, df_cats, queue_count_col, aus_data
             
             disp = cat_sum[["Category_Full", "pocet_zakazek", "pocet_to", "pocet_hu", "prum_poh", "bilance", "to_navic"]].copy()
             disp.columns = [
-                _t("Kategorie", "Category"), 
+                _t("Kategorie HU", "HU Category"), 
                 _t("Počet zakázek", "Orders"), 
                 _t("Počet TO", "Total TO"), 
                 _t("Zúčtované HU", "Billed HU"), 
@@ -328,7 +253,7 @@ def render_billing(df_pick, df_vekp, df_vepo, df_cats, queue_count_col, aus_data
             
             st.dataframe(disp.style.format({_t("Prům. pohybů na lokaci", "Avg Moves/Location"): "{:.1f}"}), use_container_width=True, hide_index=True)
             
-            st.markdown(f"<br>**🔍 {_t('Detailní seznam zakázek podle kategorie:', 'Detailed Order List by Category:')}**", unsafe_allow_html=True)
+            st.markdown(f"<br>**🔍 {_t('Detailní seznam částí zakázek podle kategorie:', 'Detailed Order Parts List by Category:')}**", unsafe_allow_html=True)
             cat_opts = [_t("— Vyberte kategorii pro detail —", "— Select Category for Detail —")] + sorted(billing_df["Category_Full"].dropna().unique().tolist())
             sel_detail_cat = st.selectbox("Vyberte", options=cat_opts, label_visibility="collapsed")
             
@@ -450,7 +375,7 @@ def render_billing(df_pick, df_vekp, df_vepo, df_cats, queue_count_col, aus_data
         billing_df['zisk_hu'] = np.where(billing_df['is_more_hu'], billing_df['pocet_hu'] - billing_df['pocet_to'], 0)
         
         ratio_table = billing_df.groupby('Category_Full').agg(
-            celkem=('Delivery', 'nunique'), 
+            celkem=('Delivery', 'count'), 
             to_celkem=('pocet_to', 'sum'), 
             hu_celkem=('pocet_hu', 'sum'), 
             pohyby_celkem=('pohyby_celkem', 'sum'), 
@@ -481,8 +406,8 @@ def render_billing(df_pick, df_vekp, df_vepo, df_cats, queue_count_col, aus_data
         ]].copy()
         
         disp_ratio.columns = [
-            _t("Kategorie", "Category"), 
-            _t("Zakázek", "Orders"), 
+            _t("Kategorie HU", "HU Category"), 
+            _t("Položek", "Items"), 
             _t("TO Celkem", "Total TO"), 
             _t("HU Celkem", "Total HU"), 
             _t("Index konsolidace (TO/HU)", "Consolidation Index (TO/HU)"), 
@@ -613,7 +538,7 @@ def render_billing(df_pick, df_vekp, df_vepo, df_cats, queue_count_col, aus_data
                 paper_bgcolor="rgba(0,0,0,0)", 
                 margin=dict(l=0, r=0, t=30, b=0), 
                 legend=dict(orientation="h", yanchor="bottom", y=1.05, xanchor="left", x=0),
-                yaxis=dict(title=_t("Celkem zakázek", "Total Orders")),
+                yaxis=dict(title=_t("Celkem položek", "Total Items")),
                 yaxis2=dict(title=_t("Podíl zakázek (%)", "Order Share (%)"), side="right", overlaying="y", showgrid=False, range=[0, 110])
             )
             st.plotly_chart(fig_r, use_container_width=True)
