@@ -66,24 +66,30 @@ def cached_billing_logic(df_pick, df_vekp, df_vepo, df_cats, queue_count_col, df
     else:
         vekp_filtered['Clean_Parent'] = ""
 
-    # 1. PŘÍPRAVA LOGIKY Z FU ZÁLOŽKY (VEPO cross-check)
-    vepo_hus = set()
+    valid_base_hus = set()
+    vepo_hus_strict = set()
+    
     if df_vepo is not None and not df_vepo.empty:
         vepo_hu_col = next((c for c in df_vepo.columns if "Internal HU" in str(c) or "HU-Nummer intern" in str(c)), df_vepo.columns[0])
-        vepo_hus = set(df_vepo[vepo_hu_col].astype(str).str.strip().str.lstrip('0'))
+        vepo_lower_col = next((c for c in df_vepo.columns if "Lower-level" in str(c) or "untergeordn" in str(c).lower()), None)
+        valid_base_hus = set(df_vepo[vepo_hu_col].astype(str).str.strip().str.lstrip('0'))
+        vepo_hus_strict = set(df_vepo[vepo_hu_col].astype(str).str.strip().str.lstrip('0'))
+        
+        if vepo_lower_col:
+            valid_base_hus.update(set(df_vepo[vepo_lower_col].dropna().astype(str).str.strip().str.lstrip('0')))
+    else:
+        valid_base_hus = set(vekp_filtered['Clean_HU_Int'])
 
     del_to_valid_hus = {}
     for d, grp in vekp_filtered.groupby('Clean_Del'):
-        valid_hus = set()
+        v = set()
         for _, r in grp.iterrows():
-            h_int = r['Clean_HU_Int']
-            h_ext = r['Clean_HU_Ext']
-            # Striktní podmínka z FU: Pokud máme VEPO, musí tam to HU fyzicky být!
-            if vepo_hus and h_int not in vepo_hus:
-                continue
-            if h_int: valid_hus.add(h_int)
-            if h_ext: valid_hus.add(h_ext)
-        del_to_valid_hus[d] = valid_hus
+            hi = r['Clean_HU_Int']
+            he = r['Clean_HU_Ext']
+            if not vepo_hus_strict or hi in vepo_hus_strict:
+                v.add(hi)
+                v.add(he)
+        del_to_valid_hus[d] = v
 
     c_su = 'Storage Unit Type' if 'Storage Unit Type' in df_pick_billing.columns else ('Type' if 'Type' in df_pick_billing.columns else None)
     
@@ -93,30 +99,23 @@ def cached_billing_logic(df_pick, df_vekp, df_vepo, df_cats, queue_count_col, df
 
     pick_hu_cols = ['Source storage unit', 'Source Storage Bin', 'Handling Unit']
     
-    # 2. IDENTICKÁ DETEKCE VOLLPALETY JAKO V FU ZÁLOŽCE
     def detect_voll(row):
-        # Musí mít značku X ze skladu
+        # Přidán strip() pro jistotu (kdyby tam byla mezera navíc)
         if str(row.get('Removal of total SU', '')).strip().upper() != 'X': 
             return False
-        # Nesmí to být KLT
         if c_su and is_klt(row.get(c_su, '')): 
             return False 
             
-        valid_hus_for_del = del_to_valid_hus.get(row['Clean_Del'], set())
-        if not valid_hus_for_del:
-            return False
-            
-        # Musí být nalezena shoda HU
+        valid_hus = del_to_valid_hus.get(row['Clean_Del'], set())
         for col in pick_hu_cols:
             if col in row.index and pd.notna(row[col]):
                 val = str(row[col]).strip().lstrip('0')
-                if val and val not in ['nan', 'none', ''] and val in valid_hus_for_del: 
+                if val and val in valid_hus: 
                     return True
         return False
 
     df_pick_billing['Is_Vollpalette'] = df_pick_billing.apply(detect_voll, axis=1)
 
-    # 3. KOREKTNÍ SOUČET VYFAKTUROVANÝCH HU (ABYCHOM NEPOČÍTALI DVAKRÁT)
     auto_voll_hus_clean = set()
     for _, r in df_pick_billing[df_pick_billing['Is_Vollpalette']].iterrows():
         for c in pick_hu_cols:
@@ -124,9 +123,6 @@ def cached_billing_logic(df_pick, df_vekp, df_vepo, df_cats, queue_count_col, df
                 val = str(r[c]).strip().lstrip('0')
                 if val: 
                     auto_voll_hus_clean.add(val)
-
-    # Definice platných base HUs pro výpočet fakturace
-    valid_base_hus = vepo_hus if vepo_hus else set(vekp_filtered['Clean_HU_Int'])
 
     hu_agg_list = []
     for delivery, group in vekp_filtered.groupby("Clean_Del"):
@@ -170,14 +166,13 @@ def cached_billing_logic(df_pick, df_vekp, df_vepo, df_cats, queue_count_col, df
     if hu_agg.empty:
         hu_agg = pd.DataFrame(columns=["Generated delivery", "hu_leaf", "hu_top_level", "Clean_Del_Merge"])
 
-    # AGREGACE DAT Z PICKU
     pick_agg = df_pick_billing.groupby("Delivery").agg(
         pocet_to=(queue_count_col, "nunique"),
         pohyby_celkem=("Pohyby_Rukou", "sum"),
         pocet_lokaci=("Source Storage Bin", "nunique"),
         hlavni_fronta=("Queue", "first"),
         pocet_mat=("Material", "nunique"),
-        has_voll=("Is_Vollpalette", "any"),  # Zjišťuje, zda je v zakázce alespoň jedna paleta
+        has_voll=("Is_Vollpalette", "any"), 
         Clean_Del_Merge=("Clean_Del", "first"),
         Month=("Month", "first")
     ).reset_index()
@@ -189,25 +184,28 @@ def cached_billing_logic(df_pick, df_vekp, df_vepo, df_cats, queue_count_col, df
     else:
         billing_df["Category_Full"] = pd.NA
 
-    # NOVÁ LOGIKA KATEGORIZACE
+    # ========================================================
+    # NOVÁ LOGIKA KATEGORIZACE (FYZICKÁ REALITA > EXCEL)
+    # ========================================================
     def odvod_kategorii(row):
         deliv = str(row["Delivery"]).strip().lstrip('0')
         base = aus_category_map.get(deliv)
         
         if not base:
             q = str(row.get('hlavni_fronta', '')).upper()
-            base = "OE" if ('_OE' in q or 'FUOE' in q) else "E" if 'PI_PA' in q else "O" if ('_O' in q) else "N"
+            base = "OE" if 'PI_PA_OE' in q else "E" if 'PI_PA' in q else "O" if ('PI_PL_FUOE' in q or 'PI_PL_OE' in q) else "N" if 'PI_PL' in q else "N"
             
         # 1. NEJVYŠŠÍ PRIORITA: Fyzicky prokázaná Vollpaleta
-        if row.get('has_voll', False):
+        # Pokud najdeme X-mark a potvrzení z VEKP, VŽDY je to Vollpalette.
+        if base in ['N', 'O'] and row.get('has_voll', False):
             return f"{base} Vollpalette"
             
-        # 2. Zákazníkův Excel
+        # 2. Respektovat případný zákazníkův Excel, jen pokud to NENÍ Vollpaleta
         cat_full = row.get('Category_Full')
         if pd.notna(cat_full) and str(cat_full).strip() not in ["", "nan", txt_uncat]: 
             return cat_full
             
-        # 3. Záložní logika
+        # 3. Naše záložní logika (Misch / Sortenrein)
         if row['pocet_mat'] > 1:
             return f"{base} Misch"
         else:
