@@ -2,12 +2,21 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 import plotly.graph_objects as go
+import re
 from modules.utils import t
 
 try:
     fast_render = st.fragment
 except AttributeError:
     fast_render = lambda f: f
+
+# Normalizační funkce pro spolehlivé párování HU čísel
+def normalize_hu(val):
+    v = str(val).strip()
+    if v.lower() in ['nan', 'none', '']: return ''
+    v = re.sub(r'\.0$', '', v)  # odstraní .0 na konci
+    v = v.lstrip('0')           # odstraní nuly na začátku
+    return v
 
 @st.cache_data(show_spinner=False)
 def cached_billing_logic(df_pick, df_vekp, df_vepo, df_cats, queue_count_col, df_likp_tmp, df_sdshp_tmp, df_t031_tmp, txt_uncat):
@@ -57,39 +66,39 @@ def cached_billing_logic(df_pick, df_vekp, df_vepo, df_cats, queue_count_col, df
     vekp_ext_col = vekp_filtered.columns[1]
     parent_col_vepo = next((c for c in vekp_filtered.columns if "higher-level" in str(c).lower() or "übergeordn" in str(c).lower() or "superordinate" in str(c).lower()), None)
     
-    vekp_filtered['Clean_HU_Int'] = vekp_filtered[vekp_hu_col].astype(str).str.strip().str.lstrip('0')
-    vekp_filtered['Clean_HU_Ext'] = vekp_filtered[vekp_ext_col].astype(str).str.strip().str.lstrip('0')
+    # Aplikace normalizační funkce pro spolehlivý match
+    vekp_filtered['Clean_HU_Int'] = vekp_filtered[vekp_hu_col].apply(normalize_hu)
+    vekp_filtered['Clean_HU_Ext'] = vekp_filtered[vekp_ext_col].apply(normalize_hu)
     
     if parent_col_vepo:
-        vekp_filtered['Clean_Parent'] = vekp_filtered[parent_col_vepo].astype(str).str.replace(r'\.0$', '', regex=True).str.strip().str.lstrip('0')
-        vekp_filtered.loc[vekp_filtered['Clean_Parent'].str.lower().isin(['nan', 'none', '']), 'Clean_Parent'] = ""
+        vekp_filtered['Clean_Parent'] = vekp_filtered[parent_col_vepo].apply(normalize_hu)
     else:
         vekp_filtered['Clean_Parent'] = ""
 
     valid_base_hus = set()
-    vepo_hus_strict = set()
-    
     if df_vepo is not None and not df_vepo.empty:
         vepo_hu_col = next((c for c in df_vepo.columns if "Internal HU" in str(c) or "HU-Nummer intern" in str(c)), df_vepo.columns[0])
         vepo_lower_col = next((c for c in df_vepo.columns if "Lower-level" in str(c) or "untergeordn" in str(c).lower()), None)
-        valid_base_hus = set(df_vepo[vepo_hu_col].astype(str).str.strip().str.lstrip('0'))
-        vepo_hus_strict = set(df_vepo[vepo_hu_col].astype(str).str.strip().str.lstrip('0'))
-        
+        valid_base_hus = set(df_vepo[vepo_hu_col].apply(normalize_hu))
         if vepo_lower_col:
-            valid_base_hus.update(set(df_vepo[vepo_lower_col].dropna().astype(str).str.strip().str.lstrip('0')))
+            valid_base_hus.update(set(df_vepo[vepo_lower_col].apply(normalize_hu)))
     else:
         valid_base_hus = set(vekp_filtered['Clean_HU_Int'])
 
-    del_to_valid_hus = {}
+    # NOVÁ LOGIKA MAPOVÁNÍ ROOT HU (Pro detekci Vollpalet z VEKP bez ohledu na VEPO)
+    del_to_root_hus = {}
     for d, grp in vekp_filtered.groupby('Clean_Del'):
-        v = set()
+        root_hus = set()
         for _, r in grp.iterrows():
             hi = r['Clean_HU_Int']
             he = r['Clean_HU_Ext']
-            if not vepo_hus_strict or hi in vepo_hus_strict:
-                v.add(hi)
-                v.add(he)
-        del_to_valid_hus[d] = v
+            parent = r['Clean_Parent']
+            
+            # Vollpaleta NESMÍ mít nadřazenou HU (nesmí být přebalena do jiné)
+            if not parent:
+                if hi: root_hus.add(hi)
+                if he: root_hus.add(he)
+        del_to_root_hus[d] = root_hus
 
     c_su = 'Storage Unit Type' if 'Storage Unit Type' in df_pick_billing.columns else ('Type' if 'Type' in df_pick_billing.columns else None)
     
@@ -97,20 +106,23 @@ def cached_billing_logic(df_pick, df_vekp, df_vepo, df_cats, queue_count_col, df
         v = str(v).upper().strip()
         return v in ['K1','K2','K3','K4','KLT','KLT1','KLT2'] or (v.startswith('K') and len(v) <= 2)
 
-    pick_hu_cols = ['Source storage unit', 'Source Storage Bin', 'Handling Unit']
+    pick_hu_cols = ['Handling Unit', 'Source storage unit', 'Source Storage Bin']
     
+    # NOVÁ NEPŘŮSTŘELNÁ LOGIKA (Založená na analýze Auswertung)
     def detect_voll(row):
-        # Přidán strip() pro jistotu (kdyby tam byla mezera navíc)
         if str(row.get('Removal of total SU', '')).strip().upper() != 'X': 
             return False
         if c_su and is_klt(row.get(c_su, '')): 
             return False 
             
-        valid_hus = del_to_valid_hus.get(row['Clean_Del'], set())
+        root_hus = del_to_root_hus.get(row['Clean_Del'], set())
+        if not root_hus:
+            return False
+            
         for col in pick_hu_cols:
             if col in row.index and pd.notna(row[col]):
-                val = str(row[col]).strip().lstrip('0')
-                if val and val in valid_hus: 
+                val = normalize_hu(row[col])
+                if val and val in root_hus: 
                     return True
         return False
 
@@ -120,10 +132,11 @@ def cached_billing_logic(df_pick, df_vekp, df_vepo, df_cats, queue_count_col, df
     for _, r in df_pick_billing[df_pick_billing['Is_Vollpalette']].iterrows():
         for c in pick_hu_cols:
             if c in r.index and pd.notna(r[c]):
-                val = str(r[c]).strip().lstrip('0')
+                val = normalize_hu(r[c])
                 if val: 
                     auto_voll_hus_clean.add(val)
 
+    # Výpočet celkových HU
     hu_agg_list = []
     for delivery, group in vekp_filtered.groupby("Clean_Del"):
         ext_to_int = dict(zip(group['Clean_HU_Ext'], group['Clean_HU_Int']))
@@ -166,13 +179,14 @@ def cached_billing_logic(df_pick, df_vekp, df_vepo, df_cats, queue_count_col, df
     if hu_agg.empty:
         hu_agg = pd.DataFrame(columns=["Generated delivery", "hu_leaf", "hu_top_level", "Clean_Del_Merge"])
 
+    # AGREGACE DAT Z PICKU
     pick_agg = df_pick_billing.groupby("Delivery").agg(
         pocet_to=(queue_count_col, "nunique"),
         pohyby_celkem=("Pohyby_Rukou", "sum"),
         pocet_lokaci=("Source Storage Bin", "nunique"),
         hlavni_fronta=("Queue", "first"),
         pocet_mat=("Material", "nunique"),
-        has_voll=("Is_Vollpalette", "any"), 
+        has_voll=("Is_Vollpalette", "any"),  # Zjišťuje, zda je v zakázce alespoň jedna paleta
         Clean_Del_Merge=("Clean_Del", "first"),
         Month=("Month", "first")
     ).reset_index()
@@ -184,28 +198,25 @@ def cached_billing_logic(df_pick, df_vekp, df_vepo, df_cats, queue_count_col, df
     else:
         billing_df["Category_Full"] = pd.NA
 
-    # ========================================================
-    # NOVÁ LOGIKA KATEGORIZACE (FYZICKÁ REALITA > EXCEL)
-    # ========================================================
+    # KATEGORIZACE (Respektuje prioritu fyzické Vollpalety)
     def odvod_kategorii(row):
         deliv = str(row["Delivery"]).strip().lstrip('0')
         base = aus_category_map.get(deliv)
         
         if not base:
             q = str(row.get('hlavni_fronta', '')).upper()
-            base = "OE" if 'PI_PA_OE' in q else "E" if 'PI_PA' in q else "O" if ('PI_PL_FUOE' in q or 'PI_PL_OE' in q) else "N" if 'PI_PL' in q else "N"
+            base = "OE" if ('_OE' in q or 'FUOE' in q) else "E" if 'PI_PA' in q else "O" if ('_O' in q) else "N"
             
         # 1. NEJVYŠŠÍ PRIORITA: Fyzicky prokázaná Vollpaleta
-        # Pokud najdeme X-mark a potvrzení z VEKP, VŽDY je to Vollpalette.
-        if base in ['N', 'O'] and row.get('has_voll', False):
+        if row.get('has_voll', False):
             return f"{base} Vollpalette"
             
-        # 2. Respektovat případný zákazníkův Excel, jen pokud to NENÍ Vollpaleta
+        # 2. Zákazníkův Excel (pokud je k dispozici)
         cat_full = row.get('Category_Full')
         if pd.notna(cat_full) and str(cat_full).strip() not in ["", "nan", txt_uncat]: 
             return cat_full
             
-        # 3. Naše záložní logika (Misch / Sortenrein)
+        # 3. Záložní logika
         if row['pocet_mat'] > 1:
             return f"{base} Misch"
         else:
