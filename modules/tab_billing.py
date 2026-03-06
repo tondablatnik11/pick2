@@ -100,7 +100,8 @@ def cached_billing_logic(df_pick, df_vekp, df_vepo, df_cats, queue_count_col, df
     pick_hu_cols = ['Source storage unit', 'Source Storage Bin', 'Handling Unit']
     
     def detect_voll(row):
-        if str(row.get('Removal of total SU', '')).upper() != 'X': 
+        # Přidán strip() pro jistotu (kdyby tam byla mezera navíc)
+        if str(row.get('Removal of total SU', '')).strip().upper() != 'X': 
             return False
         if c_su and is_klt(row.get(c_su, '')): 
             return False 
@@ -165,14 +166,13 @@ def cached_billing_logic(df_pick, df_vekp, df_vepo, df_cats, queue_count_col, df
     if hu_agg.empty:
         hu_agg = pd.DataFrame(columns=["Generated delivery", "hu_leaf", "hu_top_level", "Clean_Del_Merge"])
 
-    # AGREGACE DAT
     pick_agg = df_pick_billing.groupby("Delivery").agg(
         pocet_to=(queue_count_col, "nunique"),
         pohyby_celkem=("Pohyby_Rukou", "sum"),
         pocet_lokaci=("Source Storage Bin", "nunique"),
         hlavni_fronta=("Queue", "first"),
         pocet_mat=("Material", "nunique"),
-        has_voll=("Is_Vollpalette", "any"),  # ZJIŠŤUJE, ZDA JE TAM ALESPOŇ JEDNA VOLLPALETTE
+        has_voll=("Is_Vollpalette", "any"), 
         Clean_Del_Merge=("Clean_Del", "first"),
         Month=("Month", "first")
     ).reset_index()
@@ -184,14 +184,10 @@ def cached_billing_logic(df_pick, df_vekp, df_vepo, df_cats, queue_count_col, df
     else:
         billing_df["Category_Full"] = pd.NA
 
-    # OPRAVENÁ LOGIKA KATEGORIZACE
+    # ========================================================
+    # NOVÁ LOGIKA KATEGORIZACE (FYZICKÁ REALITA > EXCEL)
+    # ========================================================
     def odvod_kategorii(row):
-        # 1. Pokud dodal zákazník explicitní soubor s kategoriemi, respektujeme ho
-        cat_full = row.get('Category_Full')
-        if pd.notna(cat_full) and str(cat_full).strip() not in ["", "nan", txt_uncat]: 
-            return cat_full
-        
-        # 2. Naše vlastní výpočetní heuristika
         deliv = str(row["Delivery"]).strip().lstrip('0')
         base = aus_category_map.get(deliv)
         
@@ -199,17 +195,21 @@ def cached_billing_logic(df_pick, df_vekp, df_vepo, df_cats, queue_count_col, df
             q = str(row.get('hlavni_fronta', '')).upper()
             base = "OE" if 'PI_PA_OE' in q else "E" if 'PI_PA' in q else "O" if ('PI_PL_FUOE' in q or 'PI_PL_OE' in q) else "N" if 'PI_PL' in q else "N"
             
-        # ZMĚKČENÉ PRAVIDLO: Pokud má zakázka alespoň 1 úspěšnou Vollpaletu, je to Vollpalette
+        # 1. NEJVYŠŠÍ PRIORITA: Fyzicky prokázaná Vollpaleta
+        # Pokud najdeme X-mark a potvrzení z VEKP, VŽDY je to Vollpalette.
         if base in ['N', 'O'] and row.get('has_voll', False):
-            sub = "Vollpalette"
-        # Pokud nemá ani jednu paletu a má víc materiálů -> Misch
-        elif row['pocet_mat'] > 1:
-            sub = "Misch"
-        # Zbývá jen Sortenrein
-        else:
-            sub = "Sortenrein"
+            return f"{base} Vollpalette"
             
-        return f"{base} {sub}"
+        # 2. Respektovat případný zákazníkův Excel, jen pokud to NENÍ Vollpaleta
+        cat_full = row.get('Category_Full')
+        if pd.notna(cat_full) and str(cat_full).strip() not in ["", "nan", txt_uncat]: 
+            return cat_full
+            
+        # 3. Naše záložní logika (Misch / Sortenrein)
+        if row['pocet_mat'] > 1:
+            return f"{base} Misch"
+        else:
+            return f"{base} Sortenrein"
 
     billing_df["Category_Full"] = billing_df.apply(odvod_kategorii, axis=1)
 
