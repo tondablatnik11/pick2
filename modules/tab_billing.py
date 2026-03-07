@@ -23,17 +23,18 @@ def cached_billing_logic(df_pick, df_vekp, df_vepo, df_cats, queue_count_col, df
     aus_category_map = {}
     kep_set = set()
     
+    # 1. NAČTENÍ PŘEPRAVCŮ (KEP)
     if not df_sdshp_tmp.empty:
         col_s = df_sdshp_tmp.columns[0]
         col_k = next((c for c in df_sdshp_tmp.columns if "KEP" in str(c).upper() or "FÄHIG" in str(c).upper()), None)
         if col_k: 
-            # OPRAVA: Odstranění nul z KEP listu pro správné napárování Speditéra
             kep_set = set(df_sdshp_tmp.loc[df_sdshp_tmp[col_k].astype(str).str.strip().str.upper() == "X", col_s].astype(str).str.strip().str.lstrip('0'))
     
     order_type_map = {}
     if not df_t031_tmp.empty: 
         order_type_map = dict(zip(df_t031_tmp.iloc[:, 0].astype(str).str.strip(), df_t031_tmp.iloc[:, 1].astype(str).str.strip()))
     
+    # 2. SESTAVENÍ MAPY ZÁKAZNICKÝCH KATEGORIÍ (Pokud je LIKP k dispozici)
     if not df_likp_tmp.empty:
         c_lief = df_likp_tmp.columns[0]
         c_vs = next((c for c in df_likp_tmp.columns if "Versandstelle" in str(c) or "Shipping" in str(c)), None)
@@ -47,7 +48,7 @@ def cached_billing_logic(df_pick, df_vekp, df_vepo, df_cats, queue_count_col, df
             
             is_kep = sped in kep_set
             
-            # OPRAVA: Striktní rozdělení do E, OE, O, N
+            # STRIKTNÍ ROZDĚLENÍ O a OE na základě přepravce
             if is_kep:
                 aus_category_map[lief] = "OE" if o_type == "O" else "E"
             else:
@@ -86,7 +87,7 @@ def cached_billing_logic(df_pick, df_vekp, df_vepo, df_cats, queue_count_col, df
     else:
         vekp_filtered['Clean_Parent'] = ""
 
-    # 1. MAPOVÁNÍ ROOT HUs Z VEKP (Všechny výsledné krabice a palety bez rodiče)
+    # 3. MAPOVÁNÍ ROOT HUs Z VEKP (Všechny výsledné krabice a palety bez rodiče)
     root_df = vekp_filtered[vekp_filtered['Clean_Parent'] == '']
     
     del_to_roots = {}
@@ -104,7 +105,7 @@ def cached_billing_logic(df_pick, df_vekp, df_vepo, df_cats, queue_count_col, df
 
     pick_hu_cols = ['Handling Unit', 'Source storage unit', 'Source Storage Bin']
     
-    # 2. IDENTIFIKACE VOLLPALET: Najdeme přesnou shodu Pick HU -> VEKP Root HU
+    # 4. IDENTIFIKACE VOLLPALET: Najdeme přesnou shodu Pick HU -> VEKP Root HU
     matched_root_hus_global = set()
     
     for _, pick_row in df_pick_billing.iterrows():
@@ -124,7 +125,7 @@ def cached_billing_logic(df_pick, df_vekp, df_vepo, df_cats, queue_count_col, df
                             if r['int']: matched_root_hus_global.add(r['int'])
                             if r['ext']: matched_root_hus_global.add(r['ext'])
 
-    # 3. OZNAČENÍ ŘÁDKŮ VE SKLADU (Rozštěpení zakázky na palety a zbytek)
+    # 5. OZNAČENÍ ŘÁDKŮ VE SKLADU (Rozštěpení zakázky na palety a zbytek)
     def assign_voll(pick_row):
         if str(pick_row.get('Removal of total SU', '')).strip().upper() != 'X': return False
         if c_su and is_klt(pick_row.get(c_su, '')): return False
@@ -137,40 +138,37 @@ def cached_billing_logic(df_pick, df_vekp, df_vepo, df_cats, queue_count_col, df
 
     df_pick_billing['Is_Vollpalette'] = df_pick_billing.apply(assign_voll, axis=1)
 
-    # Spočítáme počet materiálů ve ZBYTKU zakázky (pro určení Misch vs Sortenrein u krabic)
+    # Vypočteme "Base" (O/OE/N/E) pro každou zakázku hromadně
+    del_base_map = {}
+    for d, grp in df_pick_billing.groupby('Clean_Del'):
+        base = aus_category_map.get(d)
+        if not base:
+            # ZÁCHRANNÁ BRZDA PODLE FRONTY (Pro měsíce bez LIKP)
+            top_q = str(grp['Queue'].mode()[0]).upper() if not grp['Queue'].empty else ''
+            if 'PI_PA_OE' in top_q: base = 'OE'
+            elif 'PI_PA' in top_q: base = 'E'
+            elif 'FUOE' in top_q or 'PI_PL_OE' in top_q: base = 'OE' # Pokud je queue OE, musíme věřit, že je to OE
+            elif '_O' in top_q or 'FU_O' in top_q or 'FUO' in top_q: base = 'O'
+            else: base = 'N'
+        del_base_map[d] = base
+
+    # Počet materiálů ve ZBYTKU zakázky (pro určení Misch vs Sortenrein u krabic)
     non_voll_mats = df_pick_billing[~df_pick_billing['Is_Vollpalette']].groupby('Clean_Del')['Material'].nunique().to_dict()
 
-    # 4. KATEGORIZACE KAŽDÉHO ŘÁDKU ZVLÁŠŤ
+    # 6. KATEGORIZACE KAŽDÉHO ŘÁDKU ZVLÁŠŤ
     def get_full_category(row):
         d = str(row['Clean_Del'])
-        base = aus_category_map.get(d)
-        
-        # Záložní logika pro případ, že zakázka chybí v Auswertung
-        if not base:
-            q = str(row.get('Queue', '')).upper()
-            if '_OE' in q or 'FUOE' in q:
-                base = "OE"
-            elif 'PI_PA' in q:
-                base = "E"
-            elif '_O' in q or 'FU_O' in q or 'FUO' in q:
-                base = "O"
-            else:
-                base = "N"
+        base = del_base_map.get(d, "N")
 
         if row['Is_Vollpalette']:
             return f"{base} Vollpalette"
             
-        # Pokud Auswertung vynucuje něco jiného (Misch/Sortenrein), platí to pro zbytek zakázky
-        aus_full = aus_full_cat_map.get(d)
-        if aus_full and str(aus_full).strip() not in ["", "nan", txt_uncat]:
-            return aus_full
-
         mats = non_voll_mats.get(d, 1)
         return f"{base} Misch" if mats > 1 else f"{base} Sortenrein"
 
     df_pick_billing['Category_Full'] = df_pick_billing.apply(get_full_category, axis=1)
 
-    # 5. ROZDĚLENÍ VYFAKTUROVANÝCH HU DO SPRÁVNÝCH KATEGORIÍ
+    # 7. ROZDĚLENÍ VYFAKTUROVANÝCH HU DO SPRÁVNÝCH KATEGORIÍ
     del_hu_counts = []
     for d, grp in root_df.groupby('Clean_Del'):
         voll_count = 0
@@ -188,21 +186,21 @@ def cached_billing_logic(df_pick, df_vekp, df_vepo, df_cats, queue_count_col, df
 
     df_hu_counts = pd.DataFrame(del_hu_counts)
 
-    # 6. AGREGACE DLE ZAKÁZKY A JEJÍCH ČÁSTÍ
+    # 8. AGREGACE DLE ZAKÁZKY A JEJÍCH ČÁSTÍ
     pick_agg = df_pick_billing.groupby(['Delivery', 'Clean_Del', 'Category_Full', 'Is_Vollpalette']).agg(
         pocet_to=(queue_count_col, "nunique"),
         pohyby_celkem=("Pohyby_Rukou", "sum"),
         pocet_lokaci=("Source Storage Bin", "nunique"),
-        Month=("Month", "first")
+        Month=("Month", "first"),
+        hlavni_fronta=("Queue", lambda x: x.mode()[0] if not x.empty else ""), # Přidáno pro Audit!
+        pocet_mat=("Material", "nunique") # Přidáno pro Audit!
     ).reset_index()
 
-    # Přiřazení vyfakturovaných HU k příslušným řádkům
+    # Přiřazení vyfakturovaných HU
     def assign_hu_counts(row):
         d = row['Clean_Del']
         is_voll = row['Is_Vollpalette']
-        
         if df_hu_counts.empty: return 0
-        
         match = df_hu_counts[(df_hu_counts['Clean_Del'] == d) & (df_hu_counts['Is_Vollpalette'] == is_voll)]
         if not match.empty:
             return match.iloc[0]['pocet_hu']
@@ -210,8 +208,11 @@ def cached_billing_logic(df_pick, df_vekp, df_vepo, df_cats, queue_count_col, df
 
     pick_agg['pocet_hu'] = pick_agg.apply(assign_hu_counts, axis=1)
 
-    # 7. FINÁLNÍ VÝPOČTY
+    # 9. FINÁLNÍ VÝPOČTY (A OPRAVA AUDITU)
     billing_df = pick_agg.copy()
+    billing_df['Clean_Del_Merge'] = billing_df['Clean_Del'] # <-- OPRAVA PRO KEYERROR V AUDITU!
+    
+    billing_df['pocet_hu'] = billing_df['pocet_hu'].fillna(0).astype(int)
     billing_df["Bilance"] = (billing_df["pocet_to"] - billing_df["pocet_hu"]).astype(int)
     billing_df["TO_navic"] = billing_df["Bilance"].clip(lower=0)
 
@@ -236,7 +237,7 @@ def render_billing(df_pick, df_vekp, df_vepo, df_cats, queue_count_col, aus_data
         c1, c2, c3, c4 = st.columns(4)
         with c1:
             with st.container(border=True): 
-                # Zobrazení SKUTEČNÉHO počtu unikátních zakázek
+                # Zobrazení SKUTEČNÉHO počtu unikátních zakázek, i když jsou teď rozdělené na více řádků
                 st.metric(_t("Zakázek celkem", "Total Orders"), f"{billing_df['Delivery'].nunique():,}")
         with c2:
             with st.container(border=True): 
