@@ -27,7 +27,8 @@ def cached_billing_logic(df_pick, df_vekp, df_vepo, df_cats, queue_count_col, df
         col_s = df_sdshp_tmp.columns[0]
         col_k = next((c for c in df_sdshp_tmp.columns if "KEP" in str(c).upper() or "FÄHIG" in str(c).upper()), None)
         if col_k: 
-            kep_set = set(df_sdshp_tmp.loc[df_sdshp_tmp[col_k].astype(str).str.strip() == "X", col_s].astype(str).str.strip())
+            # OPRAVA: Odstranění nul z KEP listu pro správné napárování Speditéra
+            kep_set = set(df_sdshp_tmp.loc[df_sdshp_tmp[col_k].astype(str).str.strip().str.upper() == "X", col_s].astype(str).str.strip().str.lstrip('0'))
     
     order_type_map = {}
     if not df_t031_tmp.empty: 
@@ -36,16 +37,17 @@ def cached_billing_logic(df_pick, df_vekp, df_vepo, df_cats, queue_count_col, df
     if not df_likp_tmp.empty:
         c_lief = df_likp_tmp.columns[0]
         c_vs = next((c for c in df_likp_tmp.columns if "Versandstelle" in str(c) or "Shipping" in str(c)), None)
-        c_sped = next((c for c in df_likp_tmp.columns if "pediteur" in str(c) or "Transp" in str(c)), None)
+        c_sped = next((c for c in df_likp_tmp.columns if "pediteur" in str(c).lower() or "transp" in str(c).lower()), None)
         
         for _, r in df_likp_tmp.iterrows():
             lief = str(r[c_lief]).strip().lstrip('0')
             vs = str(r[c_vs]).strip() if c_vs else "N"
             sped = str(r[c_sped]).strip().lstrip('0') if c_sped else ""
             o_type = order_type_map.get(vs, "N")
+            
             is_kep = sped in kep_set
             
-            # OPRAVA: Striktní rozdělení E, OE, O, N
+            # OPRAVA: Striktní rozdělení do E, OE, O, N
             if is_kep:
                 aus_category_map[lief] = "OE" if o_type == "O" else "E"
             else:
@@ -143,7 +145,7 @@ def cached_billing_logic(df_pick, df_vekp, df_vepo, df_cats, queue_count_col, df
         d = str(row['Clean_Del'])
         base = aus_category_map.get(d)
         
-        # OPRAVA ZÁLOŽNÍ LOGIKY (Aby nespojila O a OE)
+        # Záložní logika pro případ, že zakázka chybí v Auswertung
         if not base:
             q = str(row.get('Queue', '')).upper()
             if '_OE' in q or 'FUOE' in q:
@@ -234,7 +236,7 @@ def render_billing(df_pick, df_vekp, df_vepo, df_cats, queue_count_col, aus_data
         c1, c2, c3, c4 = st.columns(4)
         with c1:
             with st.container(border=True): 
-                # Zobrazení SKUTEČNÉHO počtu unikátních zakázek, i když jsou teď rozdělené na více řádků
+                # Zobrazení SKUTEČNÉHO počtu unikátních zakázek
                 st.metric(_t("Zakázek celkem", "Total Orders"), f"{billing_df['Delivery'].nunique():,}")
         with c2:
             with st.container(border=True): 
@@ -614,14 +616,29 @@ def render_billing(df_pick, df_vekp, df_vepo, df_cats, queue_count_col, aus_data
             if not df_likp.empty:
                 c_lief = df_likp.columns[0]
                 c_vs = next((c for c in df_likp.columns if "Versandstelle" in str(c)), None)
-                c_sped = next((c for c in df_likp.columns if "pediteur" in str(c)), None)
+                c_sped = next((c for c in df_likp.columns if "pediteur" in str(c).lower() or "transp" in str(c).lower()), None)
                 
                 df_lf = df_likp[[c_lief]].copy()
                 df_lf.columns = ["Lieferung"]
                 df_lf["Lieferung"] = df_lf["Lieferung"].astype(str).str.strip().str.lstrip('0')
-                df_lf["is_KEP"] = df_likp[c_sped].astype(str).str.strip().str.lstrip('0').isin(kep_set) if c_sped else False
-                df_lf["Order_Type"] = "O" if c_vs else "N"
-                df_lf["Kategorie"] = np.where(df_lf["is_KEP"], np.where(df_lf["Order_Type"] == "O", "OE", "E"), np.where(df_lf["Order_Type"] == "O", "O", "N"))
+                
+                if c_sped:
+                    sped_col = df_likp[c_sped].astype(str).str.strip().str.lstrip('0')
+                    df_lf["is_KEP"] = sped_col.isin(kep_set)
+                else:
+                    df_lf["is_KEP"] = False
+                
+                if c_vs and not df_t031_tmp.empty:
+                    order_type_map_aus = dict(zip(df_t031_tmp.iloc[:, 0].astype(str).str.strip(), df_t031_tmp.iloc[:, 1].astype(str).str.strip()))
+                    df_lf["Order_Type"] = df_likp[c_vs].astype(str).str.strip().map(order_type_map_aus).fillna("N")
+                else:
+                    df_lf["Order_Type"] = "N"
+                    
+                df_lf["Kategorie"] = np.where(
+                    df_lf["is_KEP"], 
+                    np.where(df_lf["Order_Type"] == "O", "OE", "E"), 
+                    np.where(df_lf["Order_Type"] == "O", "O", "N")
+                )
 
             df_vk = pd.DataFrame()
             if not df_vekp2.empty:
