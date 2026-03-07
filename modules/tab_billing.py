@@ -44,7 +44,12 @@ def cached_billing_logic(df_pick, df_vekp, df_vepo, df_cats, queue_count_col, df
             sped = str(r[c_sped]).strip().lstrip('0') if c_sped else ""
             o_type = order_type_map.get(vs, "N")
             is_kep = sped in kep_set
-            aus_category_map[lief] = "OE" if o_type == "O" else "E" if is_kep else ("O" if o_type == "O" else "N")
+            
+            # OPRAVA: Striktní rozdělení E, OE, O, N
+            if is_kep:
+                aus_category_map[lief] = "OE" if o_type == "O" else "E"
+            else:
+                aus_category_map[lief] = "O" if o_type == "O" else "N"
 
     aus_full_cat_map = {}
     if df_cats is not None and not df_cats.empty:
@@ -137,9 +142,18 @@ def cached_billing_logic(df_pick, df_vekp, df_vepo, df_cats, queue_count_col, df
     def get_full_category(row):
         d = str(row['Clean_Del'])
         base = aus_category_map.get(d)
+        
+        # OPRAVA ZÁLOŽNÍ LOGIKY (Aby nespojila O a OE)
         if not base:
             q = str(row.get('Queue', '')).upper()
-            base = "OE" if ('_OE' in q or 'FUOE' in q) else "E" if 'PI_PA' in q else "O" if ('_O' in q) else "N"
+            if '_OE' in q or 'FUOE' in q:
+                base = "OE"
+            elif 'PI_PA' in q:
+                base = "E"
+            elif '_O' in q or 'FU_O' in q or 'FUO' in q:
+                base = "O"
+            else:
+                base = "N"
 
         if row['Is_Vollpalette']:
             return f"{base} Vollpalette"
@@ -180,14 +194,22 @@ def cached_billing_logic(df_pick, df_vekp, df_vepo, df_cats, queue_count_col, df
         Month=("Month", "first")
     ).reset_index()
 
-    # Spojíme Pick TO a Billed HU pro každou část zakázky
-    if not df_hu_counts.empty:
-        billing_df = pd.merge(pick_agg, df_hu_counts, on=['Clean_Del', 'Is_Vollpalette'], how='left')
-    else:
-        billing_df = pick_agg.copy()
-        billing_df['pocet_hu'] = 0
+    # Přiřazení vyfakturovaných HU k příslušným řádkům
+    def assign_hu_counts(row):
+        d = row['Clean_Del']
+        is_voll = row['Is_Vollpalette']
+        
+        if df_hu_counts.empty: return 0
+        
+        match = df_hu_counts[(df_hu_counts['Clean_Del'] == d) & (df_hu_counts['Is_Vollpalette'] == is_voll)]
+        if not match.empty:
+            return match.iloc[0]['pocet_hu']
+        return 0
 
-    billing_df['pocet_hu'] = billing_df['pocet_hu'].fillna(0).astype(int)
+    pick_agg['pocet_hu'] = pick_agg.apply(assign_hu_counts, axis=1)
+
+    # 7. FINÁLNÍ VÝPOČTY
+    billing_df = pick_agg.copy()
     billing_df["Bilance"] = (billing_df["pocet_to"] - billing_df["pocet_hu"]).astype(int)
     billing_df["TO_navic"] = billing_df["Bilance"].clip(lower=0)
 
@@ -234,7 +256,7 @@ def render_billing(df_pick, df_vekp, df_vepo, df_cats, queue_count_col, aus_data
         st.divider()
         col_t1, col_t2 = st.columns([1.2, 1])
         with col_t1:
-            st.markdown(f"**{_t('Souhrn podle kategorií (Zisky a Ztráty)', 'Summary by Category (Profit & Loss)')}**")
+            st.markdown(f"**{_t('Souhrn podle kategorií zabalených HU (Zisky a Ztráty)', 'Summary by Packed HU Categories (Profit & Loss)')}**")
             
             cat_sum = billing_df.groupby("Category_Full").agg(
                 pocet_casti=("Delivery", "count"), 
@@ -250,7 +272,7 @@ def render_billing(df_pick, df_vekp, df_vepo, df_cats, queue_count_col, aus_data
             
             disp = cat_sum[["Category_Full", "pocet_casti", "pocet_to", "pocet_hu", "prum_poh", "bilance", "to_navic"]].copy()
             disp.columns = [
-                _t("Kategorie", "Category"), 
+                _t("Kategorie HU", "HU Category"), 
                 _t("Části zakázek", "Order Parts"), 
                 _t("Počet TO", "Total TO"), 
                 _t("Zúčtované HU", "Billed HU"), 
