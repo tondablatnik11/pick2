@@ -224,7 +224,6 @@ def fetch_and_prep_data(use_marm=True):
             for col in ['CUSTOMER', 'Material', 'Scanning serial numbers', 'Reprinting labels ', 'Difficult KLTs', 'Shift', 'Number of item types']:
                 if col in df_oe.columns: agg_dict[col] = 'first'
                 
-            # OPRAVA CHYBY LINTERU (LAMBDA LATE BINDING)
             for col in ['KLT', 'Palety', 'Cartons']:
                 if col in df_oe.columns: 
                     agg_dict[col] = lambda x, c=col: '; '.join(x.dropna().astype(str))
@@ -239,17 +238,11 @@ def fetch_and_prep_data(use_marm=True):
         if 'Kategorie' in df_cats.columns and 'Art' in df_cats.columns: df_cats['Category_Full'] = df_cats['Kategorie'].astype(str).str.strip() + " " + df_cats['Art'].astype(str).str.strip()
         df_cats = df_cats.drop_duplicates('Lieferung')
 
-    aus_data = {}
-    for sheet in ["LIKP", "SDSHP_AM2", "T031", "VEKP", "VEPO", "LIPS", "T023"]:
-        aus_df = load_from_db(f'aus_{sheet.lower()}')
-        if aus_df is not None: aus_data[sheet] = aus_df
-
     return {
         'df_pick': df_pick, 'queue_count_col': queue_count_col, 'auto_voll_hus': auto_voll_hus,
         'df_vekp': load_from_db('raw_vekp'), 'df_vepo': load_from_db('raw_vepo'),
-        'df_cats': df_cats, 'df_oe': df_oe, 'aus_data': aus_data,
-        'num_removed_admins': num_removed_admins, 'manual_boxes': manual_boxes,
-        'weight_dict': weight_dict, 'dim_dict': dim_dict, 'box_dict': box_dict
+        'df_cats': df_cats, 'df_oe': df_oe, 'num_removed_admins': num_removed_admins, 
+        'manual_boxes': manual_boxes, 'weight_dict': weight_dict, 'dim_dict': dim_dict, 'box_dict': box_dict
     }
 
 
@@ -312,13 +305,6 @@ def main():
                         for file in uploaded_files:
                             try:
                                 fname = file.name.lower()
-                                if fname.endswith('.xlsx') and 'auswertung' in fname:
-                                    aus_xl = pd.ExcelFile(file)
-                                    for sn in aus_xl.sheet_names: 
-                                        save_to_db(aus_xl.parse(sn, dtype=str), f"aus_{sn.lower()}")
-                                    st.success(f"✅ {_t('Uloženo', 'Saved')} (Auswertung): {file.name}")
-                                    continue
-
                                 temp_df = pd.read_csv(file, dtype=str, sep=None, engine='python') if fname.endswith('.csv') else pd.read_excel(file, dtype=str)
                                 temp_df.columns = temp_df.columns.str.strip()
                                 cols = temp_df.columns.tolist()
@@ -342,6 +328,11 @@ def main():
                                 elif any('QUEUE' in c for c in cols_up) and (any('TRANSFER ORDER' in c for c in cols_up) or any('SD DOCUMENT' in c for c in cols_up)): 
                                     save_to_db(temp_df, 'raw_queue')
                                     st.success(f"✅ {_t('Uloženo jako Queue', 'Saved as Queue')}: {file.name}")
+                                    
+                                # ROZPOZNÁNÍ LIKP SOUBORU PRO ROZDĚLENÍ O a N ZAKÁZEK
+                                elif 'likp' in fname or any('SHIPPING POINT' in c for c in cols_up) or any('VERSANDSTELLE' in c for c in cols_up):
+                                    save_to_db(temp_df, 'raw_likp')
+                                    st.success(f"✅ {_t('Uloženo jako LIKP Report (O vs N)', 'Saved as LIKP Report')}: {file.name}")
                                     
                                 elif 'oe-times' in fname or any('PROCESS' in c for c in cols_up) or any('TIME' in c for c in cols_up):
                                     rename_map = {}
@@ -423,7 +414,7 @@ def main():
     elif selected_page == _t("Materiály (TOP)", "Top Materials"): 
         render_top(df_pick)
     elif selected_page == _t("Fakturace", "Billing"): 
-        billing_df = render_billing(df_pick, data_dict['df_vekp'], data_dict['df_vepo'], data_dict['df_cats'], data_dict['queue_count_col'], data_dict['aus_data'])
+        billing_df = render_billing(df_pick, data_dict['df_vekp'], data_dict['df_vepo'], data_dict['df_cats'], data_dict['queue_count_col'])
         st.session_state['billing_df'] = billing_df
     elif selected_page == _t("Balení (Packing)", "Packing"): 
         render_packing(st.session_state.get('billing_df', pd.DataFrame()), data_dict['df_oe'])
