@@ -46,6 +46,11 @@ def cached_billing_logic(df_pick, df_vekp, df_vepo, df_cats, queue_count_col, df
             is_kep = sped in kep_set
             aus_category_map[lief] = "OE" if o_type == "O" else "E" if is_kep else ("O" if o_type == "O" else "N")
 
+    aus_full_cat_map = {}
+    if df_cats is not None and not df_cats.empty:
+        if "Lieferung" in df_cats.columns and "Category_Full" in df_cats.columns:
+            aus_full_cat_map = dict(zip(df_cats["Lieferung"].astype(str).str.strip().str.lstrip('0'), df_cats["Category_Full"]))
+
     billing_df = pd.DataFrame()
 
     if df_vekp is None or df_vekp.empty:
@@ -74,19 +79,15 @@ def cached_billing_logic(df_pick, df_vekp, df_vepo, df_cats, queue_count_col, df
     else:
         vekp_filtered['Clean_Parent'] = ""
 
-    # 1. MAPOVÁNÍ ROOT HUs Z VEKP (Všechny výsledné krabice a palety)
-    del_to_root_hus = {}
-    for d, grp in vekp_filtered.groupby('Clean_Del'):
-        root_hus = set()
+    # 1. MAPOVÁNÍ ROOT HUs Z VEKP (Všechny výsledné krabice a palety bez rodiče)
+    root_df = vekp_filtered[vekp_filtered['Clean_Parent'] == '']
+    
+    del_to_roots = {}
+    for d, grp in root_df.groupby('Clean_Del'):
+        roots = []
         for _, r in grp.iterrows():
-            hi = r['Clean_HU_Int']
-            he = r['Clean_HU_Ext']
-            parent = r['Clean_Parent']
-            # Root HU nesmí mít nadřazenou HU
-            if not parent:
-                if hi: root_hus.add(hi)
-                if he: root_hus.add(he)
-        del_to_root_hus[d] = root_hus
+            roots.append({'int': r['Clean_HU_Int'], 'ext': r['Clean_HU_Ext']})
+        del_to_roots[d] = roots
 
     c_su = 'Storage Unit Type' if 'Storage Unit Type' in df_pick_billing.columns else ('Type' if 'Type' in df_pick_billing.columns else None)
     
@@ -96,94 +97,101 @@ def cached_billing_logic(df_pick, df_vekp, df_vepo, df_cats, queue_count_col, df
 
     pick_hu_cols = ['Handling Unit', 'Source storage unit', 'Source Storage Bin']
     
-    # 2. IDENTIFIKACE VOLLPALET NA ÚROVNI JEDNOTLIVÝCH ŘÁDKŮ (TO)
-    def detect_voll_row(row):
-        if str(row.get('Removal of total SU', '')).strip().upper() != 'X': 
-            return False
-        if c_su and is_klt(row.get(c_su, '')): 
-            return False 
-            
-        root_hus = del_to_root_hus.get(row['Clean_Del'], set())
-        if not root_hus:
-            return False
-            
+    # 2. IDENTIFIKACE VOLLPALET: Najdeme přesnou shodu Pick HU -> VEKP Root HU
+    matched_root_hus_global = set()
+    
+    for _, pick_row in df_pick_billing.iterrows():
+        if str(pick_row.get('Removal of total SU', '')).strip().upper() != 'X': continue
+        if c_su and is_klt(pick_row.get(c_su, '')): continue
+
+        d = str(pick_row['Clean_Del'])
+        roots = del_to_roots.get(d, [])
+        if not roots: continue
+
         for col in pick_hu_cols:
-            if col in row.index and pd.notna(row[col]):
-                val = normalize_hu(row[col])
-                if val and val in root_hus:
+            if col in pick_row.index and pd.notna(pick_row[col]):
+                val = normalize_hu(pick_row[col])
+                if val:
+                    for r in roots:
+                        if val == r['int'] or val == r['ext']:
+                            if r['int']: matched_root_hus_global.add(r['int'])
+                            if r['ext']: matched_root_hus_global.add(r['ext'])
+
+    # 3. OZNAČENÍ ŘÁDKŮ VE SKLADU (Rozštěpení zakázky na palety a zbytek)
+    def assign_voll(pick_row):
+        if str(pick_row.get('Removal of total SU', '')).strip().upper() != 'X': return False
+        if c_su and is_klt(pick_row.get(c_su, '')): return False
+        for col in pick_hu_cols:
+            if col in pick_row.index and pd.notna(pick_row[col]):
+                val = normalize_hu(pick_row[col])
+                if val and val in matched_root_hus_global:
                     return True
         return False
 
-    df_pick_billing['Is_Vollpalette'] = df_pick_billing.apply(detect_voll_row, axis=1)
+    df_pick_billing['Is_Vollpalette'] = df_pick_billing.apply(assign_voll, axis=1)
 
-    # 3. KATEGORIZACE JEDNOTLIVÝCH ŘÁDKŮ (Rozpad zakázky na části)
-    non_voll_mats_per_del = df_pick_billing[~df_pick_billing['Is_Vollpalette']].groupby('Clean_Del')['Material'].nunique().to_dict()
+    # Spočítáme počet materiálů ve ZBYTKU zakázky (pro určení Misch vs Sortenrein u krabic)
+    non_voll_mats = df_pick_billing[~df_pick_billing['Is_Vollpalette']].groupby('Clean_Del')['Material'].nunique().to_dict()
 
-    def assign_category(row):
-        deliv = str(row['Clean_Del'])
-        base = aus_category_map.get(deliv)
-        
+    # 4. KATEGORIZACE KAŽDÉHO ŘÁDKU ZVLÁŠŤ
+    def get_full_category(row):
+        d = str(row['Clean_Del'])
+        base = aus_category_map.get(d)
         if not base:
             q = str(row.get('Queue', '')).upper()
             base = "OE" if ('_OE' in q or 'FUOE' in q) else "E" if 'PI_PA' in q else "O" if ('_O' in q) else "N"
-            
+
         if row['Is_Vollpalette']:
             return f"{base} Vollpalette"
-        else:
-            # Zbytek zakázky (volné kusy) hodíme do Misch nebo Sortenrein podle počtu zbývajících materiálů
-            mats = non_voll_mats_per_del.get(deliv, 1)
-            if mats > 1: return f"{base} Misch"
-            else: return f"{base} Sortenrein"
+            
+        # Pokud Auswertung vynucuje něco jiného (Misch/Sortenrein), platí to pro zbytek zakázky
+        aus_full = aus_full_cat_map.get(d)
+        if aus_full and str(aus_full).strip() not in ["", "nan", txt_uncat]:
+            return aus_full
 
-    df_pick_billing['Category_Full'] = df_pick_billing.apply(assign_category, axis=1)
+        mats = non_voll_mats.get(d, 1)
+        return f"{base} Misch" if mats > 1 else f"{base} Sortenrein"
 
-    # 4. SPOČÍTÁNÍ PŘESNÝCH KUSŮ HU PRO KAŽDOU ČÁST ZAKÁZKY
-    del_stats_dict = {}
-    for d, grp in vekp_filtered.groupby("Clean_Del"):
-        root_df = grp[grp['Clean_Parent'] == '']
-        total_root_hus = len(root_df)
+    df_pick_billing['Category_Full'] = df_pick_billing.apply(get_full_category, axis=1)
+
+    # 5. ROZDĚLENÍ VYFAKTUROVANÝCH HU DO SPRÁVNÝCH KATEGORIÍ
+    del_hu_counts = []
+    for d, grp in root_df.groupby('Clean_Del'):
+        voll_count = 0
+        non_voll_count = 0
+        for _, r in grp.iterrows():
+            if (r['Clean_HU_Int'] in matched_root_hus_global) or (r['Clean_HU_Ext'] in matched_root_hus_global):
+                voll_count += 1
+            else:
+                non_voll_count += 1
         
-        # Kolik z nich bylo Vollpalet?
-        matched_set = set()
-        pick_voll_rows = df_pick_billing[(df_pick_billing['Clean_Del'] == d) & (df_pick_billing['Is_Vollpalette'])]
-        for col in pick_hu_cols:
-            if col in pick_voll_rows.columns:
-                matched_set.update(pick_voll_rows[col].dropna().apply(normalize_hu).tolist())
-                
-        voll_hu_count = 0
-        for _, r in root_df.iterrows():
-            if r['Clean_HU_Int'] in matched_set or r['Clean_HU_Ext'] in matched_set:
-                voll_hu_count += 1
-                
-        non_voll_hu_count = max(0, total_root_hus - voll_hu_count)
-        del_stats_dict[d] = {'voll': voll_hu_count, 'non_voll': non_voll_hu_count}
+        if voll_count > 0:
+            del_hu_counts.append({'Clean_Del': d, 'Is_Vollpalette': True, 'pocet_hu': voll_count})
+        if non_voll_count > 0:
+            del_hu_counts.append({'Clean_Del': d, 'Is_Vollpalette': False, 'pocet_hu': non_voll_count})
 
-    # 5. AGREGACE (Nyní grupujeme podle Delivery AND Category!)
-    # Tohle zakázku 4941078030 rozdělí do dvou řádků: 19 TO do Vollpalette a 1 TO do Misch
-    pick_agg = df_pick_billing.groupby(['Delivery', 'Clean_Del', 'Category_Full']).agg(
+    df_hu_counts = pd.DataFrame(del_hu_counts)
+
+    # 6. AGREGACE DLE ZAKÁZKY A JEJÍCH ČÁSTÍ
+    pick_agg = df_pick_billing.groupby(['Delivery', 'Clean_Del', 'Category_Full', 'Is_Vollpalette']).agg(
         pocet_to=(queue_count_col, "nunique"),
         pohyby_celkem=("Pohyby_Rukou", "sum"),
         pocet_lokaci=("Source Storage Bin", "nunique"),
         Month=("Month", "first")
     ).reset_index()
 
-    # Přiřazení vyfakturovaných HU k příslušným řádkům
-    def assign_hu_counts(row):
-        d = row['Clean_Del']
-        cat = row['Category_Full']
-        stats = del_stats_dict.get(d, {'voll': 0, 'non_voll': 0})
-        
-        if 'Vollpalette' in cat:
-            return stats['voll']
-        else:
-            return stats['non_voll']
+    # Spojíme Pick TO a Billed HU pro každou část zakázky
+    if not df_hu_counts.empty:
+        billing_df = pd.merge(pick_agg, df_hu_counts, on=['Clean_Del', 'Is_Vollpalette'], how='left')
+    else:
+        billing_df = pick_agg.copy()
+        billing_df['pocet_hu'] = 0
 
-    pick_agg['pocet_hu'] = pick_agg.apply(assign_hu_counts, axis=1)
-
-    # 6. FINÁLNÍ VÝPOČTY
-    billing_df = pick_agg.copy()
+    billing_df['pocet_hu'] = billing_df['pocet_hu'].fillna(0).astype(int)
     billing_df["Bilance"] = (billing_df["pocet_to"] - billing_df["pocet_hu"]).astype(int)
     billing_df["TO_navic"] = billing_df["Bilance"].clip(lower=0)
+
+    billing_df = billing_df.drop(columns=['Is_Vollpalette'])
 
     return billing_df
 
@@ -204,8 +212,8 @@ def render_billing(df_pick, df_vekp, df_vepo, df_cats, queue_count_col, aus_data
         c1, c2, c3, c4 = st.columns(4)
         with c1:
             with st.container(border=True): 
-                # Změněn popisek, protože teď máme "části zakázek"
-                st.metric(_t("Fakturačních položek (Částí zakázek)", "Billing Items (Order Parts)"), f"{len(billing_df):,}")
+                # Zobrazení SKUTEČNÉHO počtu unikátních zakázek, i když jsou teď rozdělené na více řádků
+                st.metric(_t("Zakázek celkem", "Total Orders"), f"{billing_df['Delivery'].nunique():,}")
         with c2:
             with st.container(border=True): 
                 st.metric(_t("Fakturované palety/krabice (HU)", "Billed Pallets/Boxes (HU)"), f"{int(billing_df['pocet_hu'].sum()):,}")
@@ -226,10 +234,10 @@ def render_billing(df_pick, df_vekp, df_vepo, df_cats, queue_count_col, aus_data
         st.divider()
         col_t1, col_t2 = st.columns([1.2, 1])
         with col_t1:
-            st.markdown(f"**{_t('Souhrn podle kategorií zabalených HU (Zisky a Ztráty)', 'Summary by Packed HU Categories (Profit & Loss)')}**")
+            st.markdown(f"**{_t('Souhrn podle kategorií (Zisky a Ztráty)', 'Summary by Category (Profit & Loss)')}**")
             
             cat_sum = billing_df.groupby("Category_Full").agg(
-                pocet_zakazek=("Delivery", "nunique"), 
+                pocet_casti=("Delivery", "count"), 
                 pocet_to=("pocet_to", "sum"), 
                 pocet_hu=("pocet_hu", "sum"), 
                 pocet_lok=("pocet_lokaci", "sum"), 
@@ -240,10 +248,10 @@ def render_billing(df_pick, df_vekp, df_vepo, df_cats, queue_count_col, aus_data
             
             cat_sum["prum_poh"] = np.where(cat_sum["pocet_lok"] > 0, cat_sum["poh"] / cat_sum["pocet_lok"], 0)
             
-            disp = cat_sum[["Category_Full", "pocet_zakazek", "pocet_to", "pocet_hu", "prum_poh", "bilance", "to_navic"]].copy()
+            disp = cat_sum[["Category_Full", "pocet_casti", "pocet_to", "pocet_hu", "prum_poh", "bilance", "to_navic"]].copy()
             disp.columns = [
-                _t("Kategorie HU", "HU Category"), 
-                _t("Počet zakázek", "Orders"), 
+                _t("Kategorie", "Category"), 
+                _t("Části zakázek", "Order Parts"), 
                 _t("Počet TO", "Total TO"), 
                 _t("Zúčtované HU", "Billed HU"), 
                 _t("Prům. pohybů na lokaci", "Avg Moves/Location"), 
@@ -407,7 +415,7 @@ def render_billing(df_pick, df_vekp, df_vepo, df_cats, queue_count_col, aus_data
         
         disp_ratio.columns = [
             _t("Kategorie HU", "HU Category"), 
-            _t("Položek", "Items"), 
+            _t("Částí zakázek", "Order Parts"), 
             _t("TO Celkem", "Total TO"), 
             _t("HU Celkem", "Total HU"), 
             _t("Index konsolidace (TO/HU)", "Consolidation Index (TO/HU)"), 
@@ -538,7 +546,7 @@ def render_billing(df_pick, df_vekp, df_vepo, df_cats, queue_count_col, aus_data
                 paper_bgcolor="rgba(0,0,0,0)", 
                 margin=dict(l=0, r=0, t=30, b=0), 
                 legend=dict(orientation="h", yanchor="bottom", y=1.05, xanchor="left", x=0),
-                yaxis=dict(title=_t("Celkem položek", "Total Items")),
+                yaxis=dict(title=_t("Celkem částí zakázek", "Total Order Parts")),
                 yaxis2=dict(title=_t("Podíl zakázek (%)", "Order Share (%)"), side="right", overlaying="y", showgrid=False, range=[0, 110])
             )
             st.plotly_chart(fig_r, use_container_width=True)
