@@ -10,14 +10,15 @@ try:
 except AttributeError:
     fast_render = lambda f: f
 
-# Verze v16 - Čistá SAP architektura: Striktní T031 + VEPO bez filtrování!
+# Verze v17 - Ultimátní přesnost (Listy z VEPO + PI_PA Override pro T031)
 @st.cache_data(show_spinner=False)
-def cached_billing_logic_v16(df_pick, df_vekp, df_vepo, df_cats, queue_count_col, voll_set):
+def cached_billing_logic_v17(df_pick, df_vekp, df_vepo, df_cats, queue_count_col, voll_set):
     # ---------------------------------------------------------
-    # 1. URČENÍ ZÁKLADNÍ KATEGORIE (Absolutní pravda = df_cats + T031)
+    # 1. URČENÍ ZÁKLADNÍ KATEGORIE (Absolutní pravda = df_cats, Záloha = T031 + PI_PA)
     # ---------------------------------------------------------
     del_base_map = {}
     
+    # Primární zdroj pravdy: Nahraná data z Auswertung (df_cats)
     if df_cats is not None and not df_cats.empty:
         c_del_cats = next((c for c in df_cats.columns if 'Lieferung' in c or 'Delivery' in c), None)
         c_kat = next((c for c in df_cats.columns if 'Kategorie' in c), None)
@@ -28,6 +29,7 @@ def cached_billing_logic_v16(df_pick, df_vekp, df_vepo, df_cats, queue_count_col
                 if cat_val in ['N', 'E', 'O', 'OE']:
                     del_base_map[d] = cat_val
 
+    # Načtení bran pro záložní logiku
     del_vs_map = {}
     df_likp = load_from_db('raw_likp')
     if df_likp is not None and not df_likp.empty:
@@ -44,7 +46,7 @@ def cached_billing_logic_v16(df_pick, df_vekp, df_vepo, df_cats, queue_count_col
         return billing_df, df_hu_details
 
     # ---------------------------------------------------------
-    # 2. PŘÍPRAVA DAT
+    # 2. PŘÍPRAVA DAT A ČIŠTĚNÍ ČÍSEL
     # ---------------------------------------------------------
     df_pick_billing = df_pick.copy()
     df_pick_billing['Clean_Del'] = df_pick_billing['Delivery'].apply(safe_del)
@@ -63,6 +65,9 @@ def cached_billing_logic_v16(df_pick, df_vekp, df_vepo, df_cats, queue_count_col
     vekp_filtered['Clean_HU_Ext'] = vekp_filtered[vekp_ext_col].apply(safe_hu)
     vekp_filtered['Clean_Parent'] = vekp_filtered[parent_col_vepo].apply(safe_hu) if parent_col_vepo else ""
 
+    # ---------------------------------------------------------
+    # 3. OZNAČENÍ ŘÁDKŮ PICK REPORTU (VOLLPALETTE)
+    # ---------------------------------------------------------
     def is_row_voll(row):
         d = row['Clean_Del']
         hu = safe_hu(row.get('Handling Unit', ''))
@@ -71,24 +76,33 @@ def cached_billing_logic_v16(df_pick, df_vekp, df_vepo, df_cats, queue_count_col
 
     df_pick_billing['Is_Vollpalette'] = df_pick_billing.apply(is_row_voll, axis=1)
 
+    # Aplikace záložní logiky (T031 + PI_PA Override) na zakázky, které chyběly v df_cats
     for d, grp in df_pick_billing.groupby('Clean_Del'):
         if d not in del_base_map:
             vs = del_vs_map.get(d, "")
+            all_queues = " ".join(grp['Queue'].dropna().astype(str).str.upper().unique())
+            
+            # Základ podle T031
             if vs == 'FM20': base = 'N'
             elif vs == 'FM21': base = 'E'
             elif vs == 'FM22': base = 'E'
             elif vs == 'FM23': base = 'N'
             elif vs == 'FM24': base = 'O'
             else:
-                all_queues = " ".join(grp['Queue'].dropna().astype(str).str.upper().unique())
                 if 'PI_PA_OE' in all_queues: base = 'OE'
                 elif 'PI_PA' in all_queues: base = 'E'
                 elif 'PI_PL_OE' in all_queues or 'FUOE' in all_queues: base = 'O'
                 else: base = 'N'
+                
+            # MAGICKÝ OVERRIDE: Pokud to fyzicky prošlo Parcel stolem, JE TO KURÝR (E/OE), i když T031 říká N/O
+            if base in ['N', 'O'] and 'PI_PA' in all_queues:
+                if base == 'N': base = 'E'
+                if base == 'O': base = 'OE'
+                
             del_base_map[d] = base
 
     # ---------------------------------------------------------
-    # 3. VEPO STROM: Jaké materiály fyzicky leží v HU?
+    # 4. VEPO STROM (Jaké materiály leží uvnitř obalů)
     # ---------------------------------------------------------
     vepo_mats = {}
     if df_vepo is not None and not df_vepo.empty:
@@ -116,7 +130,7 @@ def cached_billing_logic_v16(df_pick, df_vekp, df_vepo, df_cats, queue_count_col
             children_map[parent].append(child)
 
     # ---------------------------------------------------------
-    # 4. VYÚČTOVÁNÍ
+    # 5. VYÚČTOVÁNÍ: VOLLPALETTE (Kořeny) vs PACKSTÜCK (Krabice uvnitř)
     # ---------------------------------------------------------
     del_hu_counts = []
     del_mat_cats = {} 
@@ -125,13 +139,13 @@ def cached_billing_logic_v16(df_pick, df_vekp, df_vepo, df_cats, queue_count_col
     for d, grp in vekp_filtered.groupby('Clean_Del'):
         base = del_base_map.get(d, "N")
 
-        # A) Které obaly se potvrdily jako Vollpalette?
+        # KROK A: Najdeme všechny Vollpalety v zakázce
         voll_hus_in_del = set()
         for _, r in grp.iterrows():
             if (d, r['Clean_HU_Ext']) in voll_set or (d, r['Clean_HU_Int']) in voll_set:
                 voll_hus_in_del.add(r['Clean_HU_Int'])
 
-        # B) Odhalíme všechny krabice uvnitř Vollpalet
+        # KROK B: Najdeme všechny krabice, které leží UVNITŘ Vollpalet (ty se neúčtují, účtuje se jen paleta)
         descendants_of_voll = set()
         for v_hu in voll_hus_in_del:
             stack = [v_hu]
@@ -142,19 +156,20 @@ def cached_billing_logic_v16(df_pick, df_vekp, df_vepo, df_cats, queue_count_col
                     descendants_of_voll.add(child)
                     stack.append(child)
 
-        # C) Každý obal se ohodnotí (přesně jako to dělá zákazník ve svém Pivotu)
+        # KROK C: Vyúčtujeme celou zakázku
         for _, r in grp.iterrows():
             hu = r['Clean_HU_Int']
             ext_hu = r['Clean_HU_Ext']
 
             if hu in voll_hus_in_del:
+                # JE TO VOLLPALETTE -> Účtuje se 1 Paleta (Pojistka: Vollpalette nikdy neletí kurýrem)
                 cat = f"{base} Vollpalette"
                 if base == "OE": cat = "O Vollpalette" 
                 if base == "E": cat = "N Vollpalette"  
                 
                 del_hu_counts.append({'Clean_Del': d, 'Category_Full': cat, 'pocet_hu': 1})
                 
-                # Seskupíme obsah do Vollpalety
+                # Seskupíme obsah do Vollpalety (pro Audit)
                 mats = set()
                 stack = [hu]
                 while stack:
@@ -169,17 +184,22 @@ def cached_billing_logic_v16(df_pick, df_vekp, df_vepo, df_cats, queue_count_col
                     del_mat_cats[(d, m)].add(cat)
 
             elif hu not in descendants_of_voll:
-                # Pokud obal není ve Vollpaletě, a má něco ve VEPO, stává se účtovatelnou krabicí!
-                if hu in vepo_mats:
-                    mats = vepo_mats[hu]
-                    cat = f"{base} Sortenrein" if len(mats) == 1 else f"{base} Misch"
+                # NENÍ TO VOLLPALETTE. Díváme se jen na ty obaly (Listy), které fyzicky drží materiál
+                is_leaf = (hu not in children_map) or (len(children_map[hu]) == 0)
+                
+                if is_leaf:
+                    mats = vepo_mats.get(hu, set())
                     
-                    del_hu_counts.append({'Clean_Del': d, 'Category_Full': cat, 'pocet_hu': 1})
-                    hu_details_list.append({'Clean_Del': d, 'HU_Int': hu, 'Is_Vollpalette': 'NE', 'Category_Full': cat, 'Materials': ", ".join(mats)})
+                    # ČISTÁ LOGIKA BEZ FILTRŮ: Je tam materiál? Účtuj to. Je jich víc? Je to Misch.
+                    if len(mats) > 0:
+                        cat = f"{base} Sortenrein" if len(mats) == 1 else f"{base} Misch"
+                        
+                        del_hu_counts.append({'Clean_Del': d, 'Category_Full': cat, 'pocet_hu': 1})
+                        hu_details_list.append({'Clean_Del': d, 'HU_Int': hu, 'Is_Vollpalette': 'NE', 'Category_Full': cat, 'Materials': ", ".join(mats)})
 
-                    for m in mats:
-                        if (d, m) not in del_mat_cats: del_mat_cats[(d, m)] = set()
-                        del_mat_cats[(d, m)].add(cat)
+                        for m in mats:
+                            if (d, m) not in del_mat_cats: del_mat_cats[(d, m)] = set()
+                            del_mat_cats[(d, m)].add(cat)
 
     df_hu_counts = pd.DataFrame(del_hu_counts)
     if not df_hu_counts.empty:
@@ -190,7 +210,7 @@ def cached_billing_logic_v16(df_pick, df_vekp, df_vepo, df_cats, queue_count_col
     df_hu_details = pd.DataFrame(hu_details_list)
 
     # ---------------------------------------------------------
-    # 5. SPÁROVÁNÍ FYZICKÝCH PICKŮ (TO) NA VÝSLEDNÉ KATEGORIE
+    # 6. SPÁROVÁNÍ FYZICKÝCH PICKŮ (TO) NA VÝSLEDNÉ KATEGORIE
     # ---------------------------------------------------------
     non_voll_mats = df_pick_billing[~df_pick_billing['Is_Vollpalette']].groupby('Clean_Del')['Material'].nunique().to_dict()
 
@@ -216,7 +236,7 @@ def cached_billing_logic_v16(df_pick, df_vekp, df_vepo, df_cats, queue_count_col
     df_pick_billing['Category_Full'] = df_pick_billing.apply(get_full_category, axis=1)
 
     # ---------------------------------------------------------
-    # 6. AGREGACE DLE ZAKÁZKY A KATEGORIE
+    # 7. AGREGACE DLE ZAKÁZKY A KATEGORIE
     # ---------------------------------------------------------
     pick_agg = df_pick_billing.groupby(['Clean_Del', 'Category_Full']).agg(
         pocet_to=(queue_count_col, "nunique"),
@@ -254,7 +274,8 @@ def render_billing(df_pick, df_vekp, df_vepo, df_cats, queue_count_col, aus_data
 
     voll_set = st.session_state.get('voll_set', set())
     
-    billing_df, df_hu_details = cached_billing_logic_v16(df_pick, df_vekp, df_vepo, df_cats, queue_count_col, voll_set)
+    # Volání verze 17
+    billing_df, df_hu_details = cached_billing_logic_v17(df_pick, df_vekp, df_vepo, df_cats, queue_count_col, voll_set)
     st.session_state['debug_hu_details'] = df_hu_details
 
     if load_from_db('raw_likp') is None:
