@@ -11,7 +11,6 @@ try:
 except AttributeError:
     fast_render = lambda f: f
 
-# Normalizační funkce pro spolehlivé párování HU čísel
 def normalize_hu(val):
     v = str(val).strip()
     if v.lower() in ['nan', 'none', '']: return ''
@@ -19,16 +18,15 @@ def normalize_hu(val):
     v = v.lstrip('0')           
     return v
 
+# Přejmenováno na v3, aby se vynutilo vyčištění staré cache!
 @st.cache_data(show_spinner=False)
-def cached_billing_logic(df_pick, df_vekp, df_vepo, df_cats, queue_count_col):
-    # 1. NAČTENÍ LIKP DAT A VYTVOŘENÍ MAPY ZÁKAZNÍKŮ (O vs N)
+def cached_billing_logic_v3(df_pick, df_vekp, df_vepo, df_cats, queue_count_col):
     del_vs_map = {}
     
     df_likp = load_from_db('raw_likp')
-        
     if df_likp is not None and not df_likp.empty:
         c_lief = next((c for c in df_likp.columns if "Delivery" in str(c) or "Lieferung" in str(c)), df_likp.columns[0])
-        c_vs = next((c for c in df_likp.columns if "Shipping Point" in str(c) or "Versandstelle" in str(c)), None)
+        c_vs = next((c for c in df_likp.columns if "Shipping Point" in str(c) or "Versandstelle" in str(c) or "Receiving Pt" in str(c)), None)
         
         if c_vs:
             for _, r in df_likp.iterrows():
@@ -55,49 +53,52 @@ def cached_billing_logic(df_pick, df_vekp, df_vepo, df_cats, queue_count_col):
     vekp_hu_col = next((c for c in vekp_filtered.columns if "Internal HU" in str(c) or "HU-Nummer intern" in str(c)), vekp_filtered.columns[0])
     vekp_ext_col = vekp_filtered.columns[1]
     parent_col_vepo = next((c for c in vekp_filtered.columns if "higher-level" in str(c).lower() or "übergeordn" in str(c).lower() or "superordinate" in str(c).lower()), None)
+    c_pm = next((c for c in vekp_filtered.columns if "Packmittel" in str(c) or "Packaging" in str(c) or "Pack. mat" in str(c)), None)
     
     vekp_filtered['Clean_HU_Int'] = vekp_filtered[vekp_hu_col].apply(normalize_hu)
     vekp_filtered['Clean_HU_Ext'] = vekp_filtered[vekp_ext_col].apply(normalize_hu)
-    
     if parent_col_vepo:
         vekp_filtered['Clean_Parent'] = vekp_filtered[parent_col_vepo].apply(normalize_hu)
     else:
         vekp_filtered['Clean_Parent'] = ""
 
-    # 2. MAPOVÁNÍ ROOT HUs Z VEKP (Všechny výsledné krabice a palety bez rodiče)
+    # 1. MAPOVÁNÍ ROOT HUs Z VEKP S OCHRANOU PROTI KRABICÍM
     root_df = vekp_filtered[vekp_filtered['Clean_Parent'] == '']
     del_to_roots = {}
     for d, grp in root_df.groupby('Clean_Del'):
         roots = []
         for _, r in grp.iterrows():
-            roots.append({'int': r['Clean_HU_Int'], 'ext': r['Clean_HU_Ext']})
+            # Ochrana č. 1: Zjištění typu obalu z VEKP
+            pm = str(r.get(c_pm, '')).upper().strip() if c_pm else ""
+            is_carton = False
+            
+            if pm and pm != 'CARTON-16': # CARTON-16 je povolená paleta
+                if 'CARTON' in pm or 'BOX' in pm or pm in ['CT', 'CD3', 'CD', 'CR', 'KLT']:
+                    is_carton = True
+                elif pm.startswith('K') and len(pm) <= 2:
+                    is_carton = True
+            
+            # Pouze pokud to není krabice, může se to stát Vollpaletou
+            if not is_carton:
+                roots.append({'int': r['Clean_HU_Int'], 'ext': r['Clean_HU_Ext']})
+                
         del_to_roots[d] = roots
 
     c_su = 'Storage Unit Type' if 'Storage Unit Type' in df_pick_billing.columns else ('Type' if 'Type' in df_pick_billing.columns else None)
-    
-    # Blokace aby se krabice nestaly paletou (s VIP výjimkou pro CARTON-16)
-    def is_klt_or_carton(v):
-        v = str(v).upper().strip()
-        
-        # VÝJIMKA: CARTON-16 je u nás paleta!
-        if v == 'CARTON-16': return False
-        
-        if v in ['K1','K2','K3','K4','KLT','KLT1','KLT2']: return True
-        if v.startswith('K') and len(v) <= 2: return True
-        if 'CARTON' in v or 'BOX' in v or v in ['CT', 'CD3', 'CD', 'CR']: return True
-        return False
-
     pick_hu_cols = ['Handling Unit', 'Source storage unit', 'Source Storage Bin']
     
-    # 3. IDENTIFIKACE VOLLPALET (Křížová shoda s ochranou proti krabicím)
+    # 2. IDENTIFIKACE VOLLPALET VE SKLADU
     matched_root_hus_global = set()
     for _, pick_row in df_pick_billing.iterrows():
         if str(pick_row.get('Removal of total SU', '')).strip().upper() != 'X': continue
         
-        su_type = str(pick_row.get(c_su, '')) if c_su else ''
-        if is_klt_or_carton(su_type): continue
+        # Ochrana č. 2: Zjištění typu obalu ze Skladu
+        su_type = str(pick_row.get(c_su, '')).upper().strip() if c_su else ''
+        if su_type and su_type != 'CARTON-16':
+            if 'CARTON' in su_type or 'BOX' in su_type or su_type in ['CT', 'CD3', 'CD', 'CR', 'KLT', 'K1', 'K2', 'K3']: 
+                continue
         
-        # Ignorovat balíkové fronty, ty neprodukují Vollpalety
+        # Ochrana č. 3: Parcel fronty netvoří palety
         if 'PI_PA' in str(pick_row.get('Queue', '')).upper(): continue
 
         d = str(pick_row['Clean_Del'])
@@ -113,11 +114,12 @@ def cached_billing_logic(df_pick, df_vekp, df_vepo, df_cats, queue_count_col):
                             if r['int']: matched_root_hus_global.add(r['int'])
                             if r['ext']: matched_root_hus_global.add(r['ext'])
 
-    # 4. OZNAČENÍ ŘÁDKŮ VE SKLADU
+    # 3. OZNAČENÍ ŘÁDKŮ
     def assign_voll(pick_row):
         if str(pick_row.get('Removal of total SU', '')).strip().upper() != 'X': return False
-        su_type = str(pick_row.get(c_su, '')) if c_su else ''
-        if is_klt_or_carton(su_type): return False
+        su_type = str(pick_row.get(c_su, '')).upper().strip() if c_su else ''
+        if su_type and su_type != 'CARTON-16':
+            if 'CARTON' in su_type or 'BOX' in su_type or su_type in ['CT', 'CD3', 'CD', 'CR', 'KLT']: return False
         if 'PI_PA' in str(pick_row.get('Queue', '')).upper(): return False
         
         for col in pick_hu_cols:
@@ -129,39 +131,44 @@ def cached_billing_logic(df_pick, df_vekp, df_vepo, df_cats, queue_count_col):
 
     df_pick_billing['Is_Vollpalette'] = df_pick_billing.apply(assign_voll, axis=1)
 
-    # 5. URČENÍ HLAVNÍ KATEGORIE (N, O, E, OE)
+    # 4. URČENÍ HLAVNÍ KATEGORIE ZAKÁZKY (N, O, E, OE) PŘES LIKP a VŠECHNY FRONTY
     del_base_map = {}
     for d, grp in df_pick_billing.groupby('Clean_Del'):
-        top_q = str(grp['Queue'].mode()[0]).upper() if not grp['Queue'].empty else ''
+        all_queues = " ".join(grp['Queue'].dropna().astype(str).str.upper().unique())
         
         vs = del_vs_map.get(d, "")
         if vs in ['FM22', 'FM23', 'FM24']: 
-            base = "O"
+            export = True
         elif vs in ['FM20', 'FM21']: 
-            base = "N"
+            export = False
         else:
-            if '_O' in top_q or 'FU_O' in top_q or 'FUO' in top_q or 'PI_PL_O' in top_q:
-                base = "O"
+            if '_O' in all_queues or 'FU_O' in all_queues or 'FUO' in all_queues:
+                export = True
             else:
-                base = "N"
+                export = False
                 
-        if base == "O":
-            if 'PI_PA' in top_q or 'FUOE' in top_q or 'PI_PL_OE' in top_q or '_OE' in top_q:
-                base = "OE"
-        elif base == "N":
-            if 'PI_PA' in top_q:
-                base = "E"
-                
-        del_base_map[d] = base
+        # Pokud má pouze Parcel frontu (a chybí paletová), je to Kurýr
+        if 'PI_PA' in all_queues and not ('PI_PL' in all_queues or 'FU' in all_queues):
+            is_parcel = True
+        else:
+            is_parcel = False
+            
+        if is_parcel:
+            del_base_map[d] = "OE" if export else "E"
+        else:
+            del_base_map[d] = "O" if export else "N"
 
     non_voll_mats = df_pick_billing[~df_pick_billing['Is_Vollpalette']].groupby('Clean_Del')['Material'].nunique().to_dict()
 
-    # 6. KATEGORIZACE KAŽDÉHO ŘÁDKU ZVLÁŠŤ
+    # 5. KATEGORIZACE S ABSOLUTNÍ POJISTKOU PROTI "OE VOLLPALETTE"
     def get_full_category(row):
         d = str(row['Clean_Del'])
         base = del_base_map.get(d, "N")
 
         if row['Is_Vollpalette']:
+            # Přeřazení do Kamionu (N/O), pokud to z nějakého důvodu spadlo do Kurýra (E/OE)
+            if base == "OE": base = "O"
+            if base == "E": base = "N"
             return f"{base} Vollpalette"
             
         mats = non_voll_mats.get(d, 1)
@@ -169,7 +176,7 @@ def cached_billing_logic(df_pick, df_vekp, df_vepo, df_cats, queue_count_col):
 
     df_pick_billing['Category_Full'] = df_pick_billing.apply(get_full_category, axis=1)
 
-    # 7. ROZDĚLENÍ VYFAKTUROVANÝCH HU DO SPRÁVNÝCH KATEGORIÍ
+    # 6. ROZDĚLENÍ HU
     del_hu_counts = []
     for d, grp in root_df.groupby('Clean_Del'):
         voll_count = 0
@@ -187,7 +194,7 @@ def cached_billing_logic(df_pick, df_vekp, df_vepo, df_cats, queue_count_col):
 
     df_hu_counts = pd.DataFrame(del_hu_counts)
 
-    # 8. AGREGACE DLE ZAKÁZKY A JEJÍCH ČÁSTÍ
+    # 7. AGREGACE
     pick_agg = df_pick_billing.groupby(['Delivery', 'Clean_Del', 'Category_Full', 'Is_Vollpalette']).agg(
         pocet_to=(queue_count_col, "nunique"),
         pohyby_celkem=("Pohyby_Rukou", "sum"),
@@ -208,7 +215,7 @@ def cached_billing_logic(df_pick, df_vekp, df_vepo, df_cats, queue_count_col):
 
     pick_agg['pocet_hu'] = pick_agg.apply(assign_hu_counts, axis=1)
 
-    # 9. FINÁLNÍ VÝPOČTY A AUDIT DATA
+    # 8. FINÁLNÍ VÝPOČTY
     billing_df = pick_agg.copy()
     billing_df['Clean_Del_Merge'] = billing_df['Clean_Del']
     
@@ -227,7 +234,8 @@ def render_billing(df_pick, df_vekp, df_vepo, df_cats, queue_count_col, aus_data
 
     st.markdown(f"<div class='section-header'><h3>💰 {_t('Korelace mezi Pickováním a Účtováním', 'Correlation Between Picking and Billing')}</h3><p>{_t('Zákazník platí podle počtu výsledných balících jednotek (HU). Zde vidíte náročnost vytvoření těchto zpoplatněných jednotek napříč fakturačními kategoriemi.', 'The customer pays based on the number of billed HUs. Here you can see the effort required to create these billed units across categories.')}</p></div>", unsafe_allow_html=True)
 
-    billing_df = cached_billing_logic(df_pick, df_vekp, df_vepo, df_cats, queue_count_col)
+    # Volání verze V3 pro ignorování staré cache!
+    billing_df = cached_billing_logic_v3(df_pick, df_vekp, df_vepo, df_cats, queue_count_col)
 
     if load_from_db('raw_likp') is None:
         st.warning("⚠️ **Info:** Pro 100% přesné oddělení N a O zakázek doporučujeme v Admin Zóně nahrát LIKP report. Nyní systém pro určení exportu odhaduje data na základě Fronty (Queue).")
