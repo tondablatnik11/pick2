@@ -31,7 +31,6 @@ QUEUE_DESC = {
 }
 BOX_UNITS = {'AEK', 'KAR', 'KART', 'PAK', 'VPE', 'CAR', 'BLO', 'ASK', 'BAG', 'PAC'}
 
-# --- ZDE JE TVŮJ KOMPLETNÍ SLOVNÍK ---
 TEXTS = {
     'cs': {
         'switch_lang': "🇬🇧 Switch to English", 'title': "🏢 Warehouse Control Tower",
@@ -133,46 +132,37 @@ def fast_compute_moves(qty_list, queue_list, su_list, box_list, w_list, d_list, 
 
 
 # ==========================================
-# CENTRÁLNÍ MOZEK PRO DETEKCI VOLLPALET (Opravená logika prázdných polí)
+# CENTRÁLNÍ MOZEK PRO DETEKCI VOLLPALET (Vylepšené párování SSU a HU)
 # ==========================================
 
 def safe_hu(val):
-    """Základní ošetření čísla, ZÁKAZ lstrip('0') dle pravidel analýzy."""
     v = str(val).strip()
     if v.lower() in ['nan', 'none', '']: return ''
     if v.endswith('.0'): v = v[:-2]
     return v
 
 def safe_del(val):
-    """Delivery číslo může mít umazané nuly."""
     v = str(val).strip()
     if v.lower() in ['nan', 'none', '']: return ''
     if v.endswith('.0'): v = v[:-2]
     return v.lstrip('0')
 
 def is_box(v):
-    """Zakázané obaly (Pravidlo 2 & 5)"""
     v = str(v).upper().strip()
-    if v == 'CARTON-16': return False # VIP Výjimka
+    if v == 'CARTON-16': return False 
     if v in ['K1','K2','K3','K4','KLT','KLT1','KLT2']: return True
     if v.startswith('K') and len(v) <= 2: return True
     if 'CARTON' in v or 'BOX' in v or v in ['CT', 'CD3', 'CD', 'CR']: return True
     return False
 
 def detect_vollpalettes(df_pick, df_vekp, df_vepo):
-    """
-    Hledá Vollpalety na základě striktních pravidel z forenzní analýzy.
-    Vrací set s tuplem (Delivery, External/Internal_HU_Number)
-    """
     voll_set = set()
     if any(df is None or df.empty for df in [df_pick, df_vekp, df_vepo]):
         return voll_set
         
-    # Pravidlo 5: VEPO - Získáme všechny interní HU, které fyzicky obsahují materiál
     vepo_hu_col = next((c for c in df_vepo.columns if "Internal HU" in str(c) or "HU-Nummer intern" in str(c)), df_vepo.columns[0])
     valid_vepo_hus = set(df_vepo[vepo_hu_col].dropna().apply(safe_hu))
     
-    # Pravidlo 4: VEKP - Najdeme všechny "Root" HU (nemají nadřazený obal)
     vekp_hu_col = next((c for c in df_vekp.columns if "Internal HU" in str(c) or "HU-Nummer intern" in str(c)), df_vekp.columns[0])
     vekp_ext_col = df_vekp.columns[1]
     parent_col = next((c for c in df_vekp.columns if "higher-level" in str(c).lower() or "übergeordn" in str(c).lower() or "superordinate" in str(c).lower()), None)
@@ -189,39 +179,34 @@ def detect_vollpalettes(df_pick, df_vekp, df_vepo):
             ext_hu = safe_hu(r[vekp_ext_col])
             int_hu = safe_hu(r[vekp_hu_col])
             if int_hu in valid_vepo_hus:
-                # Uložíme si obě čísla (externí i interní), abychom chytli cokoliv, co na nás Pick Report vyhodí
+                # Uložíme si externí i interní číslo, abychom dokázali z Pick reportu spárovat cokoliv!
                 if ext_hu: valid_roots[(deliv, ext_hu)] = int_hu
                 if int_hu: valid_roots[(deliv, int_hu)] = int_hu
                 
-    # Pick Report
     c_su = 'Storage Unit Type' if 'Storage Unit Type' in df_pick.columns else ('Type' if 'Type' in df_pick.columns else None)
     
     for _, r in df_pick.iterrows():
-        if str(r.get('Removal of total SU', '')).strip().upper() != 'X': continue # Pravidlo 1
-        
+        if str(r.get('Removal of total SU', '')).strip().upper() != 'X': continue 
         su_type = str(r.get(c_su, '')) if c_su else ''
-        if is_box(su_type): continue # Pravidlo 2
-        if 'PI_PA' in str(r.get('Queue', '')).upper(): continue # Ochrana Parcel front
+        if is_box(su_type): continue 
+        if 'PI_PA' in str(r.get('Queue', '')).upper(): continue 
         
         ssu = safe_hu(r.get('Source storage unit', ''))
         hu = safe_hu(r.get('Handling Unit', ''))
         
-        # OPRAVA: Pokud je jedno z čísel prázdné, nedáme rovnou false, ale použijeme to vyplněné!
         pick_hu = ""
         if ssu and hu:
-            if ssu != hu: continue # Pravidlo 3: Změna identity = přebaleno na vozíku
+            if ssu != hu: continue 
             pick_hu = ssu
-        elif ssu:
-            pick_hu = ssu
-        elif hu:
-            pick_hu = hu
-        else:
-            continue
+        elif ssu: pick_hu = ssu
+        elif hu: pick_hu = hu
+        else: continue
         
         deliv = safe_del(r.get('Delivery', ''))
         
-        # Pravidlo 6: Číslo palety a číslo zakázky se musí shodovat s ověřenou Root paletou z VEKP
         if (deliv, pick_hu) in valid_roots:
+            int_match = valid_roots[(deliv, pick_hu)]
             voll_set.add((deliv, pick_hu))
+            voll_set.add((deliv, int_match)) # Přidáme obě varianty pro jistotu
             
     return voll_set
