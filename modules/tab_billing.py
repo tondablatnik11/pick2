@@ -10,9 +10,9 @@ try:
 except AttributeError:
     fast_render = lambda f: f
 
-# Přejmenováno na v5 pro vynucení resetu cache!
+# Přejmenováno na v6 pro vynucení resetu cache a zapojení stromové logiky (VEPO)
 @st.cache_data(show_spinner=False)
-def cached_billing_logic_v5(df_pick, df_vekp, df_vepo, df_cats, queue_count_col, voll_set):
+def cached_billing_logic_v6(df_pick, df_vekp, df_vepo, df_cats, queue_count_col, voll_set):
     # ---------------------------------------------------------
     # 1. NAČTENÍ LIKP DAT A VYTVOŘENÍ MAPY ZÁKAZNÍKŮ (Export vs Normal)
     # ---------------------------------------------------------
@@ -41,9 +41,11 @@ def cached_billing_logic_v5(df_pick, df_vekp, df_vepo, df_cats, queue_count_col,
     vekp_filtered = vekp_clean[vekp_clean["Clean_Del"].isin(valid_deliveries)].copy()
     if vekp_filtered.empty: return billing_df
 
+    vekp_hu_col = next((c for c in vekp_filtered.columns if "Internal HU" in str(c) or "HU-Nummer intern" in str(c)), vekp_filtered.columns[0])
     vekp_ext_col = vekp_filtered.columns[1]
     parent_col_vepo = next((c for c in vekp_filtered.columns if "higher-level" in str(c).lower() or "übergeordn" in str(c).lower() or "superordinate" in str(c).lower()), None)
     
+    vekp_filtered['Clean_HU_Int'] = vekp_filtered[vekp_hu_col].apply(safe_hu)
     vekp_filtered['Clean_HU_Ext'] = vekp_filtered[vekp_ext_col].apply(safe_hu)
     vekp_filtered['Clean_Parent'] = vekp_filtered[parent_col_vepo].apply(safe_hu) if parent_col_vepo else ""
 
@@ -95,22 +97,58 @@ def cached_billing_logic_v5(df_pick, df_vekp, df_vepo, df_cats, queue_count_col,
     df_pick_billing['Category_Full'] = df_pick_billing.apply(get_full_category, axis=1)
 
     # ---------------------------------------------------------
-    # 6. ROZŠTĚPENÍ VYFAKTUROVANÝCH HU DO KATEGORIÍ (Root HUs)
+    # 6. ROZŠTĚPENÍ VYFAKTUROVANÝCH HU DO KATEGORIÍ (Stromová logika dle VEPO)
     # ---------------------------------------------------------
-    root_df = vekp_filtered[vekp_filtered['Clean_Parent'] == '']
-    del_hu_counts = []
-    for d, grp in root_df.groupby('Clean_Del'):
-        voll_count = 0
-        non_voll_count = 0
-        for _, r in grp.iterrows():
-            ext_hu = r['Clean_HU_Ext']
-            if (d, ext_hu) in voll_set:
-                voll_count += 1
-            else:
-                non_voll_count += 1
+    ext_to_int = dict(zip(vekp_filtered['Clean_HU_Ext'], vekp_filtered['Clean_HU_Int']))
+    parent_map = {}
+    for _, r in vekp_filtered.iterrows():
+        child = r['Clean_HU_Int']
+        parent = r['Clean_Parent']
+        if parent in ext_to_int: 
+            parent = ext_to_int[parent]
+        parent_map[child] = parent
         
-        if voll_count > 0: del_hu_counts.append({'Clean_Del': d, 'Is_Vollpalette': True, 'pocet_hu': voll_count})
-        if non_voll_count > 0: del_hu_counts.append({'Clean_Del': d, 'Is_Vollpalette': False, 'pocet_hu': non_voll_count})
+    valid_base_hus = set()
+    if df_vepo is not None and not df_vepo.empty:
+        vepo_hu_col = next((c for c in df_vepo.columns if "Internal HU" in str(c) or "HU-Nummer intern" in str(c)), df_vepo.columns[0])
+        valid_base_hus = set(df_vepo[vepo_hu_col].apply(safe_hu))
+    else:
+        valid_base_hus = set(vekp_filtered['Clean_HU_Int'])
+
+    del_hu_counts = []
+    
+    for d, grp in vekp_filtered.groupby('Clean_Del'):
+        # Zjistíme, které interní HU jsou fyzicky uznané Vollpalety
+        actual_voll_hus = set()
+        for _, r in grp.iterrows():
+            if (d, r['Clean_HU_Ext']) in voll_set or (d, r['Clean_HU_Int']) in voll_set:
+                actual_voll_hus.add(r['Clean_HU_Int'])
+                
+        voll_count = len(actual_voll_hus)
+        
+        # Filtrujeme pouze listové HU, které skutečně obsahují materiál z VEPO
+        del_leaves = [h for h in grp['Clean_HU_Int'] if h in valid_base_hus]
+        del_roots = set()
+        
+        # Šplhání po stromu, abychom našli kořenové krabice/palety (ignorujeme ty prázdné)
+        for leaf in del_leaves:
+            # Pokud je tento list součástí Vollpalety, ignorujeme (už je započten)
+            if leaf in actual_voll_hus:
+                continue
+                
+            curr = leaf
+            visited = set()
+            while curr in parent_map and parent_map[curr] != "" and curr not in visited:
+                visited.add(curr)
+                curr = parent_map[curr]
+            del_roots.add(curr)
+            
+        non_voll_count = len(del_roots)
+        
+        if voll_count > 0:
+            del_hu_counts.append({'Clean_Del': d, 'Is_Vollpalette': True, 'pocet_hu': voll_count})
+        if non_voll_count > 0:
+            del_hu_counts.append({'Clean_Del': d, 'Is_Vollpalette': False, 'pocet_hu': non_voll_count})
 
     df_hu_counts = pd.DataFrame(del_hu_counts)
 
@@ -156,8 +194,8 @@ def render_billing(df_pick, df_vekp, df_vepo, df_cats, queue_count_col, aus_data
     # Natažení Centrálního Mozku z cache
     voll_set = st.session_state.get('voll_set', set())
     
-    # Volání analýzy
-    billing_df = cached_billing_logic_v5(df_pick, df_vekp, df_vepo, df_cats, queue_count_col, voll_set)
+    # Volání analýzy v6
+    billing_df = cached_billing_logic_v6(df_pick, df_vekp, df_vepo, df_cats, queue_count_col, voll_set)
 
     if load_from_db('raw_likp') is None:
         st.warning("⚠️ **Info:** Pro 100% přesné oddělení N a O zakázek doporučujeme v Admin Zóně nahrát LIKP report. Nyní systém pro určení exportu odhaduje data na základě Fronty (Queue).")
