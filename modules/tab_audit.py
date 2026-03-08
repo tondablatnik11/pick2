@@ -16,81 +16,62 @@ def render_audit(df_pick, df_vekp, df_vepo, df_oe, queue_count_col, billing_df, 
     if box_dict is None: box_dict = {}
 
     # ==========================================
-    # NOVÁ SEKCE: HROMADNÁ AUTOMATICKÁ KONTROLA
+    # 1. SEKCE: HROMADNÁ AUTOMATICKÁ KONTROLA (S 7-listým exportem)
     # ==========================================
     st.markdown("<div class='section-header'><h3>🤖 Hromadná Automatická Kontrola (Data vs Aplikace)</h3></div>", unsafe_allow_html=True)
-    st.markdown("Nahrajte kontrolní soubor (např. **kontrola.xlsx**), který obsahuje sloupce `Lieferung`, `Kategorie` a `Art`. Aplikace bleskově porovná svůj výpočet s tímto referenčním vzorkem na úrovni zabalených HU.")
+    st.markdown("Nahrajte kontrolní soubor (např. **kontrola.xlsx**), který obsahuje sloupce `Lieferung`, `Kategorie` a `Art`. Pokud se najdou chyby, získáte mocný Excel (7 listů), kde uvidíte, jaké konkrétní HU systém použil a proč se tak rozhodl.")
     
     uploaded_ctrl = st.file_uploader("Nahrát kontrolní soubor (Excel/CSV)", type=["xlsx", "csv"], key="audit_ctrl_upload")
     
     if uploaded_ctrl:
         try:
-            if uploaded_ctrl.name.endswith('.csv'):
-                df_ctrl = pd.read_csv(uploaded_ctrl, dtype=str, sep=None, engine='python')
-            else:
-                df_ctrl = pd.read_excel(uploaded_ctrl, dtype=str)
+            if uploaded_ctrl.name.endswith('.csv'): df_ctrl = pd.read_csv(uploaded_ctrl, dtype=str, sep=None, engine='python')
+            else: df_ctrl = pd.read_excel(uploaded_ctrl, dtype=str)
             
-            # Zjištění názvů sloupců (flexibilní vůči překlepům)
             cols_low = [str(c).lower().strip() for c in df_ctrl.columns]
             c_del = next((c for c, l in zip(df_ctrl.columns, cols_low) if l in ['lieferung', 'delivery']), None)
             c_kat = next((c for c, l in zip(df_ctrl.columns, cols_low) if 'kategorie' in l or 'category' in l), None)
             c_art = next((c for c, l in zip(df_ctrl.columns, cols_low) if l == 'art' or 'type' in l), None)
             
             if not (c_del and c_kat and c_art):
-                st.error(f"❌ V souboru se nepodařilo najít všechny potřebné sloupce. Nalezeno: Lieferung=`{c_del}`, Kategorie=`{c_kat}`, Art=`{c_art}`. Zkontrolujte hlavičku souboru.")
+                st.error("❌ V souboru se nepodařilo najít sloupce: Lieferung, Kategorie, Art.")
             else:
-                # 1. Zpracování referenčního souboru (Očekávaná data)
                 df_ctrl['Clean_Del'] = df_ctrl[c_del].apply(safe_del)
                 
-                # Normalizace kategorií (např. "n sortenrein" -> "N Sortenrein")
                 def norm_cat(k, a):
-                    k = str(k).strip().upper()
-                    a = str(a).strip().capitalize()
-                    return f"{k} {a}"
+                    return f"{str(k).strip().upper()} {str(a).strip().capitalize()}"
                     
                 df_ctrl['Category_Full'] = df_ctrl.apply(lambda r: norm_cat(r[c_kat], r[c_art]), axis=1)
-                
-                # Zjištění, kolik HU se očekává pro každou zakázku a kategorii
                 expected_agg = df_ctrl.groupby(['Clean_Del', 'Category_Full']).size().reset_index(name='Expected_HUs')
                 
-                # 2. Načtení vypočítaných dat z aplikace
                 if billing_df is not None and not billing_df.empty:
                     app_df = billing_df.copy()
                     app_df['Clean_Del'] = app_df['Clean_Del_Merge'].astype(str)
                     
-                    # Očištění názvu pro bezpečné spojení
                     def clean_app_cat(v):
                         parts = str(v).split(' ')
-                        if len(parts) >= 2:
-                            return parts[0].upper() + " " + " ".join(parts[1:]).capitalize()
+                        if len(parts) >= 2: return parts[0].upper() + " " + " ".join(parts[1:]).capitalize()
                         return str(v).capitalize()
                         
                     app_df['Category_Full'] = app_df['Category_Full'].apply(clean_app_cat)
-                    
-                    # Agregace dat aplikace
                     app_agg = app_df.groupby(['Clean_Del', 'Category_Full'])['pocet_hu'].sum().reset_index(name='App_HUs')
                     
-                    # 3. Křížové porovnání
                     comp = pd.merge(expected_agg, app_agg, on=['Clean_Del', 'Category_Full'], how='outer').fillna(0)
                     comp['Expected_HUs'] = comp['Expected_HUs'].astype(int)
                     comp['App_HUs'] = comp['App_HUs'].astype(int)
                     comp['Rozdíl'] = comp['App_HUs'] - comp['Expected_HUs']
                     
-                    # Filtrovat pouze ty zakázky, které opravdu jsou v nahraném kontrolním souboru
                     tested_dels = set(expected_agg['Clean_Del'])
                     comp_tested = comp[comp['Clean_Del'].isin(tested_dels)].copy()
                     
-                    # 4. Matematika skóre
                     total_expected_hus = comp_tested['Expected_HUs'].sum()
                     comp_tested['Matched_HUs'] = comp_tested[['Expected_HUs', 'App_HUs']].min(axis=1)
                     total_matched_hus = comp_tested['Matched_HUs'].sum()
                     
                     mismatches = comp_tested[comp_tested['Rozdíl'] != 0].copy()
-                    
                     total_dels = len(tested_dels)
                     err_dels = mismatches['Clean_Del'].nunique()
                     
-                    # 5. Vykreslení výsledků
                     c1, c2, c3 = st.columns(3)
                     pct = (total_matched_hus / total_expected_hus * 100) if total_expected_hus > 0 else 0
                     
@@ -99,66 +80,73 @@ def render_audit(df_pick, df_vekp, df_vepo, df_oe, queue_count_col, billing_df, 
                     c3.metric("Chybně zařazeno u zakázek ❌", f"{err_dels} z {total_dels}")
                     
                     if not mismatches.empty:
-                        st.error(f"⚠️ Nalezeny rozdíly u {err_dels} zakázek! Zde je detailní přehled nesrovnalostí:")
+                        st.error(f"⚠️ Nalezeny rozdíly u {err_dels} zakázek. Stáhněte si detailní datový rentgen pro debugování:")
                         disp = mismatches[['Clean_Del', 'Category_Full', 'Expected_HUs', 'App_HUs', 'Rozdíl']].sort_values('Clean_Del')
                         disp.columns = ['Zakázka (Delivery)', 'Kategorie HU', 'Očekáváno (Kontrola)', 'Vypočteno (Aplikace)', 'Rozdíl (Aplikace - Kontrola)']
                         
-                        def color_diff(val):
-                            try:
-                                if val > 0: return 'color: #3b82f6; font-weight: bold'  # Aplikace přidala navíc
-                                elif val < 0: return 'color: #ef4444; font-weight: bold' # Aplikaci chybí
-                            except: pass
-                            return ''
-                            
-                        # Try/except blok pro kompatibilitu se staršími verzemi Pandas styleru
-                        try:
-                            styled_disp = disp.style.map(color_diff, subset=['Rozdíl (Aplikace - Kontrola)'])
-                        except AttributeError:
-                            styled_disp = disp.style.applymap(color_diff, subset=['Rozdíl (Aplikace - Kontrola)'])
-                            
-                        st.dataframe(styled_disp, hide_index=True, use_container_width=True)
-                        
-                        # --- EXPORT DO EXCELU PRO DETAILNÍ DEBUGGING ---
                         mismatch_dels = mismatches['Clean_Del'].unique()
                         
+                        # --- TVORBA MASIVNÍHO DATOVÉHO EXPORTU (7 ZÁLOŽEK) ---
                         buffer = io.BytesIO()
                         with pd.ExcelWriter(buffer, engine='openpyxl') as writer:
-                            # 1. Záložka: Souhrn
-                            disp.to_excel(writer, index=False, sheet_name='Rozdily_Souhrn')
+                            # 1. Souhrn rozdílů
+                            disp.to_excel(writer, index=False, sheet_name='1_Rozdily_Souhrn')
                             
-                            # 2. Záložka: Data Vypočtená aplikací
+                            # 2. Jak to Aplikace seskupila
                             if 'Clean_Del_Merge' in billing_df.columns:
                                 app_det = billing_df[billing_df['Clean_Del_Merge'].astype(str).isin(mismatch_dels)].copy()
-                                # Vyčištění sloupců pro přehlednost
                                 cols_to_keep = ['Delivery', 'Category_Full', 'pocet_to', 'pohyby_celkem', 'pocet_lokaci', 'pocet_mat', 'pocet_hu', 'Bilance']
                                 avail_cols = [c for c in cols_to_keep if c in app_det.columns]
-                                app_det[avail_cols].to_excel(writer, index=False, sheet_name='Aplikace_Vypocet')
+                                app_det[avail_cols].to_excel(writer, index=False, sheet_name='2_Aplikace_Agregace')
                             
-                            # 3. Záložka: Data kontrolní
+                            # 3. Data z Kontrolního Excelu
                             ctrl_det = df_ctrl[df_ctrl['Clean_Del'].isin(mismatch_dels)].copy()
-                            # Skrytí pracovních sloupců
-                            ctrl_det = ctrl_det.drop(columns=['Clean_Del', 'Category_Full'], errors='ignore')
-                            ctrl_det.to_excel(writer, index=False, sheet_name='Kontrola_Zdroj')
+                            ctrl_det.drop(columns=['Clean_Del', 'Category_Full'], errors='ignore').to_excel(writer, index=False, sheet_name='3_Kontrola_Zdroj')
                             
+                            # 4. Detailní výpis konkrétních HU a materiálů v nich
+                            df_hu_details = st.session_state.get('debug_hu_details')
+                            if df_hu_details is not None and not df_hu_details.empty:
+                                hu_det = df_hu_details[df_hu_details['Clean_Del'].isin(mismatch_dels)].copy()
+                                hu_det.to_excel(writer, index=False, sheet_name='4_HU_Aplikace_Detail')
+
+                            # 5. Surová data z VEKP
+                            if df_vekp is not None and not df_vekp.empty:
+                                c_gen = next((c for c in df_vekp.columns if "Generated delivery" in str(c) or "generierte" in str(c).lower()), None)
+                                if c_gen:
+                                    df_vekp['Temp_Del'] = df_vekp[c_gen].apply(safe_del)
+                                    vekp_det = df_vekp[df_vekp['Temp_Del'].isin(mismatch_dels)].copy()
+                                    vekp_det.drop(columns=['Temp_Del'], errors='ignore').to_excel(writer, index=False, sheet_name='5_VEKP_Raw')
+                                    
+                                    # 6. Surová data z VEPO
+                                    if df_vepo is not None and not df_vepo.empty:
+                                        err_hus = set(vekp_det.iloc[:,0].apply(safe_hu))
+                                        vepo_hu_col = next((c for c in df_vepo.columns if "Internal HU" in str(c) or "HU-Nummer intern" in str(c)), df_vepo.columns[0])
+                                        vepo_det = df_vepo[df_vepo[vepo_hu_col].apply(safe_hu).isin(err_hus)].copy()
+                                        vepo_det.to_excel(writer, index=False, sheet_name='6_VEPO_Raw')
+
+                            # 7. Surová data z Pick Reportu
+                            if df_pick is not None and not df_pick.empty:
+                                df_pick['Temp_Del'] = df_pick['Delivery'].apply(safe_del)
+                                pick_det = df_pick[df_pick['Temp_Del'].isin(mismatch_dels)].copy()
+                                pick_det.drop(columns=['Temp_Del'], errors='ignore').to_excel(writer, index=False, sheet_name='7_Pick_Raw')
+
                         st.download_button(
-                            label="📥 Stáhnout detailní report chyb pro analýzu (Excel)",
+                            label="📥 Stáhnout kompletní datový rentgen (7 záložek) pro analýzu chyb (Excel)",
                             data=buffer.getvalue(),
-                            file_name="Audit_Chybne_Zakazky_Debug.xlsx",
+                            file_name="Audit_Chybne_Zakazky_Rentgen.xlsx",
                             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                             type="primary"
                         )
                         
-                    else:
-                        st.success("🎉 PERFEKTNÍ! Aplikace se na 100 % shoduje s kontrolním souborem ve všech zakázkách a kategoriích.")
-                else:
-                    st.warning("⚠️ Nejdříve navštivte záložku **Fakturace**, aby se vypočítala data, a pak se sem vraťte.")
+                    else: st.success("🎉 PERFEKTNÍ! Aplikace se na 100 % shoduje s kontrolním souborem ve všech zakázkách a kategoriích.")
+                else: st.warning("⚠️ Nejdříve navštivte záložku **Fakturace**, aby se vypočítala data, a pak se sem vraťte.")
         except Exception as e:
             st.error(f"Nastala chyba při zpracování souboru: {e}")
 
     st.divider()
 
     # ==========================================
-    # STÁVAJÍCÍ AUDITNÍ RENTGEN (Detailní prohlížení)
+    # 2. SEKCE: STÁVAJÍCÍ AUDITNÍ RENTGEN (Náhodné vzorky a prohlížeč)
     # ==========================================
     col_au1, col_au2 = st.columns([3, 2])
 
@@ -211,6 +199,10 @@ def render_audit(df_pick, df_vekp, df_vepo, df_oe, queue_count_col, billing_df, 
             st.metric("Krabicové jednotky (MARM)", str(marm_boxes) if marm_boxes else "*Chybí*")
 
     st.divider()
+    
+    # ==========================================
+    # 3. SEKCE: RENTGEN ZAKÁZKY (End-to-End Audit)
+    # ==========================================
     st.markdown("<div class='section-header'><h3>🔍 Rentgen Zakázky (End-to-End Audit)</h3></div>", unsafe_allow_html=True)
     
     @fast_render
@@ -273,7 +265,6 @@ def render_audit(df_pick, df_vekp, df_vepo, df_oe, queue_count_col, billing_df, 
                     del_leaves = set(h for h in vekp_del['Clean_HU_Int'] if h in valid_base_aud)
                     del_roots = set()
                     
-                    # Načtení dat z Centrálního Mozku
                     voll_set = st.session_state.get('voll_set', set())
                     actual_voll_hus = set()
 
