@@ -10,39 +10,21 @@ try:
 except AttributeError:
     fast_render = lambda f: f
 
-# Verze v20 - Návrat ke 96% architektuře (Root HU) + Smart KEP Override pro T031
+# Verze v21 - ZLATÁ STŘELA (N/E dle VBPA/KEP Speditéra + Fakturace Listů + Neomezené VEKP)
 @st.cache_data(show_spinner=False)
-def cached_billing_logic_v20(df_pick, df_vekp, df_vepo, df_cats, queue_count_col, voll_set):
-    # ---------------------------------------------------------
-    # 1. NAČTENÍ LIKP DAT PRO T031 BRÁNY
-    # ---------------------------------------------------------
-    del_vs_map = {}
-    df_likp = load_from_db('raw_likp')
-    if df_likp is not None and not df_likp.empty:
-        c_lief = next((c for c in df_likp.columns if "Delivery" in str(c) or "Lieferung" in str(c)), df_likp.columns[0])
-        c_vs = next((c for c in df_likp.columns if "Shipping Point" in str(c) or "Versandstelle" in str(c) or "Receiving Pt" in str(c)), None)
-        if c_vs:
-            for _, r in df_likp.iterrows():
-                lief = safe_del(r[c_lief])
-                del_vs_map[lief] = str(r[c_vs]).strip().upper()
-
+def cached_billing_logic_v21(df_pick, df_vekp, df_vepo, df_cats, queue_count_col, voll_set):
     billing_df = pd.DataFrame()
     df_hu_details = pd.DataFrame()
-    if df_vekp is None or df_vekp.empty or df_pick is None or df_pick.empty: 
+    if df_vekp is None or df_vekp.empty: 
         return billing_df, df_hu_details
 
     # ---------------------------------------------------------
-    # 2. PŘÍPRAVA DAT A ČIŠTĚNÍ ČÍSEL
+    # 1. PŘÍPRAVA A OČIŠTĚNÍ VEKP (VŠECHNY ZAKÁZKY BEZ FILTRU)
     # ---------------------------------------------------------
-    df_pick_billing = df_pick.copy()
-    df_pick_billing['Clean_Del'] = df_pick_billing['Delivery'].apply(safe_del)
-
     vekp_clean = df_vekp.dropna(subset=["Handling Unit", "Generated delivery"]).copy()
     vekp_clean['Clean_Del'] = vekp_clean['Generated delivery'].apply(safe_del)
+    vekp_filtered = vekp_clean[vekp_clean['Clean_Del'] != ''].copy() # Bereme vše z VEKP!
     
-    # Filtrujeme VEKP jen na to, co se reálně pickovalo (dle zákaznického standardu)
-    valid_deliveries = df_pick_billing["Clean_Del"].dropna().unique()
-    vekp_filtered = vekp_clean[vekp_clean["Clean_Del"].isin(valid_deliveries)].copy()
     if vekp_filtered.empty: return billing_df, df_hu_details
 
     vekp_hu_col = next((c for c in vekp_filtered.columns if "Internal HU" in str(c) or "HU-Nummer intern" in str(c)), vekp_filtered.columns[0])
@@ -54,51 +36,93 @@ def cached_billing_logic_v20(df_pick, df_vekp, df_vepo, df_cats, queue_count_col
     vekp_filtered['Clean_Parent'] = vekp_filtered[parent_col_vepo].apply(safe_hu) if parent_col_vepo else ""
 
     # ---------------------------------------------------------
-    # 3. OZNAČENÍ ŘÁDKŮ PICK REPORTU (VOLLPALETTE)
+    # 2. PŘÍPRAVA PICK DAT (Pouze pro spárování s TO)
     # ---------------------------------------------------------
-    def is_row_voll(row):
-        d = row['Clean_Del']
-        hu = safe_hu(row.get('Handling Unit', ''))
-        if not hu: hu = safe_hu(row.get('Source storage unit', ''))
-        return (d, hu) in voll_set
-
-    df_pick_billing['Is_Vollpalette'] = df_pick_billing.apply(is_row_voll, axis=1)
-
-    # ---------------------------------------------------------
-    # 4. KATEGORIZACE ZAKÁZEK - T031 + SMART KEP OVERRIDE
-    # ---------------------------------------------------------
-    del_base_map = {}
-    for d, grp in df_pick_billing.groupby('Clean_Del'):
-        vs = del_vs_map.get(d, "")
+    df_pick_billing = pd.DataFrame()
+    if df_pick is not None and not df_pick.empty:
+        df_pick_billing = df_pick.copy()
+        df_pick_billing['Clean_Del'] = df_pick_billing['Delivery'].apply(safe_del)
         
-        # Základ: Přesné T031 mapování
+        def is_row_voll(row):
+            d = row['Clean_Del']
+            hu = safe_hu(row.get('Handling Unit', ''))
+            if not hu: hu = safe_hu(row.get('Source storage unit', ''))
+            return (d, hu) in voll_set
+        df_pick_billing['Is_Vollpalette'] = df_pick_billing.apply(is_row_voll, axis=1)
+
+    # ---------------------------------------------------------
+    # 3. ZÁKLADNÍ KATEGORIE: ABSOLUTNÍ PRAVIDLO (T031 + VBPA/KEP)
+    # ---------------------------------------------------------
+    # A) Načtení bran (T031 / LIKP)
+    del_vs_map = {}
+    df_likp = load_from_db('raw_likp')
+    if df_likp is not None and not df_likp.empty:
+        c_lief = next((c for c in df_likp.columns if "Delivery" in str(c) or "Lieferung" in str(c)), df_likp.columns[0])
+        c_vs = next((c for c in df_likp.columns if "Shipping Point" in str(c) or "Versandstelle" in str(c) or "Receiving Pt" in str(c)), None)
+        if c_vs:
+            for _, r in df_likp.iterrows():
+                del_vs_map[safe_del(r[c_lief])] = str(r[c_vs]).strip().upper()
+
+    # B) Načtení KEP Kurýrů (SDSHP_AM2)
+    kep_carriers = set()
+    df_kep = load_from_db('aus_sdshp_am2')
+    if df_kep is not None and not df_kep.empty:
+        c_sped = next((c for c in df_kep.columns if "Spediteur" in str(c)), df_kep.columns[0])
+        c_kep = next((c for c in df_kep.columns if "KEP" in str(c)), None)
+        if c_kep:
+            for _, r in df_kep.iterrows():
+                if str(r[c_kep]).strip().upper() == 'X':
+                    kep_carriers.add(str(r[c_sped]).strip().lstrip('0'))
+
+    # C) Propojení Speditéra se Zakázkou (VBPA)
+    del_is_kep = {}
+    df_vbpa = load_from_db('aus_vbpa')
+    if df_vbpa is not None and not df_vbpa.empty:
+        c_beleg = next((c for c in df_vbpa.columns if "Vertriebsbeleg" in str(c) or "Delivery" in str(c)), df_vbpa.columns[0])
+        c_role = next((c for c in df_vbpa.columns if "Partnerrolle" in str(c) or "Partner Function" in str(c)), None)
+        c_kred = next((c for c in df_vbpa.columns if "Kreditor" in str(c) or "Vendor" in str(c)), None)
+        c_deb = next((c for c in df_vbpa.columns if "Debitor" in str(c) or "Customer" in str(c)), None)
+        
+        if c_role and (c_kred or c_deb):
+            for _, r in df_vbpa.iterrows():
+                if str(r[c_role]).strip().upper() in ['SP', 'CR']:
+                    sped = str(r.get(c_kred, r.get(c_deb, ''))).strip().lstrip('0')
+                    if sped in kep_carriers:
+                        del_is_kep[safe_del(r[c_beleg])] = True
+
+    del_base_map = {}
+    all_active_dels = vekp_filtered['Clean_Del'].unique()
+    
+    for d in all_active_dels:
+        vs = del_vs_map.get(d, "")
+        is_kep = del_is_kep.get(d, False)
+        
+        # 1. Základ podle T031
         if vs == 'FM20': base = 'N'
         elif vs == 'FM21': base = 'E'
         elif vs == 'FM22': base = 'E'
         elif vs == 'FM23': base = 'N'
         elif vs == 'FM24': base = 'O'
-        else:
-            # Fallback
-            all_queues = " ".join(grp['Queue'].dropna().astype(str).str.upper().unique())
-            if 'PI_PA_OE' in all_queues: base = 'OE'
-            elif 'PI_PA' in all_queues: base = 'E'
-            elif 'PI_PL_OE' in all_queues or 'FUOE' in all_queues: base = 'O'
-            else: base = 'N'
-
-        # SMART OVERRIDE: Pokud to má N/O z brány, ale fyzicky to VŠE prošlo POUZE Parcel stolem, je to Kurýr.
-        all_queues = " ".join(grp['Queue'].dropna().astype(str).str.upper().unique())
-        has_pallet = any(q in ['PI_PL', 'PI_PL_OE', 'FU', 'FU_O', 'FUOE', 'PI_PL_FU'] for q in grp['Queue'].dropna().astype(str).str.upper().unique())
-        has_parcel = 'PI_PA' in all_queues
+        else: base = 'N' # Fallback
         
-        if base == 'N' and has_parcel and not has_pallet:
-            base = 'E'
-        if base == 'O' and has_parcel and not has_pallet:
-            base = 'OE'
-
+        # 2. Inteligentní KEP Override (Pokud VBPA chybí, zkusíme frontu)
+        if is_kep:
+            if base == 'N': base = 'E'
+            if base == 'O': base = 'OE'
+        elif not df_pick_billing.empty:
+            grp = df_pick_billing[df_pick_billing['Clean_Del'] == d]
+            if not grp.empty:
+                all_queues = set(grp['Queue'].dropna().astype(str).str.upper().unique())
+                has_pallet = any(q in ['PI_PL', 'PI_PL_OE', 'FU', 'FU_O', 'FUOE', 'PI_PL_FU'] for q in all_queues)
+                has_parcel = 'PI_PA' in all_queues or 'PI_PA_OE' in all_queues
+                if has_parcel and not has_pallet:
+                    if base == 'N': base = 'E'
+                    if base == 'O': base = 'OE'
+                    
         del_base_map[d] = base
 
     # ---------------------------------------------------------
-    # 5. VEPO STROM A MAPOVÁNÍ MATERIÁLŮ
+    # 4. VEPO STROM (Nalezení skutečných materiálů)
     # ---------------------------------------------------------
     vepo_mats = {}
     valid_leaves = set() 
@@ -135,75 +159,74 @@ def cached_billing_logic_v20(df_pick, df_vekp, df_vepo, df_cats, queue_count_col
         return leaves
 
     # ---------------------------------------------------------
-    # 6. VYÚČTOVÁNÍ: POČÍTÁME "KOŘENY" (ROOT HU)
+    # 5. VYÚČTOVÁNÍ: VOLLPALETTE vs PACKSTÜCK (Krabice/Listy)
     # ---------------------------------------------------------
-    picked_mats_by_del = df_pick_billing.groupby('Clean_Del')['Material'].apply(lambda x: set(x.astype(str).str.strip())).to_dict()
-    
     del_hu_counts = []
     del_mat_cats = {} 
     hu_details_list = [] 
 
-    root_df = vekp_filtered[vekp_filtered['Clean_Parent'] == '']
-    
-    for d, grp in root_df.groupby('Clean_Del'):
+    for d, grp in vekp_filtered.groupby('Clean_Del'):
         base = del_base_map.get(d, "N")
-        valid_picked_mats = picked_mats_by_del.get(d, set())
 
+        # A) Které HU v zakázce jsou Vollpalety?
+        voll_hus_in_del = set()
         for _, r in grp.iterrows():
+            if (d, r['Clean_HU_Ext']) in voll_set or (d, r['Clean_HU_Int']) in voll_set:
+                voll_hus_in_del.add(r['Clean_HU_Int'])
+
+        # B) Odhalení krabic ukrytých uvnitř Vollpalet (Nesmějí se účtovat!)
+        descendants_of_voll = set()
+        for v_hu in voll_hus_in_del:
+            stack = [v_hu]
+            while stack:
+                curr = stack.pop()
+                children = children_map.get(curr, [])
+                for child in children:
+                    descendants_of_voll.add(child)
+                    stack.append(child)
+
+        # C) Každá HU v zakázce se nyní zhodnotí
+        for _, r in grp.iterrows():
+            hu = r['Clean_HU_Int']
             ext_hu = r['Clean_HU_Ext']
-            int_hu = r['Clean_HU_Int']
-            leaves = get_leaves(int_hu)
 
-            # Je ROOT (nebo cokoliv v něm) Vollpalette?
-            is_voll = False
-            if (d, ext_hu) in voll_set or (d, int_hu) in voll_set:
-                is_voll = True
-            else:
-                for leaf in leaves:
-                    if (d, leaf) in voll_set:
-                        is_voll = True
-                        break
-
-            if is_voll:
+            if hu in voll_hus_in_del:
                 cat = f"{base} Vollpalette"
                 if base == "OE": cat = "O Vollpalette" 
                 if base == "E": cat = "N Vollpalette"  
                 
                 del_hu_counts.append({'Clean_Del': d, 'Category_Full': cat, 'pocet_hu': 1})
                 
-                v_mats = set()
-                for leaf in leaves:
-                    v_mats.update(vepo_mats.get(leaf, set()))
+                mats = set()
+                stack = [hu]
+                while stack:
+                    curr = stack.pop()
+                    mats.update(vepo_mats.get(curr, set()))
+                    stack.extend(children_map.get(curr, []))
                     
-                real_v_mats = {m for m in v_mats if m in valid_picked_mats}
-                if not real_v_mats and len(v_mats) > 0: real_v_mats = v_mats
+                hu_details_list.append({'Clean_Del': d, 'HU_Int': hu, 'Is_Vollpalette': 'ANO', 'Category_Full': cat, 'Materials': ", ".join(mats)})
                 
-                hu_details_list.append({'Clean_Del': d, 'HU_Ext': ext_hu, 'HU_Int': int_hu, 'Is_Vollpalette': 'ANO', 'Category_Full': cat, 'Materials': ", ".join(real_v_mats)})
-                
-                for m in real_v_mats:
+                for m in mats:
                     if (d, m) not in del_mat_cats: del_mat_cats[(d, m)] = set()
                     del_mat_cats[(d, m)].add(cat)
-                    
-            else:
-                # ROOT Není Vollpalette. Spočítáme všechny materiály uvnitř.
-                mats = set()
-                for leaf in leaves:
-                    mats.update(vepo_mats.get(leaf, set()))
-                    
-                # Zlatý filtr: odstranění prázdných obalů z VEPO
-                real_mats = {m for m in mats if m in valid_picked_mats}
-                if not real_mats and len(mats) > 0: real_mats = mats # Failsafe
-                
-                # Zákazník účtuje 1 HU (jeden ROOT) a pokud je uvnitř více věcí, je to Misch.
-                if len(real_mats) > 0:
-                    cat = f"{base} Sortenrein" if len(real_mats) == 1 else f"{base} Misch"
-                    
-                    del_hu_counts.append({'Clean_Del': d, 'Category_Full': cat, 'pocet_hu': 1})
-                    hu_details_list.append({'Clean_Del': d, 'HU_Ext': ext_hu, 'HU_Int': int_hu, 'Is_Vollpalette': 'NE', 'Category_Full': cat, 'Materials': ", ".join(real_mats)})
 
-                    for m in real_mats:
-                        if (d, m) not in del_mat_cats: del_mat_cats[(d, m)] = set()
-                        del_mat_cats[(d, m)].add(cat)
+            elif hu not in descendants_of_voll:
+                # NENÍ TO VOLLPALETTE. Díváme se jen na ty obaly (Listy), které fyzicky drží materiál
+                is_leaf = (hu not in children_map) or (len(children_map[hu]) == 0)
+                
+                if is_leaf:
+                    mats = vepo_mats.get(hu, set())
+                    
+                    # Čistá logika bez filtrů (dle pivotu zákazníka): 1 materiál = Sortenrein. Víc = Misch.
+                    if len(mats) > 0:
+                        cat = f"{base} Sortenrein" if len(mats) == 1 else f"{base} Misch"
+                        
+                        del_hu_counts.append({'Clean_Del': d, 'Category_Full': cat, 'pocet_hu': 1})
+                        hu_details_list.append({'Clean_Del': d, 'HU_Int': hu, 'Is_Vollpalette': 'NE', 'Category_Full': cat, 'Materials': ", ".join(mats)})
+
+                        for m in mats:
+                            if (d, m) not in del_mat_cats: del_mat_cats[(d, m)] = set()
+                            del_mat_cats[(d, m)].add(cat)
 
     df_hu_counts = pd.DataFrame(del_hu_counts)
     if not df_hu_counts.empty:
@@ -214,57 +237,62 @@ def cached_billing_logic_v20(df_pick, df_vekp, df_vepo, df_cats, queue_count_col
     df_hu_details = pd.DataFrame(hu_details_list)
 
     # ---------------------------------------------------------
-    # 7. SPÁROVÁNÍ FYZICKÝCH PICKŮ (TO) NA VÝSLEDNÉ KATEGORIE
+    # 6. SPÁROVÁNÍ FYZICKÝCH PICKŮ NA VÝSLEDNÉ KATEGORIE
     # ---------------------------------------------------------
-    non_voll_mats = df_pick_billing[~df_pick_billing['Is_Vollpalette']].groupby('Clean_Del')['Material'].nunique().to_dict()
+    if not df_pick_billing.empty:
+        non_voll_mats = df_pick_billing[~df_pick_billing['Is_Vollpalette']].groupby('Clean_Del')['Material'].nunique().to_dict()
 
-    def get_full_category(row):
-        d = row['Clean_Del']
-        base = del_base_map.get(d, "N")
+        def get_full_category(row):
+            d = row['Clean_Del']
+            base = del_base_map.get(d, "N")
 
-        if row['Is_Vollpalette']:
-            if base == "OE": return "O Vollpalette"
-            if base == "E": return "N Vollpalette"
-            return f"{base} Vollpalette"
+            if row['Is_Vollpalette']:
+                if base == "OE": return "O Vollpalette"
+                if base == "E": return "N Vollpalette"
+                return f"{base} Vollpalette"
+                
+            mat = str(row.get('Material', '')).strip()
+            cats = del_mat_cats.get((d, mat), set())
+            valid_cats = {c for c in cats if "Vollpalette" not in c}
             
-        mat = str(row.get('Material', '')).strip()
-        cats = del_mat_cats.get((d, mat), set())
-        valid_cats = {c for c in cats if "Vollpalette" not in c}
-        
-        if len(valid_cats) == 1: return list(valid_cats)[0]
-        elif len(valid_cats) > 1: return f"{base} Misch" 
-        else:
-            mats_in_del = non_voll_mats.get(d, 1)
-            return f"{base} Misch" if mats_in_del > 1 else f"{base} Sortenrein"
+            if len(valid_cats) == 1: return list(valid_cats)[0]
+            elif len(valid_cats) > 1: return f"{base} Misch" 
+            else:
+                mats_in_del = non_voll_mats.get(d, 1)
+                return f"{base} Misch" if mats_in_del > 1 else f"{base} Sortenrein"
 
-    df_pick_billing['Category_Full'] = df_pick_billing.apply(get_full_category, axis=1)
+        df_pick_billing['Category_Full'] = df_pick_billing.apply(get_full_category, axis=1)
+
+        pick_agg = df_pick_billing.groupby(['Clean_Del', 'Category_Full']).agg(
+            pocet_to=(queue_count_col, "nunique"),
+            pohyby_celkem=("Pohyby_Rukou", "sum"),
+            pocet_lokaci=("Source Storage Bin", "nunique"),
+            pocet_mat=("Material", "nunique") 
+        ).reset_index()
+    else:
+        pick_agg = pd.DataFrame(columns=['Clean_Del', 'Category_Full', 'pocet_to', 'pohyby_celkem', 'pocet_lokaci', 'pocet_mat'])
 
     # ---------------------------------------------------------
-    # 8. AGREGACE DLE ZAKÁZKY A KATEGORIE
+    # 7. AGREGACE DLE ZAKÁZKY (Spojení Vyfakturovaných HU a Picků)
     # ---------------------------------------------------------
-    pick_agg = df_pick_billing.groupby(['Clean_Del', 'Category_Full']).agg(
-        pocet_to=(queue_count_col, "nunique"),
-        pohyby_celkem=("Pohyby_Rukou", "sum"),
-        pocet_lokaci=("Source Storage Bin", "nunique"),
-        pocet_mat=("Material", "nunique") 
-    ).reset_index()
+    billing_df = pd.merge(df_hu_counts, pick_agg, on=['Clean_Del', 'Category_Full'], how='outer')
 
-    billing_df = pd.merge(pick_agg, df_hu_counts, on=['Clean_Del', 'Category_Full'], how='outer')
+    billing_df['Delivery'] = billing_df['Clean_Del']
+    billing_df['Clean_Del_Merge'] = billing_df['Clean_Del']
+    billing_df['Month'] = 'Neznámé'
+    billing_df['hlavni_fronta'] = ''
 
-    del_metadata = df_pick_billing.groupby('Clean_Del').agg(
-        Delivery=('Delivery', 'first'),
-        Month=('Month', 'first'),
-        hlavni_fronta=("Queue", lambda x: x.mode()[0] if not x.empty else "")
-    ).to_dict('index')
-
-    billing_df['Delivery'] = billing_df.apply(lambda r: del_metadata.get(r['Clean_Del'], {}).get('Delivery', r['Clean_Del']) if pd.isna(r.get('Delivery')) else r['Delivery'], axis=1)
-    billing_df['Month'] = billing_df.apply(lambda r: del_metadata.get(r['Clean_Del'], {}).get('Month', 'Neznámé') if pd.isna(r.get('Month')) else r['Month'], axis=1)
-    billing_df['hlavni_fronta'] = billing_df.apply(lambda r: del_metadata.get(r['Clean_Del'], {}).get('hlavni_fronta', '') if pd.isna(r.get('hlavni_fronta')) else r['hlavni_fronta'], axis=1)
+    if not df_pick_billing.empty:
+        del_metadata = df_pick_billing.groupby('Clean_Del').agg(
+            Month=('Month', 'first'),
+            hlavni_fronta=("Queue", lambda x: x.mode()[0] if not x.empty else "")
+        ).to_dict('index')
+        billing_df['Month'] = billing_df.apply(lambda r: del_metadata.get(r['Clean_Del'], {}).get('Month', 'Neznámé'), axis=1)
+        billing_df['hlavni_fronta'] = billing_df.apply(lambda r: del_metadata.get(r['Clean_Del'], {}).get('hlavni_fronta', ''), axis=1)
 
     for col in ['pocet_to', 'pohyby_celkem', 'pocet_lokaci', 'pocet_hu', 'pocet_mat']:
         billing_df[col] = billing_df[col].fillna(0).astype(int)
 
-    billing_df['Clean_Del_Merge'] = billing_df['Clean_Del']
     billing_df["Bilance"] = (billing_df["pocet_to"] - billing_df["pocet_hu"]).astype(int)
     billing_df["TO_navic"] = billing_df["Bilance"].clip(lower=0)
 
@@ -278,7 +306,9 @@ def render_billing(df_pick, df_vekp, df_vepo, df_cats, queue_count_col, aus_data
 
     voll_set = st.session_state.get('voll_set', set())
     
-    billing_df, df_hu_details = cached_billing_logic_v20(df_pick, df_vekp, df_vepo, df_cats, queue_count_col, voll_set)
+    # Volání FINÁLNÍ VERZE 21
+    billing_df, df_hu_details = cached_billing_logic_v21(df_pick, df_vekp, df_vepo, df_cats, queue_count_col, voll_set)
+    # Zápis detailů pro využití v Rentgenu (Záložka Audit)
     st.session_state['debug_hu_details'] = df_hu_details
 
     if load_from_db('raw_likp') is None:
