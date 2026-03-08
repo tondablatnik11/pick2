@@ -19,7 +19,7 @@ def render_audit(df_pick, df_vekp, df_vepo, df_oe, queue_count_col, billing_df, 
     # 1. SEKCE: HROMADNÁ AUTOMATICKÁ KONTROLA (S 7-listým exportem)
     # ==========================================
     st.markdown("<div class='section-header'><h3>🤖 Hromadná Automatická Kontrola (Data vs Aplikace)</h3></div>", unsafe_allow_html=True)
-    st.markdown("Nahrajte kontrolní soubor (např. **kontrola.xlsx**), který obsahuje sloupce `Lieferung`, `Kategorie` a `Art`. Pokud se najdou chyby, získáte mocný Excel (7 listů), kde uvidíte, jaké konkrétní HU systém použil a proč se tak rozhodl.")
+    st.markdown("Nahrajte kontrolní soubor (např. **kontrola.xlsx**), který obsahuje sloupce `Lieferung`, `Kategorie`, `Art` a ideálně i `Handling Unit`. Pokud se najdou chyby, získáte mocný Excel (7 listů), kde uvidíte, jaké konkrétní HU systém použil a proč se tak rozhodl.")
     
     uploaded_ctrl = st.file_uploader("Nahrát kontrolní soubor (Excel/CSV)", type=["xlsx", "csv"], key="audit_ctrl_upload")
     
@@ -33,6 +33,11 @@ def render_audit(df_pick, df_vekp, df_vepo, df_oe, queue_count_col, billing_df, 
             c_kat = next((c for c, l in zip(df_ctrl.columns, cols_low) if 'kategorie' in l or 'category' in l), None)
             c_art = next((c for c, l in zip(df_ctrl.columns, cols_low) if l == 'art' or 'type' in l), None)
             
+            # NOVINKA: Hledáme sloupec s číslem palety, abychom nepočítali slepě jen řádky Excelu
+            c_hu_ctrl = next((c for c, l in zip(df_ctrl.columns, cols_low) if 'handling unit' in l), None)
+            if not c_hu_ctrl:
+                c_hu_ctrl = next((c for c, l in zip(df_ctrl.columns, cols_low) if 'hu-nummer' in l), None)
+            
             if not (c_del and c_kat and c_art):
                 st.error("❌ V souboru se nepodařilo najít sloupce: Lieferung, Kategorie, Art.")
             else:
@@ -42,7 +47,13 @@ def render_audit(df_pick, df_vekp, df_vepo, df_oe, queue_count_col, billing_df, 
                     return f"{str(k).strip().upper()} {str(a).strip().capitalize()}"
                     
                 df_ctrl['Category_Full'] = df_ctrl.apply(lambda r: norm_cat(r[c_kat], r[c_art]), axis=1)
-                expected_agg = df_ctrl.groupby(['Clean_Del', 'Category_Full']).size().reset_index(name='Expected_HUs')
+                
+                # OPRAVA CHYBY V AUDITU: Spočítá to jen skutečné unikátní palety (14 řádků v excelu = 2 fyzické palety)
+                if c_hu_ctrl:
+                    expected_agg = df_ctrl.groupby(['Clean_Del', 'Category_Full'])[c_hu_ctrl].nunique().reset_index(name='Expected_HUs')
+                else:
+                    # Pokud by náhodou sloupec s HU chyběl, pokusí se to alespoň odstranit duplicity
+                    expected_agg = df_ctrl.drop_duplicates(subset=['Clean_Del', 'Category_Full']).groupby(['Clean_Del', 'Category_Full']).size().reset_index(name='Expected_HUs')
                 
                 if billing_df is not None and not billing_df.empty:
                     app_df = billing_df.copy()
