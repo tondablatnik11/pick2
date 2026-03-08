@@ -62,7 +62,7 @@ def render_fu_compare(df_pick, billing_df, voll_set, queue_count_col):
     fuoe_untouched = to_agg[(to_agg['Queue_UPPER'] == 'PI_PL_FUOE') & (to_agg['Is_FU_Any']) & (to_agg['Is_Untouched'])].shape[0]
 
     # --- FILTRACE DLE MĚSÍCE (Zajišťuje, že porovnání přesně odpovídá pick reportu) ---
-    valid_dels = set(df_pick['Clean_Del'].dropna().unique())
+    valid_dels = set(df_p['Clean_Del'].dropna().unique())  # OPRAVA: použito df_p místo df_pick
     billing_df_filtered = billing_df[billing_df['Clean_Del'].isin(valid_dels)]
     
     billed_n_voll = billing_df_filtered[billing_df_filtered['Category_Full'] == 'N Vollpalette']['pocet_hu'].sum()
