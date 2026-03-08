@@ -7,13 +7,14 @@ import re
 from streamlit_option_menu import option_menu
 
 from database import save_to_db, load_from_db
+# PŘIDANÉ IMPORTY PRO CENTRÁLNÍ MOZEK
 from modules.utils import t, fast_compute_moves, get_match_key_vectorized, get_match_key, parse_packing_time, BOX_UNITS, detect_vollpalettes, safe_hu, safe_del
 
 from modules.tab_dashboard import render_dashboard
 from modules.tab_pallets import render_pallets
 from modules.tab_fu import render_fu
 from modules.tab_top import render_top
-from modules.tab_billing import render_billing, cached_billing_logic_v27  # OPRAVA: v27 místo v26
+from modules.tab_billing import render_billing
 from modules.tab_packing import render_packing
 from modules.tab_audit import render_audit
 
@@ -194,11 +195,12 @@ def fetch_and_prep_data(use_marm=True):
     df_pick['Piece_Max_Dim_CM'] = df_pick['Match_Key'].map(dim_dict).fillna(0.0)
 
     # -------------------------------------------------------------
-    # CENTRÁLNÍ MOZEK PRO DETEKCI VOLLPALET
+    # ZRUŠENÝ STARÝ VÝPOČET AUTO_VOLL_HUS - NYNÍ PŘEBÍRÁ CENTRÁLNÍ MOZEK
     # -------------------------------------------------------------
     df_vekp_raw = load_from_db('raw_vekp')
     df_vepo_raw = load_from_db('raw_vepo')
     
+    # NOVÉ: Jednorázový přesný výpočet Vollpalet
     voll_set = detect_vollpalettes(df_pick, df_vekp_raw, df_vepo_raw)
 
     df_oe = load_from_db('raw_oe')
@@ -237,10 +239,8 @@ def fetch_and_prep_data(use_marm=True):
 
     df_cats = load_from_db('raw_cats')
     if df_cats is not None and not df_cats.empty:
-        c_del_cats = next((c for c in df_cats.columns if str(c).strip().lower() in ['lieferung', 'delivery', 'zakázka']), df_cats.columns[0])
-        df_cats['Lieferung'] = df_cats[c_del_cats].astype(str).str.strip()
-        if 'Kategorie' in df_cats.columns and 'Art' in df_cats.columns: 
-            df_cats['Category_Full'] = df_cats['Kategorie'].astype(str).str.strip() + " " + df_cats['Art'].astype(str).str.strip()
+        df_cats['Lieferung'] = df_cats['Lieferung'].astype(str).str.strip()
+        if 'Kategorie' in df_cats.columns and 'Art' in df_cats.columns: df_cats['Category_Full'] = df_cats['Kategorie'].astype(str).str.strip() + " " + df_cats['Art'].astype(str).str.strip()
         df_cats = df_cats.drop_duplicates('Lieferung')
 
     aus_data = {}
@@ -261,82 +261,6 @@ def fetch_and_prep_data(use_marm=True):
 # 3. HLAVNÍ FUNKCE APLIKACE (FRONTEND)
 # ==========================================
 def main():
-
-    # --- NOVÝ PROFESIONÁLNÍ PRE-LOADER S OPRAVENÝMI POHYBY ---
-    if 'app_loaded' not in st.session_state:
-        load_container = st.empty()
-        with load_container.container():
-            st.markdown("<br><br><br><br><br>", unsafe_allow_html=True)
-            c1, c2, c3 = st.columns([1, 2, 1])
-            with c2:
-                # Designový box pro loading obrazovku
-                st.markdown("""
-                <div style='text-align: center; padding: 30px; background: var(--secondary-background-color); border-radius: 12px; border: 1px solid rgba(59, 130, 246, 0.4); box-shadow: 0 10px 30px rgba(59, 130, 246, 0.15);'>
-                    <h1 style='color: #3b82f6; margin-bottom: 5px;'>🚀 Warehouse Control Tower</h1>
-                    <p style='color: gray; margin-bottom: 25px; font-size: 15px;'>Startuji systémy. Probíhá masivní před-výpočet Big Data ze SAPu...</p>
-                """, unsafe_allow_html=True)
-                
-                my_bar = st.progress(0, text="Zahajuji sekvenci... (0%)")
-                time.sleep(0.3)
-                
-                my_bar.progress(25, text="📥 Fáze 1/4: Stahování a konsolidace databází (Pick, LIKP, VBPA)... (25%)")
-                data_dict = fetch_and_prep_data(True)
-                
-                if data_dict is None:
-                    st.warning("🗄️ Databáze je zatím prázdná. Otevřete levé menu 'Admin Zóna', zadejte heslo 'admin123' a nahrajte Pick Report a další soubory.")
-                    st.stop()
-                    
-                st.session_state['voll_set'] = data_dict['voll_set']
-                st.session_state['data_dict'] = data_dict
-                time.sleep(0.2)
-                
-                my_bar.progress(55, text="⚙️ Fáze 2/4: Rekonstrukce stromových struktur obalů a detekce Vollpalet... (55%)")
-                
-                # ------ OPRAVA KEY ERRORU --------
-                df_pick_pre = data_dict['df_pick'].copy()
-                tt, te, tm = fast_compute_moves(
-                    df_pick_pre['Qty'].values, df_pick_pre['Queue'].values, 
-                    df_pick_pre['Removal of total SU'].values, df_pick_pre['Box_Sizes_List'].values, 
-                    df_pick_pre['Piece_Weight_KG'].values, df_pick_pre['Piece_Max_Dim_CM'].values, 
-                    2.0, 15.0, 1
-                )
-                df_pick_pre['Pohyby_Rukou'] = tt
-                # Billing logika potřebuje sloupec Month — musíme ho vytvořit TEĎ
-                df_pick_pre['Month'] = df_pick_pre['Date'].dt.to_period('M').astype(str).replace('NaT', 'Neznámé')
-                # ---------------------------------
-                
-                my_bar.progress(80, text="🧠 Fáze 3/4: Aplikuji komplexní byznys logiku (T031, KEP Override, SSCC pravidla)... (80%)")
-                
-                # =============================================
-                # OPRAVA: Načtení LIKP PŘED voláním cache funkce
-                # =============================================
-                df_likp_pre = load_from_db('raw_likp')
-                
-                billing_df, df_hu_details = cached_billing_logic_v27(
-                    df_pick_pre, 
-                    data_dict['df_vekp'], 
-                    data_dict['df_vepo'], 
-                    data_dict['df_cats'], 
-                    data_dict['queue_count_col'], 
-                    data_dict['voll_set'],
-                    df_likp_pre  # NOVÝ PARAMETR — žádné load_from_db uvnitř cache!
-                )
-                st.session_state['billing_df'] = billing_df
-                st.session_state['debug_hu_details'] = df_hu_details
-                time.sleep(0.2)
-                
-                my_bar.progress(100, text="✅ Fáze 4/4: Všechna data načtena do paměti! Startuji vizualizace... (100%)")
-                time.sleep(0.6)
-                
-                st.markdown("</div>", unsafe_allow_html=True)
-                
-        # Zmizení preloaderu a přepnutí do hlavní appky
-        load_container.empty()
-        st.session_state['app_loaded'] = True
-        st.rerun()
-    # ------------------------------------------------------------------
-
-    # Běžný vzhled aplikace po načtení
     col_title, col_lang = st.columns([8, 1])
     with col_title:
         st.markdown(f"<div class='main-header'>{t('title')}</div>", unsafe_allow_html=True)
@@ -455,26 +379,34 @@ def main():
                                 st.error(f"❌ {_t('Chyba u souboru', 'Error processing file')} {file.name}: {e}")
                                 
                         st.cache_data.clear()
-                        if 'app_loaded' in st.session_state:
-                            del st.session_state['app_loaded']
                         time.sleep(2.0)
                         st.rerun()
 
-    # Vyzvednutí předpočítaných dat ze session state
-    data_dict = st.session_state.get('data_dict')
+    progress_bar = st.progress(0, text=_t("🚀 Inicializace Warehouse Control Tower...", "🚀 Initializing Warehouse Control Tower..."))
+    time.sleep(0.1)
+    
+    progress_bar.progress(30, text=_t("📥 Načítání a propojování dat z databáze...", "📥 Fetching and joining database records..."))
+    data_dict = fetch_and_prep_data(use_marm)
+
     if data_dict is None:
-        st.error("Došlo k chybě při načítání paměti. Prosím, obnovte stránku (F5).")
+        progress_bar.empty()
+        st.warning(_t("🗄️ Databáze je zatím prázdná. Otevřete levé menu 'Admin Zóna', zadejte heslo 'admin123' a nahrajte Pick Report a další soubory.", "🗄️ Database is empty. Open Admin Zone in the left menu."))
         return
 
-    df_pick = data_dict['df_pick'].copy()
+    progress_bar.progress(65, text=_t("⚙️ Výpočet fyzických pohybů a kontrola ergonomie...", "⚙️ Calculating physical movements and ergonomics..."))
+    df_pick = data_dict['df_pick']
     
     if exclude_mats_input:
         excluded_materials = [m.strip().upper() for m in re.split(r'[,\s;]+', exclude_mats_input) if m.strip()]
         if excluded_materials:
             df_pick = df_pick[~df_pick['Material'].astype(str).str.upper().isin(excluded_materials)].copy()
             if df_pick.empty:
+                progress_bar.empty()
                 st.warning(_t("⚠️ Po vyloučení těchto materiálů nezbyla v Pick reportu žádná data.", "⚠️ No data left after excluding these materials."))
                 st.stop()
+
+    # ULOŽENÍ MOZKU DO SESSION STATE PRO VŠECHNY ZÁLOŽKY
+    st.session_state['voll_set'] = data_dict['voll_set']
 
     df_pick['Month'] = df_pick['Date'].dt.to_period('M').astype(str).replace('NaT', _t('Neznámé', 'Unknown'))
     st.sidebar.divider()
@@ -482,10 +414,13 @@ def main():
     if date_mode == _t('Podle měsíce', 'By Month'):
         df_pick = df_pick[df_pick['Month'] == st.sidebar.selectbox(_t("Vyberte měsíc:", "Select Month:"), options=sorted(df_pick['Month'].unique()))].copy()
 
-    # Okamžitý výpočet pohybů rukou po filtru
     tt, te, tm = fast_compute_moves(df_pick['Qty'].values, df_pick['Queue'].values, df_pick['Removal of total SU'].values, df_pick['Box_Sizes_List'].values, df_pick['Piece_Weight_KG'].values, df_pick['Piece_Max_Dim_CM'].values, limit_vahy, limit_rozmeru, kusy_na_hmat)
     df_pick['Pohyby_Rukou'], df_pick['Pohyby_Exact'], df_pick['Pohyby_Loose_Miss'] = tt, te, tm
     df_pick['Celkova_Vaha_KG'] = df_pick['Qty'] * df_pick['Piece_Weight_KG']
+
+    progress_bar.progress(90, text=_t("📊 Vykreslování vizualizací a tabulek...", "📊 Rendering charts and dashboards..."))
+    time.sleep(0.2)
+    progress_bar.empty()
 
     display_q = None
     if selected_page == _t("Přehled a Fronty", "Dashboard & Queue"): 
@@ -497,7 +432,8 @@ def main():
     elif selected_page == _t("Materiály (TOP)", "Top Materials"): 
         render_top(df_pick)
     elif selected_page == _t("Fakturace", "Billing"): 
-        render_billing(df_pick, data_dict['df_vekp'], data_dict['df_vepo'], data_dict['df_cats'], data_dict['queue_count_col'])
+        billing_df = render_billing(df_pick, data_dict['df_vekp'], data_dict['df_vepo'], data_dict['df_cats'], data_dict['queue_count_col'])
+        st.session_state['billing_df'] = billing_df
     elif selected_page == _t("Balení (Packing)", "Packing"): 
         render_packing(st.session_state.get('billing_df', pd.DataFrame()), data_dict['df_oe'])
     elif selected_page == _t("Audit & Rentgen", "Audit & X-Ray"): 
