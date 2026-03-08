@@ -7,7 +7,6 @@ import re
 from streamlit_option_menu import option_menu
 
 from database import save_to_db, load_from_db
-# PŘIDANÉ IMPORTY PRO CENTRÁLNÍ MOZEK
 from modules.utils import t, fast_compute_moves, get_match_key_vectorized, get_match_key, parse_packing_time, BOX_UNITS, detect_vollpalettes, safe_hu, safe_del
 
 from modules.tab_dashboard import render_dashboard
@@ -195,12 +194,11 @@ def fetch_and_prep_data(use_marm=True):
     df_pick['Piece_Max_Dim_CM'] = df_pick['Match_Key'].map(dim_dict).fillna(0.0)
 
     # -------------------------------------------------------------
-    # ZRUŠENÝ STARÝ VÝPOČET AUTO_VOLL_HUS - NYNÍ PŘEBÍRÁ CENTRÁLNÍ MOZEK
+    # CENTRÁLNÍ MOZEK PRO DETEKCI VOLLPALET
     # -------------------------------------------------------------
     df_vekp_raw = load_from_db('raw_vekp')
     df_vepo_raw = load_from_db('raw_vepo')
     
-    # NOVÉ: Jednorázový přesný výpočet Vollpalet
     voll_set = detect_vollpalettes(df_pick, df_vekp_raw, df_vepo_raw)
 
     df_oe = load_from_db('raw_oe')
@@ -240,7 +238,8 @@ def fetch_and_prep_data(use_marm=True):
     df_cats = load_from_db('raw_cats')
     if df_cats is not None and not df_cats.empty:
         df_cats['Lieferung'] = df_cats['Lieferung'].astype(str).str.strip()
-        if 'Kategorie' in df_cats.columns and 'Art' in df_cats.columns: df_cats['Category_Full'] = df_cats['Kategorie'].astype(str).str.strip() + " " + df_cats['Art'].astype(str).str.strip()
+        if 'Kategorie' in df_cats.columns and 'Art' in df_cats.columns: 
+            df_cats['Category_Full'] = df_cats['Kategorie'].astype(str).str.strip() + " " + df_cats['Art'].astype(str).str.strip()
         df_cats = df_cats.drop_duplicates('Lieferung')
 
     aus_data = {}
@@ -405,7 +404,6 @@ def main():
                 st.warning(_t("⚠️ Po vyloučení těchto materiálů nezbyla v Pick reportu žádná data.", "⚠️ No data left after excluding these materials."))
                 st.stop()
 
-    # ULOŽENÍ MOZKU DO SESSION STATE PRO VŠECHNY ZÁLOŽKY
     st.session_state['voll_set'] = data_dict['voll_set']
 
     df_pick['Month'] = df_pick['Date'].dt.to_period('M').astype(str).replace('NaT', _t('Neznámé', 'Unknown'))
