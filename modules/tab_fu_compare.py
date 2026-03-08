@@ -109,10 +109,10 @@ def render_fu_compare(df_pick, billing_df, voll_set, queue_count_col):
         st.markdown(_t("Ideální proces: Skladník dostal úkol jít pro celou paletu, potvrdil původní štítek a v SAPu to bezpečně prošlo fakturací jako Vollpalette.", "Ideal process: Worker picked a full pallet, kept the label, and it was billed successfully."))
         col1, col2 = st.columns(2)
         with col1:
-            st.markdown("#### PI_PL_FU (Tuzemsko)")
+            st.markdown("#### PI_PL_FU ")
             st.dataframe(cat_a[cat_a['Queue_UPPER'] == 'PI_PL_FU'].drop(columns=cols_to_drop, errors='ignore'), use_container_width=True, hide_index=True)
         with col2:
-            st.markdown("#### PI_PL_FUOE (Export)")
+            st.markdown("#### PI_PL_FUOE ")
             st.dataframe(cat_a[cat_a['Queue_UPPER'] == 'PI_PL_FUOE'].drop(columns=cols_to_drop, errors='ignore'), use_container_width=True, hide_index=True)
 
     with t2:
