@@ -16,10 +16,10 @@ def render_audit(df_pick, df_vekp, df_vepo, df_oe, queue_count_col, billing_df, 
     if box_dict is None: box_dict = {}
 
     # ==========================================
-    # 1. SEKCE: HROMADNÁ AUTOMATICKÁ KONTROLA (S 7-listým exportem)
+    # 1. SEKCE: HROMADNÁ AUTOMATICKÁ KONTROLA
     # ==========================================
     st.markdown("<div class='section-header'><h3>🤖 Hromadná Automatická Kontrola (Data vs Aplikace)</h3></div>", unsafe_allow_html=True)
-    st.markdown("Nahrajte kontrolní soubor (např. **kontrola.xlsx**), který obsahuje sloupce `Lieferung`, `Kategorie`, `Art` a ideálně i `Handling Unit`. Pokud se najdou chyby, získáte mocný Excel (7 listů), kde uvidíte, jaké konkrétní HU systém použil a proč se tak rozhodl.")
+    st.markdown("Nahrajte kontrolní soubor (např. **kontrola.xlsx**), který obsahuje sloupce `Lieferung`, `Kategorie`, `Art` a `Anzahl Packstuck`. Aplikace se už nenechá zmást počtem řádků a přečte si vaši přesnou hodnotu.")
     
     uploaded_ctrl = st.file_uploader("Nahrát kontrolní soubor (Excel/CSV)", type=["xlsx", "csv"], key="audit_ctrl_upload")
     
@@ -33,13 +33,13 @@ def render_audit(df_pick, df_vekp, df_vepo, df_oe, queue_count_col, billing_df, 
             c_kat = next((c for c, l in zip(df_ctrl.columns, cols_low) if 'kategorie' in l or 'category' in l), None)
             c_art = next((c for c, l in zip(df_ctrl.columns, cols_low) if l == 'art' or 'type' in l), None)
             
-            # NOVINKA: Hledáme sloupec s číslem palety, abychom nepočítali slepě jen řádky Excelu
-            c_hu_ctrl = next((c for c, l in zip(df_ctrl.columns, cols_low) if 'handling unit' in l), None)
-            if not c_hu_ctrl:
-                c_hu_ctrl = next((c for c, l in zip(df_ctrl.columns, cols_low) if 'hu-nummer' in l), None)
+            # ZDE JE TA OPRAVA: Hledáme přesně sloupec Anzahl Packstuck
+            c_anzahl = next((c for c, l in zip(df_ctrl.columns, cols_low) if 'anzahl' in l or 'packstuck' in l or 'packstück' in l), None)
             
             if not (c_del and c_kat and c_art):
-                st.error("❌ V souboru se nepodařilo najít sloupce: Lieferung, Kategorie, Art.")
+                st.error("❌ V souboru se nepodařilo najít základní sloupce: Lieferung, Kategorie, Art.")
+            elif not c_anzahl:
+                st.error("❌ V souboru se nepodařilo najít sloupec 'Anzahl Packstuck'.")
             else:
                 df_ctrl['Clean_Del'] = df_ctrl[c_del].apply(safe_del)
                 
@@ -48,12 +48,11 @@ def render_audit(df_pick, df_vekp, df_vepo, df_oe, queue_count_col, billing_df, 
                     
                 df_ctrl['Category_Full'] = df_ctrl.apply(lambda r: norm_cat(r[c_kat], r[c_art]), axis=1)
                 
-                # OPRAVA CHYBY V AUDITU: Spočítá to jen skutečné unikátní palety (14 řádků v excelu = 2 fyzické palety)
-                if c_hu_ctrl:
-                    expected_agg = df_ctrl.groupby(['Clean_Del', 'Category_Full'])[c_hu_ctrl].nunique().reset_index(name='Expected_HUs')
-                else:
-                    # Pokud by náhodou sloupec s HU chyběl, pokusí se to alespoň odstranit duplicity
-                    expected_agg = df_ctrl.drop_duplicates(subset=['Clean_Del', 'Category_Full']).groupby(['Clean_Del', 'Category_Full']).size().reset_index(name='Expected_HUs')
+                # Zabráníme sčítání řádků! Vezmeme explicitní číslo, které je ve sloupci Anzahl Packstuck
+                df_ctrl['Expected_HUs'] = pd.to_numeric(df_ctrl[c_anzahl], errors='coerce').fillna(1)
+                
+                # Sdružíme podle zakázky a kategorie a vezmeme MAX hodnotu (pokud je zakázka na 14 řádcích a má tam číslo 2, vezmeme 2)
+                expected_agg = df_ctrl.groupby(['Clean_Del', 'Category_Full'])['Expected_HUs'].max().reset_index()
                 
                 if billing_df is not None and not billing_df.empty:
                     app_df = billing_df.copy()
@@ -97,30 +96,24 @@ def render_audit(df_pick, df_vekp, df_vepo, df_oe, queue_count_col, billing_df, 
                         
                         mismatch_dels = mismatches['Clean_Del'].unique()
                         
-                        # --- TVORBA MASIVNÍHO DATOVÉHO EXPORTU (7 ZÁLOŽEK) ---
                         buffer = io.BytesIO()
                         with pd.ExcelWriter(buffer, engine='openpyxl') as writer:
-                            # 1. Souhrn rozdílů
                             disp.to_excel(writer, index=False, sheet_name='1_Rozdily_Souhrn')
                             
-                            # 2. Jak to Aplikace seskupila
                             if 'Clean_Del_Merge' in billing_df.columns:
                                 app_det = billing_df[billing_df['Clean_Del_Merge'].astype(str).isin(mismatch_dels)].copy()
                                 cols_to_keep = ['Delivery', 'Category_Full', 'pocet_to', 'pohyby_celkem', 'pocet_lokaci', 'pocet_mat', 'pocet_hu', 'Bilance']
                                 avail_cols = [c for c in cols_to_keep if c in app_det.columns]
                                 app_det[avail_cols].to_excel(writer, index=False, sheet_name='2_Aplikace_Agregace')
                             
-                            # 3. Data z Kontrolního Excelu
                             ctrl_det = df_ctrl[df_ctrl['Clean_Del'].isin(mismatch_dels)].copy()
-                            ctrl_det.drop(columns=['Clean_Del', 'Category_Full'], errors='ignore').to_excel(writer, index=False, sheet_name='3_Kontrola_Zdroj')
+                            ctrl_det.drop(columns=['Clean_Del', 'Category_Full', 'Expected_HUs'], errors='ignore').to_excel(writer, index=False, sheet_name='3_Kontrola_Zdroj')
                             
-                            # 4. Detailní výpis konkrétních HU a materiálů v nich
                             df_hu_details = st.session_state.get('debug_hu_details')
                             if df_hu_details is not None and not df_hu_details.empty:
                                 hu_det = df_hu_details[df_hu_details['Clean_Del'].isin(mismatch_dels)].copy()
                                 hu_det.to_excel(writer, index=False, sheet_name='4_HU_Aplikace_Detail')
 
-                            # 5. Surová data z VEKP
                             if df_vekp is not None and not df_vekp.empty:
                                 c_gen = next((c for c in df_vekp.columns if "Generated delivery" in str(c) or "generierte" in str(c).lower()), None)
                                 if c_gen:
@@ -128,14 +121,12 @@ def render_audit(df_pick, df_vekp, df_vepo, df_oe, queue_count_col, billing_df, 
                                     vekp_det = df_vekp[df_vekp['Temp_Del'].isin(mismatch_dels)].copy()
                                     vekp_det.drop(columns=['Temp_Del'], errors='ignore').to_excel(writer, index=False, sheet_name='5_VEKP_Raw')
                                     
-                                    # 6. Surová data z VEPO
                                     if df_vepo is not None and not df_vepo.empty:
                                         err_hus = set(vekp_det.iloc[:,0].apply(safe_hu))
                                         vepo_hu_col = next((c for c in df_vepo.columns if "Internal HU" in str(c) or "HU-Nummer intern" in str(c)), df_vepo.columns[0])
                                         vepo_det = df_vepo[df_vepo[vepo_hu_col].apply(safe_hu).isin(err_hus)].copy()
                                         vepo_det.to_excel(writer, index=False, sheet_name='6_VEPO_Raw')
 
-                            # 7. Surová data z Pick Reportu
                             if df_pick is not None and not df_pick.empty:
                                 df_pick['Temp_Del'] = df_pick['Delivery'].apply(safe_del)
                                 pick_det = df_pick[df_pick['Temp_Del'].isin(mismatch_dels)].copy()
