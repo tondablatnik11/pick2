@@ -2,7 +2,7 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 import plotly.graph_objects as go
-from modules.utils import t, safe_hu, safe_del, is_box
+from modules.utils import t, safe_hu, safe_del
 from database import load_from_db
 
 try:
@@ -10,21 +10,16 @@ try:
 except AttributeError:
     fast_render = lambda f: f
 
-# =====================================================================
-# Verze v27 - OPRAVA HANGUPU:
-#   1. load_from_db('raw_likp') ODSTRANĚNO z cache funkce (je parametr)
-#   2. Memoizovaný tree traversal (get_all_descendants + get_subtree_mats)
-#   3. Batch voll_set lookup přes voll_by_del dict
-# =====================================================================
+# Finální Verze - ZLATÁ STŘELA (SSCC Tree Logic + Anti-Loop + Standalone)
 @st.cache_data(show_spinner=False)
-def cached_billing_logic_v27(df_pick, df_vekp, df_vepo, df_cats, queue_count_col, voll_set, df_likp=None):
+def cached_billing_logic_final(df_pick, df_vekp, df_vepo, df_cats, queue_count_col, voll_set):
     billing_df = pd.DataFrame()
     df_hu_details = pd.DataFrame()
     if df_vekp is None or df_vekp.empty: 
         return billing_df, df_hu_details
 
     # ---------------------------------------------------------
-    # 1. PŘÍPRAVA A OČIŠTĚNÍ VEKP
+    # 1. PŘÍPRAVA A OČIŠTĚNÍ VEKP (VŠECHNY ZAKÁZKY BEZ FILTRU)
     # ---------------------------------------------------------
     vekp_clean = df_vekp.dropna(subset=["Handling Unit", "Generated delivery"]).copy()
     vekp_clean['Clean_Del'] = vekp_clean['Generated delivery'].apply(safe_del)
@@ -43,7 +38,7 @@ def cached_billing_logic_v27(df_pick, df_vekp, df_vepo, df_cats, queue_count_col
     int_to_ext = dict(zip(vekp_filtered['Clean_HU_Int'], vekp_filtered['Clean_HU_Ext']))
 
     # ---------------------------------------------------------
-    # 2. PŘÍPRAVA PICK DAT
+    # 2. PŘÍPRAVA PICK DAT (Pro spárování s TO)
     # ---------------------------------------------------------
     df_pick_billing = pd.DataFrame()
     picked_mats_by_del = {}
@@ -52,6 +47,7 @@ def cached_billing_logic_v27(df_pick, df_vekp, df_vepo, df_cats, queue_count_col
         df_pick_billing['Clean_Del'] = df_pick_billing['Delivery'].apply(safe_del)
         picked_mats_by_del = df_pick_billing.groupby('Clean_Del')['Material'].apply(lambda x: set(x.astype(str).str.strip())).to_dict()
         
+        # Bezpečnostní pojistka, kdyby chyběl výpočet pohybů
         if 'Pohyby_Rukou' not in df_pick_billing.columns:
             df_pick_billing['Pohyby_Rukou'] = 0
             
@@ -63,7 +59,7 @@ def cached_billing_logic_v27(df_pick, df_vekp, df_vepo, df_cats, queue_count_col
         df_pick_billing['Is_Vollpalette'] = df_pick_billing.apply(is_row_voll, axis=1)
 
     # ---------------------------------------------------------
-    # 3. KATEGORIE — OPRAVA: df_likp přijde jako parametr
+    # 3. ZÁKLADNÍ KATEGORIE (df_cats -> T031 -> VBPA/KEP)
     # ---------------------------------------------------------
     del_base_map = {}
     if df_cats is not None and not df_cats.empty:
@@ -77,7 +73,7 @@ def cached_billing_logic_v27(df_pick, df_vekp, df_vepo, df_cats, queue_count_col
                     del_base_map[d] = cat_val
 
     del_vs_map = {}
-    # OPRAVA: Používáme df_likp z parametru — ŽÁDNÉ load_from_db uvnitř cache!
+    df_likp = load_from_db('raw_likp')
     if df_likp is not None and not df_likp.empty:
         c_lief = next((c for c in df_likp.columns if "Delivery" in str(c) or "Lieferung" in str(c)), df_likp.columns[0])
         c_vs = next((c for c in df_likp.columns if "Shipping Point" in str(c) or "Versandstelle" in str(c) or "Receiving Pt" in str(c)), None)
@@ -85,11 +81,37 @@ def cached_billing_logic_v27(df_pick, df_vekp, df_vepo, df_cats, queue_count_col
             for _, r in df_likp.iterrows():
                 del_vs_map[safe_del(r[c_lief])] = str(r[c_vs]).strip().upper()
 
+    kep_carriers = set()
+    df_kep = load_from_db('aus_sdshp_am2')
+    if df_kep is not None and not df_kep.empty:
+        c_sped = next((c for c in df_kep.columns if "Spediteur" in str(c)), df_kep.columns[0])
+        c_kep = next((c for c in df_kep.columns if "KEP" in str(c)), None)
+        if c_kep:
+            for _, r in df_kep.iterrows():
+                if str(r[c_kep]).strip().upper() == 'X':
+                    kep_carriers.add(str(r[c_sped]).strip().lstrip('0'))
+
+    del_is_kep = {}
+    df_vbpa = load_from_db('aus_vbpa')
+    if df_vbpa is not None and not df_vbpa.empty:
+        c_beleg = next((c for c in df_vbpa.columns if "Vertriebsbeleg" in str(c) or "Delivery" in str(c)), df_vbpa.columns[0])
+        c_role = next((c for c in df_vbpa.columns if "Partnerrolle" in str(c) or "Partner Function" in str(c)), None)
+        c_kred = next((c for c in df_vbpa.columns if "Kreditor" in str(c) or "Vendor" in str(c)), None)
+        c_deb = next((c for c in df_vbpa.columns if "Debitor" in str(c) or "Customer" in str(c)), None)
+        
+        if c_role and (c_kred or c_deb):
+            for _, r in df_vbpa.iterrows():
+                if str(r[c_role]).strip().upper() in ['SP', 'CR']:
+                    sped = str(r.get(c_kred, r.get(c_deb, ''))).strip().lstrip('0')
+                    if sped in kep_carriers:
+                        del_is_kep[safe_del(r[c_beleg])] = True
+
     all_active_dels = vekp_filtered['Clean_Del'].unique()
     
     for d in all_active_dels:
         if d not in del_base_map:
             vs = del_vs_map.get(d, "")
+            is_kep = del_is_kep.get(d, False)
             
             if vs == 'FM20': base = 'N'
             elif vs == 'FM21': base = 'E'
@@ -98,21 +120,19 @@ def cached_billing_logic_v27(df_pick, df_vekp, df_vepo, df_cats, queue_count_col
             elif vs == 'FM24': base = 'O'
             else: base = 'N' 
             
-            if not df_pick_billing.empty:
+            if is_kep:
+                if base == 'N': base = 'E'
+                if base == 'O': base = 'OE'
+            elif not df_pick_billing.empty:
                 grp = df_pick_billing[df_pick_billing['Clean_Del'] == d]
                 if not grp.empty:
-                    all_queues = " ".join(grp['Queue'].dropna().astype(str).str.upper().unique())
-                    if vs == "": 
-                        if 'PI_PA_OE' in all_queues: base = 'OE'
-                        elif 'PI_PA' in all_queues: base = 'E'
-                        elif 'PI_PL_OE' in all_queues or 'FUOE' in all_queues: base = 'O'
+                    all_queues = set(grp['Queue'].dropna().astype(str).str.upper().unique())
+                    has_pallet = any(q in ['PI_PL', 'PI_PL_OE', 'FU', 'FU_O', 'FUOE', 'PI_PL_FU'] for q in all_queues)
+                    has_parcel = 'PI_PA' in all_queues or 'PI_PA_OE' in all_queues
+                    if has_parcel and not has_pallet:
+                        if base == 'N': base = 'E'
+                        if base == 'O': base = 'OE'
                         
-                    if base in ['N', 'O'] and 'PI_PA' in all_queues:
-                        has_pallet = any(q in ['PI_PL', 'PI_PL_OE', 'FU', 'FU_O', 'FUOE', 'PI_PL_FU'] for q in grp['Queue'].dropna().astype(str).str.upper().unique())
-                        if not has_pallet:
-                            if base == 'N': base = 'E'
-                            if base == 'O': base = 'OE'
-                            
             del_base_map[d] = base
 
     # ---------------------------------------------------------
@@ -137,44 +157,8 @@ def cached_billing_logic_v27(df_pick, df_vekp, df_vepo, df_cats, queue_count_col
             children_map[parent].append(child)
 
     # ---------------------------------------------------------
-    # 5. OPTIMALIZOVANÝ TREE TRAVERSAL (MEMOIZACE)
+    # 5. VYÚČTOVÁNÍ: LOGIKA NEJNIŽŠÍHO SSCC ŠTÍTKU (Ochrana proti zacyklení)
     # ---------------------------------------------------------
-    all_nodes = set(vekp_filtered['Clean_HU_Int'])
-    
-    # Cache: node -> frozenset všech potomků (včetně sebe)
-    _descendants_cache = {}
-    
-    def get_all_descendants(node):
-        if node in _descendants_cache:
-            return _descendants_cache[node]
-        result = {node}
-        for child in children_map.get(node, []):
-            result.update(get_all_descendants(child))
-        _descendants_cache[node] = result
-        return result
-    
-    # Předpočítáme všechny potomky jednou
-    for node in all_nodes:
-        get_all_descendants(node)
-
-    # Cache materiálů pro podstromy
-    _subtree_mats_cache = {}
-    
-    def get_subtree_mats(node):
-        if node in _subtree_mats_cache:
-            return _subtree_mats_cache[node]
-        mats = set()
-        for desc in get_all_descendants(node):
-            mats.update(vepo_mats.get(desc, set()))
-        _subtree_mats_cache[node] = mats
-        return mats
-
-    # Předpočítáme voll_set lookup per delivery
-    voll_by_del = {}
-    for (d, hu) in voll_set:
-        if d not in voll_by_del: voll_by_del[d] = set()
-        voll_by_del[d].add(hu)
-
     del_hu_counts = []
     del_mat_cats = {} 
     hu_details_list = [] 
@@ -184,27 +168,41 @@ def cached_billing_logic_v27(df_pick, df_vekp, df_vepo, df_cats, queue_count_col
     for d, grp in root_df.groupby('Clean_Del'):
         base = del_base_map.get(d, "N")
         valid_picked_mats = picked_mats_by_del.get(d, set())
-        del_voll_hus = voll_by_del.get(d, set())
 
         for _, r in grp.iterrows():
             ext_hu = r['Clean_HU_Ext']
             root_hu = r['Clean_HU_Int']
 
-            # Voll check s memoizovanými potomky
-            descendants = get_all_descendants(root_hu)
-            is_voll = bool(
-                ext_hu in del_voll_hus or 
-                root_hu in del_voll_hus or
-                any(c in del_voll_hus or int_to_ext.get(c, '') in del_voll_hus 
-                    for c in descendants)
-            )
+            is_voll = False
+            if (d, ext_hu) in voll_set or (d, root_hu) in voll_set:
+                is_voll = True
+            else:
+                stack = [root_hu]
+                visited = set()
+                while stack:
+                    c = stack.pop()
+                    if c in visited: continue
+                    visited.add(c)
+                    if (d, c) in voll_set or (d, int_to_ext.get(c, '')) in voll_set:
+                        is_voll = True
+                        break
+                    stack.extend(children_map.get(c, []))
 
             if is_voll:
                 cat = f"{base} Vollpalette"
                 if base == "OE": cat = "O Vollpalette" 
                 if base == "E": cat = "N Vollpalette"  
                 
-                mats = get_subtree_mats(root_hu)
+                mats = set()
+                stack = [root_hu]
+                visited = set()
+                while stack:
+                    c = stack.pop()
+                    if c in visited: continue
+                    visited.add(c)
+                    mats.update(vepo_mats.get(c, set()))
+                    stack.extend(children_map.get(c, []))
+                    
                 real_mats = {m for m in mats if m in valid_picked_mats}
                 if not real_mats and len(mats) > 0: real_mats = mats
                 
@@ -216,16 +214,31 @@ def cached_billing_logic_v27(df_pick, df_vekp, df_vepo, df_cats, queue_count_col
                     del_mat_cats[(d, m)].add(cat)
                     
             else:
-                # Leaf nodes z memoizovaných potomků
                 billed_hus = []
-                for node in descendants:
-                    children = children_map.get(node, [])
+                stack = [root_hu]
+                visited = set()
+                while stack:
+                    curr = stack.pop()
+                    if curr in visited: continue
+                    visited.add(curr)
+                    
+                    children = children_map.get(curr, [])
                     valid_children = [c for c in children if len(str(int_to_ext.get(c, ''))) >= 10]
-                    if not valid_children:
-                        billed_hus.append(node)
+                    
+                    if valid_children: stack.extend(valid_children)
+                    else: billed_hus.append(curr)
                         
                 for b_hu in billed_hus:
-                    mats = get_subtree_mats(b_hu)
+                    mats = set()
+                    sub_stack = [b_hu]
+                    sub_visited = set()
+                    while sub_stack:
+                        c = sub_stack.pop()
+                        if c in sub_visited: continue
+                        sub_visited.add(c)
+                        mats.update(vepo_mats.get(c, set()))
+                        sub_stack.extend(children_map.get(c, []))
+                        
                     real_mats = {m for m in mats if m in valid_picked_mats}
                     if not real_mats and len(mats) > 0: real_mats = mats 
                     
@@ -247,7 +260,7 @@ def cached_billing_logic_v27(df_pick, df_vekp, df_vepo, df_cats, queue_count_col
     df_hu_details = pd.DataFrame(hu_details_list)
 
     # ---------------------------------------------------------
-    # 6. SPÁROVÁNÍ FYZICKÝCH PICKŮ
+    # 6. SPÁROVÁNÍ FYZICKÝCH PICKŮ (TO) NA VÝSLEDNÉ KATEGORIE
     # ---------------------------------------------------------
     if not df_pick_billing.empty:
         non_voll_mats = df_pick_billing[~df_pick_billing['Is_Vollpalette']].groupby('Clean_Del')['Material'].nunique().to_dict()
@@ -293,13 +306,6 @@ def cached_billing_logic_v27(df_pick, df_vekp, df_vepo, df_cats, queue_count_col
     billing_df['hlavni_fronta'] = ''
 
     if not df_pick_billing.empty:
-        # POJISTKA: Pokud Month chybí, vytvořit ho
-        if 'Month' not in df_pick_billing.columns:
-            if 'Date' in df_pick_billing.columns:
-                df_pick_billing['Month'] = df_pick_billing['Date'].dt.to_period('M').astype(str).replace('NaT', 'Neznámé')
-            else:
-                df_pick_billing['Month'] = 'Neznámé'
-        
         del_metadata = df_pick_billing.groupby('Clean_Del').agg(
             Month=('Month', 'first'),
             hlavni_fronta=("Queue", lambda x: x.mode()[0] if not x.empty else "")
@@ -332,7 +338,7 @@ def render_reliability_report(df_pick, df_vekp, df_vepo):
     pick_dels = set(df_pick['Delivery'].apply(safe_del)) if df_pick is not None else set()
     
     likp_dels = set()
-    df_likp = load_from_db('raw_likp')  # OK zde — NENÍ uvnitř @st.cache_data
+    df_likp = load_from_db('raw_likp')
     if df_likp is not None and not df_likp.empty:
         c_likp_del = next((c for c in df_likp.columns if "Delivery" in str(c) or "Lieferung" in str(c)), df_likp.columns[0])
         likp_dels = set(df_likp[c_likp_del].apply(safe_del))
@@ -380,18 +386,17 @@ def render_billing(df_pick, df_vekp, df_vepo, df_cats, queue_count_col, aus_data
 
     st.markdown(f"<div class='section-header'><h3>💰 {_t('Korelace mezi Pickováním a Účtováním', 'Correlation Between Picking and Billing')}</h3><p>{_t('Zákazník platí podle počtu výsledných balících jednotek (HU). Zde vidíte náročnost vytvoření těchto zpoplatněných jednotek napříč fakturačními kategoriemi.', 'The customer pays based on the number of billed HUs. Here you can see the effort required to create these billed units across categories.')}</p></div>", unsafe_allow_html=True)
 
-    render_reliability_report(df_pick, df_vekp, df_vepo)
+    with st.spinner("🧠 Analyzuji SAP data (VEKP, VEPO, SSCC štítky)..."):
+        render_reliability_report(df_pick, df_vekp, df_vepo)
 
-    voll_set = st.session_state.get('voll_set', set())
-    
-    # OPRAVA: Načteme LIKP zde (mimo cache) a předáme jako parametr
-    df_likp_tab = load_from_db('raw_likp')
-    billing_df, df_hu_details = cached_billing_logic_v27(
-        df_pick, df_vekp, df_vepo, df_cats, queue_count_col, voll_set, df_likp_tab
-    )
-    st.session_state['debug_hu_details'] = df_hu_details
+        voll_set = st.session_state.get('voll_set', set())
+        
+        # Volání finální cacheované logiky po kliknutí na záložku (tak, jak to fungovalo vždy)
+        billing_df, df_hu_details = cached_billing_logic_final(df_pick, df_vekp, df_vepo, df_cats, queue_count_col, voll_set)
+        st.session_state['billing_df'] = billing_df # Uložíme to i pro Audit
+        st.session_state['debug_hu_details'] = df_hu_details
 
-    if df_likp_tab is None:
+    if load_from_db('raw_likp') is None:
         st.warning("⚠️ **Info:** Pro 100% přesné oddělení N a O zakázek doporučujeme v Admin Zóně nahrát LIKP report.")
 
     if not billing_df.empty:
