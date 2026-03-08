@@ -62,7 +62,7 @@ def render_fu_compare(df_pick, billing_df, voll_set, queue_count_col):
     fuoe_untouched = to_agg[(to_agg['Queue_UPPER'] == 'PI_PL_FUOE') & (to_agg['Is_FU_Any']) & (to_agg['Is_Untouched'])].shape[0]
 
     # --- FILTRACE DLE MĚSÍCE (Zajišťuje, že porovnání přesně odpovídá pick reportu) ---
-    valid_dels = set(df_p['Clean_Del'].dropna().unique())  # OPRAVA: použito df_p místo df_pick
+    valid_dels = set(df_p['Clean_Del'].dropna().unique())
     billing_df_filtered = billing_df[billing_df['Clean_Del'].isin(valid_dels)]
     
     billed_n_voll = billing_df_filtered[billing_df_filtered['Category_Full'] == 'N Vollpalette']['pocet_hu'].sum()
@@ -144,3 +144,54 @@ def render_fu_compare(df_pick, billing_df, voll_set, queue_count_col):
         with col2:
             st.markdown("#### Exportní fronty (PI_PL_OE, atd.)")
             st.dataframe(cat_d[cat_d['Queue_UPPER'].isin(['PI_PL_OE', 'PI_PA_OE'])].drop(columns=cols_to_drop, errors='ignore'), use_container_width=True, hide_index=True)
+
+    # =========================================================
+    # RENTGEN PALETOVÉ ZAKÁZKY (INTERAKTIVNÍ DETAIL)
+    # =========================================================
+    st.divider()
+    st.markdown(f"<div class='section-header'><h3>🔍 {_t('Rentgen paletové zakázky (Audit logiky)', 'Order X-Ray (Logic Audit)')}</h3><p>{_t('Zadejte číslo zakázky a podívejte se přesně, jak ji zpracoval skener vs. jak ji vyhodnotil Fakturační mozek v SAPu.', 'Enter an order number to see exactly how it was processed by the scanner vs. the Billing engine.')}</p></div>", unsafe_allow_html=True)
+
+    avail_dels = sorted(to_agg['Delivery'].dropna().unique())
+    sel_del = st.selectbox(_t("Vyberte zakázku (Delivery) pro detailní rentgen:", "Select Delivery for detailed X-Ray:"), options=[""] + avail_dels, key="compare_xray_del")
+
+    if sel_del:
+        del_data = to_agg[to_agg['Delivery'] == sel_del].copy()
+        
+        st.markdown(f"#### 📦 {_t('Úkoly ze skeneru (Pick Report)', 'Scanner Tasks (Pick Report)')}")
+        
+        def get_status_text(row):
+            if row['Is_FU_Any'] and row['Is_Untouched'] and row['Is_Voll_Billed']: return "🔵 Ideální (Skener i SAP)"
+            if row['Is_FU_Any'] and not row['Is_Untouched'] and row['Is_Voll_Billed']: return "🟢 Zachráněno (Přelepeno)"
+            if row['Is_FU_Any'] and not row['Is_Voll_Billed']: return "🔴 Ztraceno (Není Vollpalette)"
+            if not row['Is_FU_Any'] and row['Is_Voll_Billed']: return "🟡 Bonus (Z běžného picku)"
+            return "⚪ Běžný pick (Neúčtuje se jako paleta)"
+            
+        del_data['Výsledek (Status)'] = del_data.apply(get_status_text, axis=1)
+        disp_del = del_data[['Queue', 'Source_HU', 'Dest_HU', 'Material', 'Výsledek (Status)']].copy()
+        
+        def color_status(val):
+            if '🔵' in str(val): return 'color: #3b82f6; font-weight: bold'
+            if '🟢' in str(val): return 'color: #10b981; font-weight: bold'
+            if '🔴' in str(val): return 'color: #ef4444; font-weight: bold'
+            if '🟡' in str(val): return 'color: #eab308; font-weight: bold'
+            return 'color: gray'
+            
+        try:
+            styled_del = disp_del.style.map(color_status, subset=['Výsledek (Status)'])
+        except AttributeError:
+            styled_del = disp_del.style.applymap(color_status, subset=['Výsledek (Status)'])
+            
+        st.dataframe(styled_del, use_container_width=True, hide_index=True)
+        
+        df_hu_details = st.session_state.get('debug_hu_details')
+        if df_hu_details is not None and not df_hu_details.empty:
+            del_billed = df_hu_details[df_hu_details['Clean_Del'] == sel_del]
+            if not del_billed.empty:
+                st.markdown(f"#### 💰 {_t('Co se u této zakázky skutečně vyfakturovalo (SAP VEKP)', 'What was actually billed for this order (SAP VEKP)')}")
+                disp_billed = del_billed[['HU_Ext', 'HU_Int', 'Category_Full', 'Is_Vollpalette', 'Materials']].copy()
+                disp_billed.columns = ['HU (SSCC)', 'HU (Interní)', 'Kategorie Fakturace', 'Je Vollpalette?', 'Materiály']
+                st.dataframe(disp_billed, use_container_width=True, hide_index=True)
+            else:
+                st.warning(_t("Tato zakázka nemá ve Fakturaci žádné vyfakturované jednotky (chybí data ve VEKP, nebo byla prázdná).", "This order has no billed units in Billing (missing VEKP data)."))
+        else:
+            st.info(_t("Pro detail ze SAPu musíte nejprve navštívit záložku Fakturace.", "Visit Billing tab first to see SAP details."))
