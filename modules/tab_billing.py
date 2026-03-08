@@ -293,6 +293,13 @@ def cached_billing_logic_v27(df_pick, df_vekp, df_vepo, df_cats, queue_count_col
     billing_df['hlavni_fronta'] = ''
 
     if not df_pick_billing.empty:
+        # POJISTKA: Pokud Month chybí, vytvořit ho
+        if 'Month' not in df_pick_billing.columns:
+            if 'Date' in df_pick_billing.columns:
+                df_pick_billing['Month'] = df_pick_billing['Date'].dt.to_period('M').astype(str).replace('NaT', 'Neznámé')
+            else:
+                df_pick_billing['Month'] = 'Neznámé'
+        
         del_metadata = df_pick_billing.groupby('Clean_Del').agg(
             Month=('Month', 'first'),
             hlavni_fronta=("Queue", lambda x: x.mode()[0] if not x.empty else "")
