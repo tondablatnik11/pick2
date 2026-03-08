@@ -7,14 +7,13 @@ import re
 from streamlit_option_menu import option_menu
 
 from database import save_to_db, load_from_db
-# Importy pro centrální mozek
 from modules.utils import t, fast_compute_moves, get_match_key_vectorized, get_match_key, parse_packing_time, BOX_UNITS, detect_vollpalettes, safe_hu, safe_del
 
 from modules.tab_dashboard import render_dashboard
 from modules.tab_pallets import render_pallets
 from modules.tab_fu import render_fu
 from modules.tab_top import render_top
-from modules.tab_billing import render_billing, cached_billing_logic_v24 # DŮLEŽITÉ: Přidán import fakturačního jádra
+from modules.tab_billing import render_billing, cached_billing_logic_v25 # OPRAVENO NA v25
 from modules.tab_packing import render_packing
 from modules.tab_audit import render_audit
 
@@ -297,9 +296,9 @@ def main():
                 my_bar.progress(55, text="⚙️ Fáze 2/4: Rekonstrukce stromových struktur obalů a detekce Vollpalet... (55%)")
                 time.sleep(0.3)
                 
-                # KROK 3 (Nejtěžší výpočet Fakturace)
+                # KROK 3 (Nejtěžší výpočet Fakturace) - OPRAVENO NA v25
                 my_bar.progress(80, text="🧠 Fáze 3/4: Aplikuji komplexní byznys logiku (T031, KEP Override, SSCC pravidla)... (80%)")
-                billing_df, df_hu_details = cached_billing_logic_v24(
+                billing_df, df_hu_details = cached_billing_logic_v25(
                     data_dict['df_pick'], 
                     data_dict['df_vekp'], 
                     data_dict['df_vepo'], 
