@@ -12,7 +12,7 @@ except AttributeError:
 def render_fu_compare(df_pick, billing_df, voll_set, queue_count_col):
     def _t(cs, en): return en if st.session_state.get('lang', 'cs') == 'en' else cs
 
-    st.markdown(f"<div class='section-header'><h3>⚖️ {_t('Detailní porovnání: Fyzický proces (Skener) vs Fakturace (SAP)', 'Detailed Comparison: Physical Process vs Billing')}</h3><p>{_t('Tato záložka podrobně vysvětluje, proč nesedí čísla ze skeneru (fronty PI_PL_FU a PI_PL_FUOE) s konečnou fakturací, a jak Fakturační mozek zachraňuje přelepené palety.', 'This tab explains the differences between Scanner Data and Billing Data, and how the algorithm saves relabeled pallets.')}</p></div>", unsafe_allow_html=True)
+    st.markdown(f"<div class='section-header'><h3>⚖️ {_t('Detailní porovnání: Fyzický proces (Skener) vs Fakturace ', 'Detailed Comparison: Physical Process vs Billing')}</h3><p>{_t('Tato záložka podrobně vysvětluje, proč nesedí čísla ze skeneru (fronty PI_PL_FU a PI_PL_FUOE) s konečnou fakturací, a jak Fakturační mozek zachraňuje přelepené palety.', 'This tab explains the differences between Scanner Data and Billing Data, and how the algorithm saves relabeled pallets.')}</p></div>", unsafe_allow_html=True)
 
     if billing_df is None or billing_df.empty or not voll_set:
         st.warning(_t("⚠️ Nejdříve navštivte záložku **Fakturace**, aby se provedly výpočty.", "⚠️ Please visit the **Billing** tab first to perform calculations."))
