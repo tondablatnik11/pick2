@@ -1,6 +1,7 @@
 import streamlit as st
 import pandas as pd
 import numpy as np
+import io
 from modules.utils import t, get_match_key, safe_del, safe_hu
 
 try:
@@ -116,6 +117,37 @@ def render_audit(df_pick, df_vekp, df_vepo, df_oe, queue_count_col, billing_df, 
                             styled_disp = disp.style.applymap(color_diff, subset=['Rozdíl (Aplikace - Kontrola)'])
                             
                         st.dataframe(styled_disp, hide_index=True, use_container_width=True)
+                        
+                        # --- EXPORT DO EXCELU PRO DETAILNÍ DEBUGGING ---
+                        mismatch_dels = mismatches['Clean_Del'].unique()
+                        
+                        buffer = io.BytesIO()
+                        with pd.ExcelWriter(buffer, engine='openpyxl') as writer:
+                            # 1. Záložka: Souhrn
+                            disp.to_excel(writer, index=False, sheet_name='Rozdily_Souhrn')
+                            
+                            # 2. Záložka: Data Vypočtená aplikací
+                            if 'Clean_Del_Merge' in billing_df.columns:
+                                app_det = billing_df[billing_df['Clean_Del_Merge'].astype(str).isin(mismatch_dels)].copy()
+                                # Vyčištění sloupců pro přehlednost
+                                cols_to_keep = ['Delivery', 'Category_Full', 'pocet_to', 'pohyby_celkem', 'pocet_lokaci', 'pocet_mat', 'pocet_hu', 'Bilance']
+                                avail_cols = [c for c in cols_to_keep if c in app_det.columns]
+                                app_det[avail_cols].to_excel(writer, index=False, sheet_name='Aplikace_Vypocet')
+                            
+                            # 3. Záložka: Data kontrolní
+                            ctrl_det = df_ctrl[df_ctrl['Clean_Del'].isin(mismatch_dels)].copy()
+                            # Skrytí pracovních sloupců
+                            ctrl_det = ctrl_det.drop(columns=['Clean_Del', 'Category_Full'], errors='ignore')
+                            ctrl_det.to_excel(writer, index=False, sheet_name='Kontrola_Zdroj')
+                            
+                        st.download_button(
+                            label="📥 Stáhnout detailní report chyb pro analýzu (Excel)",
+                            data=buffer.getvalue(),
+                            file_name="Audit_Chybne_Zakazky_Debug.xlsx",
+                            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                            type="primary"
+                        )
+                        
                     else:
                         st.success("🎉 PERFEKTNÍ! Aplikace se na 100 % shoduje s kontrolním souborem ve všech zakázkách a kategoriích.")
                 else:
