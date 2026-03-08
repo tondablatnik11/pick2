@@ -301,6 +301,8 @@ def main():
                     2.0, 15.0, 1
                 )
                 df_pick_pre['Pohyby_Rukou'] = tt
+                # Billing logika potřebuje sloupec Month — musíme ho vytvořit TEĎ
+                df_pick_pre['Month'] = df_pick_pre['Date'].dt.to_period('M').astype(str).replace('NaT', 'Neznámé')
                 # ---------------------------------
                 
                 my_bar.progress(80, text="🧠 Fáze 3/4: Aplikuji komplexní byznys logiku (T031, KEP Override, SSCC pravidla)... (80%)")
