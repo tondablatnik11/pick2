@@ -22,14 +22,13 @@ def render_fu_compare(df_pick, billing_df, voll_set, queue_count_col):
     df_p['Source_HU'] = df_p['Source storage unit'].apply(safe_hu)
     df_p['Dest_HU'] = df_p['Handling Unit'].apply(safe_hu)
 
-    # Identifikace KLT obalů, které se nemají počítat jako celé palety
+    # Identifikace KLT obalů
     c_su = 'Storage Unit Type' if 'Storage Unit Type' in df_p.columns else ('Type' if 'Type' in df_p.columns else None)
     if c_su:
         df_p['Is_KLT'] = df_p[c_su].astype(str).str.upper().isin(['K1', 'K2', 'K3', 'K4', 'KLT', 'KLT1', 'KLT2'])
     else:
         df_p['Is_KLT'] = False
 
-    # Identifikace podle Skeneru - odfiltrování KLT boxů
     df_p['Queue_UPPER'] = df_p['Queue'].astype(str).str.upper()
     df_p['Is_FU'] = (df_p['Queue_UPPER'] == 'PI_PL_FU') & (~df_p['Is_KLT'])
     df_p['Is_FUOE'] = (df_p['Queue_UPPER'] == 'PI_PL_FUOE') & (~df_p['Is_KLT'])
@@ -37,14 +36,12 @@ def render_fu_compare(df_pick, billing_df, voll_set, queue_count_col):
     
     df_p['Is_Untouched'] = (df_p['Source_HU'] == df_p['Dest_HU']) & (df_p['Source_HU'] != '')
 
-    # Identifikace podle Fakturace (Zda to mozek zařadil do Vollpalet)
     def check_voll(row):
         d = row['Clean_Del']
         return (d, row['Dest_HU']) in voll_set or (d, row['Source_HU']) in voll_set
 
     df_p['Is_Voll_Billed'] = df_p.apply(check_voll, axis=1)
 
-    # Seskupení na úroveň konkrétního Úkolu (TO)
     to_agg = df_p.groupby(queue_count_col).agg(
         Delivery=('Clean_Del', 'first'),
         Queue=('Queue', 'first'),
@@ -58,15 +55,18 @@ def render_fu_compare(df_pick, billing_df, voll_set, queue_count_col):
         Material=('Material', 'first')
     ).reset_index()
 
-    # Výpočty pro horní statistiky
     fu_tasks = to_agg[(to_agg['Queue_UPPER'] == 'PI_PL_FU') & (to_agg['Is_FU_Any'])].shape[0]
     fu_untouched = to_agg[(to_agg['Queue_UPPER'] == 'PI_PL_FU') & (to_agg['Is_FU_Any']) & (to_agg['Is_Untouched'])].shape[0]
 
     fuoe_tasks = to_agg[(to_agg['Queue_UPPER'] == 'PI_PL_FUOE') & (to_agg['Is_FU_Any'])].shape[0]
     fuoe_untouched = to_agg[(to_agg['Queue_UPPER'] == 'PI_PL_FUOE') & (to_agg['Is_FU_Any']) & (to_agg['Is_Untouched'])].shape[0]
 
-    billed_n_voll = billing_df[billing_df['Category_Full'] == 'N Vollpalette']['pocet_hu'].sum()
-    billed_o_voll = billing_df[billing_df['Category_Full'].isin(['O Vollpalette', 'OE Vollpalette'])]['pocet_hu'].sum()
+    # --- FILTRACE DLE MĚSÍCE (Zajišťuje, že porovnání přesně odpovídá pick reportu) ---
+    valid_dels = set(df_pick['Clean_Del'].dropna().unique())
+    billing_df_filtered = billing_df[billing_df['Clean_Del'].isin(valid_dels)]
+    
+    billed_n_voll = billing_df_filtered[billing_df_filtered['Category_Full'] == 'N Vollpalette']['pocet_hu'].sum()
+    billed_o_voll = billing_df_filtered[billing_df_filtered['Category_Full'].isin(['O Vollpalette', 'OE Vollpalette'])]['pocet_hu'].sum()
 
     st.markdown("### 📊 Souhrnná čísla ze Skeneru a Fakturace")
     c1, c2, c3 = st.columns(3)
