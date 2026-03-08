@@ -133,7 +133,7 @@ def fast_compute_moves(qty_list, queue_list, su_list, box_list, w_list, d_list, 
 
 
 # ==========================================
-# NOVÝ CENTRÁLNÍ MOZEK PRO DETEKCI VOLLPALET
+# CENTRÁLNÍ MOZEK PRO DETEKCI VOLLPALET (Opravená logika prázdných polí)
 # ==========================================
 
 def safe_hu(val):
@@ -144,7 +144,7 @@ def safe_hu(val):
     return v
 
 def safe_del(val):
-    """Delivery číslo může mít umazané nuly, protože to je jiný typ datového objektu."""
+    """Delivery číslo může mít umazané nuly."""
     v = str(val).strip()
     if v.lower() in ['nan', 'none', '']: return ''
     if v.endswith('.0'): v = v[:-2]
@@ -161,8 +161,8 @@ def is_box(v):
 
 def detect_vollpalettes(df_pick, df_vekp, df_vepo):
     """
-    Hledá Vollpalety na základě striktních 6 pravidel z forenzní analýzy.
-    Vrací set s tuplem (Delivery, External_HU_Number)
+    Hledá Vollpalety na základě striktních pravidel z forenzní analýzy.
+    Vrací set s tuplem (Delivery, External/Internal_HU_Number)
     """
     voll_set = set()
     if any(df is None or df.empty for df in [df_pick, df_vekp, df_vepo]):
@@ -189,7 +189,9 @@ def detect_vollpalettes(df_pick, df_vekp, df_vepo):
             ext_hu = safe_hu(r[vekp_ext_col])
             int_hu = safe_hu(r[vekp_hu_col])
             if int_hu in valid_vepo_hus:
-                valid_roots[(deliv, ext_hu)] = int_hu
+                # Uložíme si obě čísla (externí i interní), abychom chytli cokoliv, co na nás Pick Report vyhodí
+                if ext_hu: valid_roots[(deliv, ext_hu)] = int_hu
+                if int_hu: valid_roots[(deliv, int_hu)] = int_hu
                 
     # Pick Report
     c_su = 'Storage Unit Type' if 'Storage Unit Type' in df_pick.columns else ('Type' if 'Type' in df_pick.columns else None)
@@ -199,18 +201,27 @@ def detect_vollpalettes(df_pick, df_vekp, df_vepo):
         
         su_type = str(r.get(c_su, '')) if c_su else ''
         if is_box(su_type): continue # Pravidlo 2
-        
         if 'PI_PA' in str(r.get('Queue', '')).upper(): continue # Ochrana Parcel front
         
         ssu = safe_hu(r.get('Source storage unit', ''))
         hu = safe_hu(r.get('Handling Unit', ''))
-        if ssu == '' or hu == '': continue
-        if ssu != hu: continue # Pravidlo 3: SSU == HU
+        
+        # OPRAVA: Pokud je jedno z čísel prázdné, nedáme rovnou false, ale použijeme to vyplněné!
+        pick_hu = ""
+        if ssu and hu:
+            if ssu != hu: continue # Pravidlo 3: Změna identity = přebaleno na vozíku
+            pick_hu = ssu
+        elif ssu:
+            pick_hu = ssu
+        elif hu:
+            pick_hu = hu
+        else:
+            continue
         
         deliv = safe_del(r.get('Delivery', ''))
         
-        # Pravidlo 6: Ext. číslo palety a číslo zakázky se musí shodovat s ověřenou Root paletou z VEKP
-        if (deliv, ssu) in valid_roots:
-            voll_set.add((deliv, ssu))
+        # Pravidlo 6: Číslo palety a číslo zakázky se musí shodovat s ověřenou Root paletou z VEKP
+        if (deliv, pick_hu) in valid_roots:
+            voll_set.add((deliv, pick_hu))
             
     return voll_set
