@@ -10,9 +10,9 @@ try:
 except AttributeError:
     fast_render = lambda f: f
 
-# Verze v27 - NÁVRAT KE ZLATÉ LOGICE (1 Kořen = 1 HU) + Anti-Loop a Anti-Crash
+# Verze v28 - ZLATÁ LOGIKA + Podpora filtrování dle měsíců
 @st.cache_data(show_spinner=False)
-def cached_billing_logic_v27(df_pick, df_vekp, df_vepo, df_cats, queue_count_col, voll_set):
+def cached_billing_logic_v28(df_pick, df_vekp, df_vepo, df_cats, queue_count_col, voll_set):
     billing_df = pd.DataFrame()
     df_hu_details = pd.DataFrame()
     if df_vekp is None or df_vekp.empty: 
@@ -35,6 +35,16 @@ def cached_billing_logic_v27(df_pick, df_vekp, df_vepo, df_cats, queue_count_col
     vekp_filtered['Clean_HU_Ext'] = vekp_filtered[vekp_ext_col].apply(safe_hu)
     vekp_filtered['Clean_Parent'] = vekp_filtered[parent_col_vepo].apply(safe_hu) if parent_col_vepo else ""
 
+    # Extrakce měsíce z VEKP (pro spolehlivé filtrování)
+    c_created = next((c for c in vekp_filtered.columns if any(x in str(c).lower() for x in ['created on', 'erfasst am', 'datum', 'date'])), None)
+    if c_created:
+        vekp_filtered['VEKP_Date'] = pd.to_datetime(vekp_filtered[c_created], errors='coerce')
+        vekp_filtered['VEKP_Month'] = vekp_filtered['VEKP_Date'].dt.to_period('M').astype(str).replace('NaT', 'Neznámé')
+    else:
+        vekp_filtered['VEKP_Month'] = 'Neznámé'
+        
+    del_vekp_month = vekp_filtered.groupby('Clean_Del')['VEKP_Month'].first().to_dict()
+
     int_to_ext = dict(zip(vekp_filtered['Clean_HU_Int'], vekp_filtered['Clean_HU_Ext']))
 
     # ---------------------------------------------------------
@@ -47,7 +57,6 @@ def cached_billing_logic_v27(df_pick, df_vekp, df_vepo, df_cats, queue_count_col
         df_pick_billing['Clean_Del'] = df_pick_billing['Delivery'].apply(safe_del)
         picked_mats_by_del = df_pick_billing.groupby('Clean_Del')['Material'].apply(lambda x: set(x.astype(str).str.strip())).to_dict()
         
-        # Bezpečnostní pojistka, kdyby chyběl výpočet pohybů
         if 'Pohyby_Rukou' not in df_pick_billing.columns:
             df_pick_billing['Pohyby_Rukou'] = 0
             
@@ -156,7 +165,6 @@ def cached_billing_logic_v27(df_pick, df_vekp, df_vepo, df_cats, queue_count_col
             if parent not in children_map: children_map[parent] = []
             children_map[parent].append(child)
 
-    # Bezpečná funkce pro ziskání všech listů (s ochranou proti Infinite Loop)
     def get_leaves(node, visited=None):
         if visited is None: visited = set()
         if node in visited: return []
@@ -189,7 +197,6 @@ def cached_billing_logic_v27(df_pick, df_vekp, df_vepo, df_cats, queue_count_col
 
             leaves = get_leaves(root_hu)
 
-            # Je tento strom Vollpalette?
             is_voll = False
             if (d, ext_hu) in voll_set or (d, root_hu) in voll_set:
                 is_voll = True
@@ -219,7 +226,6 @@ def cached_billing_logic_v27(df_pick, df_vekp, df_vepo, df_cats, queue_count_col
                     del_mat_cats[(d, m)].add(cat)
                     
             else:
-                # NENÍ TO VOLLPALETTE -> Účtujeme přesně 1 Kořen! (Tohle vyřeší problém s 40 HU u 4941062689)
                 mats = set()
                 for leaf in leaves: 
                     mats.update(vepo_mats.get(leaf, set()))
@@ -288,16 +294,21 @@ def cached_billing_logic_v27(df_pick, df_vekp, df_vepo, df_cats, queue_count_col
 
     billing_df['Delivery'] = billing_df['Clean_Del']
     billing_df['Clean_Del_Merge'] = billing_df['Clean_Del']
-    billing_df['Month'] = 'Neznámé'
-    billing_df['hlavni_fronta'] = ''
-
+    
+    # Přiřazení měsíce (Přednostně z VEKP data)
     if not df_pick_billing.empty:
         del_metadata = df_pick_billing.groupby('Clean_Del').agg(
             Month=('Month', 'first'),
             hlavni_fronta=("Queue", lambda x: x.mode()[0] if not x.empty else "")
         ).to_dict('index')
-        billing_df['Month'] = billing_df.apply(lambda r: del_metadata.get(r['Clean_Del'], {}).get('Month', 'Neznámé'), axis=1)
+        billing_df['Month'] = billing_df['Clean_Del'].apply(
+            lambda d: del_vekp_month.get(d, 'Neznámé') if del_vekp_month.get(d, 'Neznámé') != 'Neznámé' 
+            else del_metadata.get(d, {}).get('Month', 'Neznámé')
+        )
         billing_df['hlavni_fronta'] = billing_df.apply(lambda r: del_metadata.get(r['Clean_Del'], {}).get('hlavni_fronta', ''), axis=1)
+    else:
+        billing_df['Month'] = billing_df['Clean_Del'].map(del_vekp_month).fillna('Neznámé')
+        billing_df['hlavni_fronta'] = ''
 
     for col in ['pocet_to', 'pohyby_celkem', 'pocet_lokaci', 'pocet_hu', 'pocet_mat']:
         billing_df[col] = billing_df[col].fillna(0).astype(int)
@@ -377,8 +388,23 @@ def render_billing(df_pick, df_vekp, df_vepo, df_cats, queue_count_col, aus_data
 
         voll_set = st.session_state.get('voll_set', set())
         
-        # Volání finální Cacheované V27
-        billing_df, df_hu_details = cached_billing_logic_v27(df_pick, df_vekp, df_vepo, df_cats, queue_count_col, voll_set)
+        # Volání cacheované logiky
+        billing_df, df_hu_details = cached_billing_logic_v28(df_pick, df_vekp, df_vepo, df_cats, queue_count_col, voll_set)
+
+        # ===============================================
+        # APLIKACE FILTRU MĚSÍCE (aby vše sedělo s menu)
+        # ===============================================
+        if 'Month' in df_pick.columns:
+            pick_months = [m for m in df_pick['Month'].unique() if m != 'Neznámé']
+            # Pokud uživatel vybral jeden specifický měsíc v levém panelu
+            if len(pick_months) == 1:
+                sel_month = pick_months[0]
+                valid_dels = set(df_pick['Clean_Del'].unique())
+                
+                # Zobrazíme zakázky s tímto měsícem + všechny zakázky, co se v tomto měsíci pickovaly
+                billing_df = billing_df[(billing_df['Month'] == sel_month) | (billing_df['Clean_Del'].isin(valid_dels))].copy()
+                df_hu_details = df_hu_details[df_hu_details['Clean_Del'].isin(billing_df['Clean_Del'])].copy()
+
         st.session_state['billing_df'] = billing_df 
         st.session_state['debug_hu_details'] = df_hu_details
 
