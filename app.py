@@ -7,14 +7,13 @@ import re
 from streamlit_option_menu import option_menu
 
 from database import save_to_db, load_from_db
-# PŘIDANÉ IMPORTY PRO CENTRÁLNÍ MOZEK
 from modules.utils import t, fast_compute_moves, get_match_key_vectorized, get_match_key, parse_packing_time, BOX_UNITS, detect_vollpalettes, safe_hu, safe_del
 
 from modules.tab_dashboard import render_dashboard
 from modules.tab_pallets import render_pallets
 from modules.tab_fu import render_fu
 from modules.tab_top import render_top
-from modules.tab_billing import render_billing
+from modules.tab_billing import render_billing, cached_billing_logic_v24 # Přidán import logiky pro pre-load
 from modules.tab_packing import render_packing
 from modules.tab_audit import render_audit
 
@@ -194,13 +193,10 @@ def fetch_and_prep_data(use_marm=True):
     df_pick['Piece_Weight_KG'] = df_pick['Match_Key'].map(weight_dict).fillna(0.0)
     df_pick['Piece_Max_Dim_CM'] = df_pick['Match_Key'].map(dim_dict).fillna(0.0)
 
-    # -------------------------------------------------------------
-    # ZRUŠENÝ STARÝ VÝPOČET AUTO_VOLL_HUS - NYNÍ PŘEBÍRÁ CENTRÁLNÍ MOZEK
-    # -------------------------------------------------------------
+    # CENTRÁLNÍ MOZEK
     df_vekp_raw = load_from_db('raw_vekp')
     df_vepo_raw = load_from_db('raw_vepo')
     
-    # NOVÉ: Jednorázový přesný výpočet Vollpalet
     voll_set = detect_vollpalettes(df_pick, df_vekp_raw, df_vepo_raw)
 
     df_oe = load_from_db('raw_oe')
@@ -379,34 +375,56 @@ def main():
                                 st.error(f"❌ {_t('Chyba u souboru', 'Error processing file')} {file.name}: {e}")
                                 
                         st.cache_data.clear()
+                        # ZAJISTÍME RESET PRE-LOADERU PŘI NAHRÁNÍ NOVÝCH DAT
+                        if 'app_loaded' in st.session_state:
+                            del st.session_state['app_loaded']
                         time.sleep(2.0)
                         st.rerun()
 
-    progress_bar = st.progress(0, text=_t("🚀 Inicializace Warehouse Control Tower...", "🚀 Initializing Warehouse Control Tower..."))
-    time.sleep(0.1)
-    
-    progress_bar.progress(30, text=_t("📥 Načítání a propojování dat z databáze...", "📥 Fetching and joining database records..."))
-    data_dict = fetch_and_prep_data(use_marm)
+    # ==========================================
+    # NOVÝ PRE-LOADER (NAČTE A SPOČÍTÁ VŠE PŘI STARTU APLIKACE)
+    # ==========================================
+    if 'app_loaded' not in st.session_state:
+        with st.spinner(_t("🚀 Startuji Control Tower... Probíhá hluboká analýza SAP dat (Pick, VEKP, VEPO). Prosím o strpení, může to trvat několik vteřin...", "🚀 Starting Control Tower... Deep analysis of SAP data in progress. Please wait...")):
+            
+            data_dict = fetch_and_prep_data(use_marm)
+            if data_dict is None:
+                st.warning(_t("🗄️ Databáze je zatím prázdná. Otevřete levé menu 'Admin Zóna', zadejte heslo 'admin123' a nahrajte Pick Report a další soubory.", "🗄️ Database is empty. Open Admin Zone in the left menu."))
+                return
 
+            st.session_state['voll_set'] = data_dict['voll_set']
+            st.session_state['data_dict'] = data_dict
+            
+            # Před-výpočet obří fakturace na pozadí
+            billing_df, df_hu_details = cached_billing_logic_v24(
+                data_dict['df_pick'], 
+                data_dict['df_vekp'], 
+                data_dict['df_vepo'], 
+                data_dict['df_cats'], 
+                data_dict['queue_count_col'], 
+                data_dict['voll_set']
+            )
+            st.session_state['billing_df'] = billing_df
+            st.session_state['debug_hu_details'] = df_hu_details
+            
+            st.session_state['app_loaded'] = True
+            st.rerun()
+
+    # VYZVEDNUTÍ PŘEDPOČÍTANÝCH DAT Z PAMĚTI
+    data_dict = st.session_state.get('data_dict')
     if data_dict is None:
-        progress_bar.empty()
-        st.warning(_t("🗄️ Databáze je zatím prázdná. Otevřete levé menu 'Admin Zóna', zadejte heslo 'admin123' a nahrajte Pick Report a další soubory.", "🗄️ Database is empty. Open Admin Zone in the left menu."))
+        st.error("Chyba při načítání dat z paměti. Obnovte stránku.")
         return
 
-    progress_bar.progress(65, text=_t("⚙️ Výpočet fyzických pohybů a kontrola ergonomie...", "⚙️ Calculating physical movements and ergonomics..."))
-    df_pick = data_dict['df_pick']
+    df_pick = data_dict['df_pick'].copy()
     
     if exclude_mats_input:
         excluded_materials = [m.strip().upper() for m in re.split(r'[,\s;]+', exclude_mats_input) if m.strip()]
         if excluded_materials:
             df_pick = df_pick[~df_pick['Material'].astype(str).str.upper().isin(excluded_materials)].copy()
             if df_pick.empty:
-                progress_bar.empty()
                 st.warning(_t("⚠️ Po vyloučení těchto materiálů nezbyla v Pick reportu žádná data.", "⚠️ No data left after excluding these materials."))
                 st.stop()
-
-    # ULOŽENÍ MOZKU DO SESSION STATE PRO VŠECHNY ZÁLOŽKY
-    st.session_state['voll_set'] = data_dict['voll_set']
 
     df_pick['Month'] = df_pick['Date'].dt.to_period('M').astype(str).replace('NaT', _t('Neznámé', 'Unknown'))
     st.sidebar.divider()
@@ -418,10 +436,6 @@ def main():
     df_pick['Pohyby_Rukou'], df_pick['Pohyby_Exact'], df_pick['Pohyby_Loose_Miss'] = tt, te, tm
     df_pick['Celkova_Vaha_KG'] = df_pick['Qty'] * df_pick['Piece_Weight_KG']
 
-    progress_bar.progress(90, text=_t("📊 Vykreslování vizualizací a tabulek...", "📊 Rendering charts and dashboards..."))
-    time.sleep(0.2)
-    progress_bar.empty()
-
     display_q = None
     if selected_page == _t("Přehled a Fronty", "Dashboard & Queue"): 
         display_q = render_dashboard(df_pick, data_dict['queue_count_col'])
@@ -432,8 +446,7 @@ def main():
     elif selected_page == _t("Materiály (TOP)", "Top Materials"): 
         render_top(df_pick)
     elif selected_page == _t("Fakturace", "Billing"): 
-        billing_df = render_billing(df_pick, data_dict['df_vekp'], data_dict['df_vepo'], data_dict['df_cats'], data_dict['queue_count_col'])
-        st.session_state['billing_df'] = billing_df
+        render_billing(df_pick, data_dict['df_vekp'], data_dict['df_vepo'], data_dict['df_cats'], data_dict['queue_count_col'])
     elif selected_page == _t("Balení (Packing)", "Packing"): 
         render_packing(st.session_state.get('billing_df', pd.DataFrame()), data_dict['df_oe'])
     elif selected_page == _t("Audit & Rentgen", "Audit & X-Ray"): 
