@@ -13,7 +13,7 @@ from modules.tab_dashboard import render_dashboard
 from modules.tab_pallets import render_pallets
 from modules.tab_fu import render_fu
 from modules.tab_top import render_top
-from modules.tab_billing import render_billing, cached_billing_logic_v25 # OPRAVENO NA v25
+from modules.tab_billing import render_billing, cached_billing_logic_v26 # IMPORTUJE NOVOU BEZPEČNOU VERZI V26
 from modules.tab_packing import render_packing
 from modules.tab_audit import render_audit
 
@@ -262,7 +262,7 @@ def fetch_and_prep_data(use_marm=True):
 # ==========================================
 def main():
 
-    # --- NOVÝ PROFESIONÁLNÍ PRE-LOADER (Animace na celou obrazovku) ---
+    # --- NOVÝ PROFESIONÁLNÍ PRE-LOADER S OPRAVENÝMI POHYBY ---
     if 'app_loaded' not in st.session_state:
         load_container = st.empty()
         with load_container.container():
@@ -276,11 +276,9 @@ def main():
                     <p style='color: gray; margin-bottom: 25px; font-size: 15px;'>Startuji systémy. Probíhá masivní před-výpočet Big Data ze SAPu...</p>
                 """, unsafe_allow_html=True)
                 
-                # Založení Progress Baru
                 my_bar = st.progress(0, text="Zahajuji sekvenci... (0%)")
-                time.sleep(0.3) # Efekt pro plynulost
+                time.sleep(0.3)
                 
-                # KROK 1
                 my_bar.progress(25, text="📥 Fáze 1/4: Stahování a konsolidace databází (Pick, LIKP, VBPA)... (25%)")
                 data_dict = fetch_and_prep_data(True)
                 
@@ -292,14 +290,26 @@ def main():
                 st.session_state['data_dict'] = data_dict
                 time.sleep(0.2)
                 
-                # KROK 2
                 my_bar.progress(55, text="⚙️ Fáze 2/4: Rekonstrukce stromových struktur obalů a detekce Vollpalet... (55%)")
-                time.sleep(0.3)
                 
-                # KROK 3 (Nejtěžší výpočet Fakturace) - OPRAVENO NA v25
+                # ------ OPRAVA KEY ERRORU --------
+                # Před samotnou Fakturací musíme provést nanečisto "Výpočet pohybů rukou" (fast_compute_moves), 
+                # aby aplikace nevyhodila KeyError, když se je v dalším kroku pokusí sečíst.
+                df_pick_pre = data_dict['df_pick'].copy()
+                tt, te, tm = fast_compute_moves(
+                    df_pick_pre['Qty'].values, df_pick_pre['Queue'].values, 
+                    df_pick_pre['Removal of total SU'].values, df_pick_pre['Box_Sizes_List'].values, 
+                    df_pick_pre['Piece_Weight_KG'].values, df_pick_pre['Piece_Max_Dim_CM'].values, 
+                    2.0, 15.0, 1 # Standardní výchozí parametry
+                )
+                df_pick_pre['Pohyby_Rukou'] = tt
+                # ---------------------------------
+                
                 my_bar.progress(80, text="🧠 Fáze 3/4: Aplikuji komplexní byznys logiku (T031, KEP Override, SSCC pravidla)... (80%)")
-                billing_df, df_hu_details = cached_billing_logic_v25(
-                    data_dict['df_pick'], 
+                
+                # Voláme novou, bezpečnou verzi v26
+                billing_df, df_hu_details = cached_billing_logic_v26(
+                    df_pick_pre, 
                     data_dict['df_vekp'], 
                     data_dict['df_vepo'], 
                     data_dict['df_cats'], 
@@ -310,7 +320,6 @@ def main():
                 st.session_state['debug_hu_details'] = df_hu_details
                 time.sleep(0.2)
                 
-                # KROK 4
                 my_bar.progress(100, text="✅ Fáze 4/4: Všechna data načtena do paměti! Startuji vizualizace... (100%)")
                 time.sleep(0.6)
                 
@@ -484,7 +493,7 @@ def main():
     elif selected_page == _t("Materiály (TOP)", "Top Materials"): 
         render_top(df_pick)
     elif selected_page == _t("Fakturace", "Billing"): 
-        # Zde už jen zavoláme renderovací funkci a podstrčíme jí předem vypočtená data, aby nečekala
+        # Zde už jen zavoláme renderovací funkci a podstrčíme jí předem vypočtená data
         render_billing(df_pick, data_dict['df_vekp'], data_dict['df_vepo'], data_dict['df_cats'], data_dict['queue_count_col'])
     elif selected_page == _t("Balení (Packing)", "Packing"): 
         render_packing(st.session_state.get('billing_df', pd.DataFrame()), data_dict['df_oe'])
