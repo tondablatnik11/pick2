@@ -10,9 +10,9 @@ try:
 except AttributeError:
     fast_render = lambda f: f
 
-# Přejmenováno na v7 pro vynucení resetu cache a nasazení přesného HU-level mapování
+# Přejmenováno na v8 pro vynucení resetu cache a nasazení opravené logiky!
 @st.cache_data(show_spinner=False)
-def cached_billing_logic_v7(df_pick, df_vekp, df_vepo, df_cats, queue_count_col, voll_set):
+def cached_billing_logic_v8(df_pick, df_vekp, df_vepo, df_cats, queue_count_col, voll_set):
     # ---------------------------------------------------------
     # 1. NAČTENÍ LIKP DAT A VYTVOŘENÍ MAPY ZÁKAZNÍKŮ (Export vs Normal)
     # ---------------------------------------------------------
@@ -117,7 +117,7 @@ def cached_billing_logic_v7(df_pick, df_vekp, df_vepo, df_cats, queue_count_col,
     # 6. ROZŠTĚPENÍ VYFAKTUROVANÝCH HU DO KATEGORIÍ (Sortenrein vs Misch dle obsahu)
     # ---------------------------------------------------------
     del_hu_counts = []
-    del_mat_cats = {} # Pomocná mapa (Zakázka, Materiál) -> Kategorie
+    del_mat_cats = {} 
 
     root_df = vekp_filtered[vekp_filtered['Clean_Parent'] == '']
     for d, grp in root_df.groupby('Clean_Del'):
@@ -131,27 +131,24 @@ def cached_billing_logic_v7(df_pick, df_vekp, df_vepo, df_cats, queue_count_col,
 
             if is_voll:
                 cat = f"{base} Vollpalette"
-                # Pojistka proti OE Vollpalette
                 if base == "OE": cat = "O Vollpalette"
                 if base == "E": cat = "N Vollpalette"
                 
                 del_hu_counts.append({'Clean_Del': d, 'Category_Full': cat, 'pocet_hu': 1})
                 
-                # Zaznamenání materiálů v této HU
                 leaves = get_leaves(int_hu)
                 for leaf in leaves:
                     for m in vepo_mat_map.get(leaf, set()):
                         if (d, m) not in del_mat_cats: del_mat_cats[(d, m)] = set()
                         del_mat_cats[(d, m)].add(cat)
             else:
-                # Rozřazení na Sortenrein a Misch na základě fyzického obsahu
                 leaves = get_leaves(int_hu)
                 mats = set()
                 for leaf in leaves:
                     if leaf in vepo_mat_map:
                         mats.update(vepo_mat_map[leaf])
 
-                if len(mats) > 0: # Ignorujeme prázdné skořápky bez materiálů
+                if len(mats) > 0: 
                     cat = f"{base} Sortenrein" if len(mats) == 1 else f"{base} Misch"
                     
                     del_hu_counts.append({'Clean_Del': d, 'Category_Full': cat, 'pocet_hu': 1})
@@ -183,15 +180,13 @@ def cached_billing_logic_v7(df_pick, df_vekp, df_vepo, df_cats, queue_count_col,
         mat = str(row.get('Material', '')).strip()
         cats = del_mat_cats.get((d, mat), set())
         
-        # Očistíme od Vollpalette štítku, protože tento pick evidentně Vollpaleta není
         valid_cats = {c for c in cats if "Vollpalette" not in c}
         
         if len(valid_cats) == 1:
             return list(valid_cats)[0]
         elif len(valid_cats) > 1:
-            return f"{base} Misch" # Pokud šel materiál do obojího, přiřazuje se do Misch
+            return f"{base} Misch" 
         else:
-            # Záložní pravidlo, pokud se materiál nenapároval (např. smazán ve VEPO)
             mats_in_del = non_voll_mats.get(d, 1)
             return f"{base} Misch" if mats_in_del > 1 else f"{base} Sortenrein"
 
@@ -207,10 +202,8 @@ def cached_billing_logic_v7(df_pick, df_vekp, df_vepo, df_cats, queue_count_col,
         pocet_mat=("Material", "nunique") 
     ).reset_index()
 
-    # Spojení fyzických picků s vyfakturovanými jednotkami pomocí OUTER JOIN
     billing_df = pd.merge(pick_agg, df_hu_counts, on=['Clean_Del', 'Category_Full'], how='outer')
 
-    # Obnovení hlavičkových dat (Delivery, Měsíc) po outer joinu
     del_metadata = df_pick_billing.groupby('Clean_Del').agg(
         Delivery=('Delivery', 'first'),
         Month=('Month', 'first'),
@@ -243,8 +236,8 @@ def render_billing(df_pick, df_vekp, df_vepo, df_cats, queue_count_col, aus_data
     # Natažení Centrálního Mozku z cache
     voll_set = st.session_state.get('voll_set', set())
     
-    # Volání analýzy v7
-    billing_df = cached_billing_logic_v7(df_pick, df_vekp, df_vepo, df_cats, queue_count_col, voll_set)
+    # Volání analýzy v8
+    billing_df = cached_billing_logic_v8(df_pick, df_vekp, df_vepo, df_cats, queue_count_col, voll_set)
 
     if load_from_db('raw_likp') is None:
         st.warning("⚠️ **Info:** Pro 100% přesné oddělení N a O zakázek doporučujeme v Admin Zóně nahrát LIKP report. Nyní systém pro určení exportu odhaduje data na základě Fronty (Queue).")
