@@ -12,6 +12,7 @@ from modules.utils import t, fast_compute_moves, get_match_key_vectorized, get_m
 from modules.tab_dashboard import render_dashboard
 from modules.tab_pallets import render_pallets
 from modules.tab_fu import render_fu
+from modules.tab_fu_compare import render_fu_compare # PŘIDÁNO
 from modules.tab_top import render_top
 from modules.tab_billing import render_billing
 from modules.tab_packing import render_packing
@@ -237,7 +238,8 @@ def fetch_and_prep_data(use_marm=True):
 
     df_cats = load_from_db('raw_cats')
     if df_cats is not None and not df_cats.empty:
-        df_cats['Lieferung'] = df_cats['Lieferung'].astype(str).str.strip()
+        c_del_cats = next((c for c in df_cats.columns if str(c).strip().lower() in ['lieferung', 'delivery', 'zakázka']), df_cats.columns[0])
+        df_cats['Lieferung'] = df_cats[c_del_cats].astype(str).str.strip()
         if 'Kategorie' in df_cats.columns and 'Art' in df_cats.columns: 
             df_cats['Category_Full'] = df_cats['Kategorie'].astype(str).str.strip() + " " + df_cats['Art'].astype(str).str.strip()
         df_cats = df_cats.drop_duplicates('Lieferung')
@@ -275,13 +277,14 @@ def main():
             options=[
                 _t("Přehled a Fronty", "Dashboard & Queue"), 
                 _t("Paletové zakázky", "Pallet Orders"), 
-                _t("Celé palety (FU)", "Full Pallets (FU)"), 
+                _t("Celé palety (FU)", "Full Pallets (FU)"),
+                _t("Porovnání (FU vs SAP)", "Compare (FU vs SAP)"), # ZDE JE PŘIDANÁ ZÁLOŽKA
                 _t("Materiály (TOP)", "Top Materials"), 
                 _t("Fakturace", "Billing"), 
                 _t("Balení (Packing)", "Packing"), 
                 _t("Audit & Rentgen", "Audit & X-Ray")
             ],
-            icons=["bar-chart-line", "box-seam", "boxes", "list-ol", "currency-dollar", "box", "clipboard2-check"],
+            icons=["bar-chart-line", "box-seam", "boxes", "arrow-left-right", "list-ol", "currency-dollar", "box", "clipboard2-check"],
             menu_icon="cast", 
             default_index=0,
             styles={
@@ -427,6 +430,8 @@ def main():
         render_pallets(df_pick)
     elif selected_page == _t("Celé palety (FU)", "Full Pallets (FU)"): 
         render_fu(df_pick, data_dict['queue_count_col'])
+    elif selected_page == _t("Porovnání (FU vs SAP)", "Compare (FU vs SAP)"): # NAČTENÍ NOVÉ ZÁLOŽKY
+        render_fu_compare(df_pick, st.session_state.get('billing_df'), st.session_state.get('voll_set'), data_dict['queue_count_col'])
     elif selected_page == _t("Materiály (TOP)", "Top Materials"): 
         render_top(df_pick)
     elif selected_page == _t("Fakturace", "Billing"): 
