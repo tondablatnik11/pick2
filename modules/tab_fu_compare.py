@@ -1,5 +1,6 @@
 import streamlit as st
 import pandas as pd
+import plotly.graph_objects as go
 from modules.utils import t, safe_hu, safe_del
 
 try:
@@ -17,12 +18,12 @@ def render_fu_compare(df_pick, billing_df, voll_set, queue_count_col):
         st.warning(_t("⚠️ Nejdříve navštivte záložku **Fakturace**, aby se provedly výpočty.", "⚠️ Please visit the **Billing** tab first to perform calculations."))
         return
 
+    # --- PŘÍPRAVA DAT PRO HORNÍ METRIKY (Filtrovaná data) ---
     df_p = df_pick.copy()
     df_p['Clean_Del'] = df_p['Delivery'].apply(safe_del)
     df_p['Source_HU'] = df_p['Source storage unit'].apply(safe_hu)
     df_p['Dest_HU'] = df_p['Handling Unit'].apply(safe_hu)
 
-    # Identifikace KLT obalů
     c_su = 'Storage Unit Type' if 'Storage Unit Type' in df_p.columns else ('Type' if 'Type' in df_p.columns else None)
     if c_su:
         df_p['Is_KLT'] = df_p[c_su].astype(str).str.upper().isin(['K1', 'K2', 'K3', 'K4', 'KLT', 'KLT1', 'KLT2'])
@@ -33,7 +34,6 @@ def render_fu_compare(df_pick, billing_df, voll_set, queue_count_col):
     df_p['Is_FU'] = (df_p['Queue_UPPER'] == 'PI_PL_FU') & (~df_p['Is_KLT'])
     df_p['Is_FUOE'] = (df_p['Queue_UPPER'] == 'PI_PL_FUOE') & (~df_p['Is_KLT'])
     df_p['Is_FU_Any'] = df_p['Is_FU'] | df_p['Is_FUOE']
-    
     df_p['Is_Untouched'] = (df_p['Source_HU'] == df_p['Dest_HU']) & (df_p['Source_HU'] != '')
 
     def check_voll(row):
@@ -61,14 +61,13 @@ def render_fu_compare(df_pick, billing_df, voll_set, queue_count_col):
     fuoe_tasks = to_agg[(to_agg['Queue_UPPER'] == 'PI_PL_FUOE') & (to_agg['Is_FU_Any'])].shape[0]
     fuoe_untouched = to_agg[(to_agg['Queue_UPPER'] == 'PI_PL_FUOE') & (to_agg['Is_FU_Any']) & (to_agg['Is_Untouched'])].shape[0]
 
-    # --- FILTRACE DLE MĚSÍCE (Zajišťuje, že porovnání přesně odpovídá pick reportu) ---
     valid_dels = set(df_p['Clean_Del'].dropna().unique())
     billing_df_filtered = billing_df[billing_df['Clean_Del'].isin(valid_dels)]
     
     billed_n_voll = billing_df_filtered[billing_df_filtered['Category_Full'] == 'N Vollpalette']['pocet_hu'].sum()
     billed_o_voll = billing_df_filtered[billing_df_filtered['Category_Full'].isin(['O Vollpalette', 'OE Vollpalette'])]['pocet_hu'].sum()
 
-    st.markdown("### 📊 Souhrnná čísla ze Skeneru a Fakturace")
+    st.markdown("### 📊 Souhrnná čísla pro vybrané období")
     c1, c2, c3 = st.columns(3)
     with c1:
         st.metric(_t("PI_PL_FU (Celkem úkolů na skeneru)", "PI_PL_FU (Total Scanner Tasks)"), int(fu_tasks))
@@ -81,7 +80,98 @@ def render_fu_compare(df_pick, billing_df, voll_set, queue_count_col):
         st.metric(_t("Fakturace: O/OE Vollpalette", "Billing: O/OE Vollpalette"), int(billed_o_voll))
 
     st.divider()
-    st.markdown(f"### 🌉 {_t('Kde vznikají rozdíly? (Rozpad kategorií)', 'Where do differences come from? (Category Breakdown)')}")
+
+    # =========================================================
+    # VÝPOČET GRAFU PRO VŠECHNY MĚSÍCE (Sáhnutí do raw paměti)
+    # =========================================================
+    df_full = st.session_state.get('data_dict', {}).get('df_pick', df_pick).copy()
+    if 'Month' not in df_full.columns:
+        df_full['Date'] = pd.to_datetime(df_full.get('Confirmation date', df_full.get('Confirmation Date')), errors='coerce')
+        df_full['Month'] = df_full['Date'].dt.to_period('M').astype(str).replace('NaT', 'Neznámé')
+
+    df_full['Clean_Del'] = df_full['Delivery'].apply(safe_del)
+    df_full['Source_HU'] = df_full['Source storage unit'].apply(safe_hu)
+    df_full['Dest_HU'] = df_full['Handling Unit'].apply(safe_hu)
+
+    c_su_f = 'Storage Unit Type' if 'Storage Unit Type' in df_full.columns else ('Type' if 'Type' in df_full.columns else None)
+    if c_su_f: df_full['Is_KLT'] = df_full[c_su_f].astype(str).str.upper().isin(['K1', 'K2', 'K3', 'K4', 'KLT', 'KLT1', 'KLT2'])
+    else: df_full['Is_KLT'] = False
+
+    df_full['Queue_UPPER'] = df_full['Queue'].astype(str).str.upper()
+    df_full['Is_FU'] = (df_full['Queue_UPPER'] == 'PI_PL_FU') & (~df_full['Is_KLT'])
+    df_full['Is_FUOE'] = (df_full['Queue_UPPER'] == 'PI_PL_FUOE') & (~df_full['Is_KLT'])
+    df_full['Is_FU_Any'] = df_full['Is_FU'] | df_full['Is_FUOE']
+    df_full['Is_Untouched'] = (df_full['Source_HU'] == df_full['Dest_HU']) & (df_full['Source_HU'] != '')
+    df_full['Is_Voll_Billed'] = df_full.apply(check_voll, axis=1)
+
+    to_agg_full = df_full.groupby(queue_count_col).agg(
+        Delivery=('Clean_Del', 'first'),
+        Queue_UPPER=('Queue_UPPER', 'first'),
+        Month=('Month', 'first'),
+        Is_FU_Any=('Is_FU_Any', 'max'),
+        Is_Untouched=('Is_Untouched', 'min'),
+        Is_Voll_Billed=('Is_Voll_Billed', 'max')
+    ).reset_index()
+
+    months = sorted([m for m in to_agg_full['Month'].unique() if m != 'Neznámé'])
+    chart_data = []
+
+    for m in months:
+        m_df = to_agg_full[to_agg_full['Month'] == m]
+        valid_dels_m = set(m_df['Delivery'].unique())
+        
+        # Billing pro daný měsíc přesně tak jak odjel na skeneru
+        m_bill = billing_df[billing_df['Clean_Del'].isin(valid_dels_m)]
+        
+        chart_data.append({
+            'Month': m,
+            'FU_Tasks': m_df[(m_df['Queue_UPPER'] == 'PI_PL_FU') & (m_df['Is_FU_Any'])].shape[0],
+            'FU_Untouched': m_df[(m_df['Queue_UPPER'] == 'PI_PL_FU') & (m_df['Is_FU_Any']) & (m_df['Is_Untouched'])].shape[0],
+            'Billed_N': m_bill[m_bill['Category_Full'] == 'N Vollpalette']['pocet_hu'].sum(),
+            
+            'FUOE_Tasks': m_df[(m_df['Queue_UPPER'] == 'PI_PL_FUOE') & (m_df['Is_FU_Any'])].shape[0],
+            'FUOE_Untouched': m_df[(m_df['Queue_UPPER'] == 'PI_PL_FUOE') & (m_df['Is_FU_Any']) & (m_df['Is_Untouched'])].shape[0],
+            'Billed_O': m_bill[m_bill['Category_Full'].isin(['O Vollpalette', 'OE Vollpalette'])]['pocet_hu'].sum(),
+            
+            'Ideal': m_df[(m_df['Is_FU_Any']) & (m_df['Is_Untouched']) & (m_df['Is_Voll_Billed'])].shape[0],
+            'Lost': m_df[(m_df['Is_FU_Any']) & (~m_df['Is_Voll_Billed'])].shape[0]
+        })
+
+    df_chart = pd.DataFrame(chart_data)
+
+    if not df_chart.empty:
+        st.markdown(f"### 📈 {_t('Trend v čase (Všechny měsíce)', 'Trend Over Time (All Months)')}")
+        fig = go.Figure()
+        
+        # PI_PL_FU (Tuzemsko)
+        fig.add_trace(go.Scatter(x=df_chart['Month'], y=df_chart['FU_Tasks'], name='PI_PL_FU (Celkem úkolů na skeneru)', mode='lines+markers', line=dict(color='#3b82f6')))
+        fig.add_trace(go.Scatter(x=df_chart['Month'], y=df_chart['FU_Untouched'], name='PI_PL_FU (Nepřebalováno)', mode='lines+markers', line=dict(color='#93c5fd', dash='dash')))
+        fig.add_trace(go.Scatter(x=df_chart['Month'], y=df_chart['Billed_N'], name='Fakturace: N Vollpalette', mode='lines+markers', line=dict(color='#10b981', width=3)))
+        
+        # PI_PL_FUOE (Export)
+        fig.add_trace(go.Scatter(x=df_chart['Month'], y=df_chart['FUOE_Tasks'], name='PI_PL_FUOE (Celkem úkolů na skeneru)', mode='lines+markers', line=dict(color='#f97316')))
+        fig.add_trace(go.Scatter(x=df_chart['Month'], y=df_chart['FUOE_Untouched'], name='PI_PL_FUOE (Nepřebalováno)', mode='lines+markers', line=dict(color='#fdba74', dash='dash')))
+        fig.add_trace(go.Scatter(x=df_chart['Month'], y=df_chart['Billed_O'], name='Fakturace: O/OE Vollpalette', mode='lines+markers', line=dict(color='#eab308', width=3)))
+        
+        # Ideální & Ztracené
+        fig.add_trace(go.Scatter(x=df_chart['Month'], y=df_chart['Ideal'], name='Ideální palety', mode='lines+markers', line=dict(color='#8b5cf6', width=2)))
+        fig.add_trace(go.Scatter(x=df_chart['Month'], y=df_chart['Lost'], name='Ztracené palety', mode='lines+markers', line=dict(color='#ef4444', width=2)))
+        
+        fig.update_layout(
+            plot_bgcolor="rgba(0,0,0,0)",
+            paper_bgcolor="rgba(0,0,0,0)",
+            legend=dict(orientation="h", yanchor="top", y=-0.2, xanchor="center", x=0.5),
+            margin=dict(l=0, r=0, t=10, b=0),
+            hovermode="x unified"
+        )
+        st.plotly_chart(fig, use_container_width=True)
+
+    st.divider()
+
+    # =========================================================
+    # ROZPAD KATEGORIÍ (Filtrováno dle měsíce)
+    # =========================================================
+    st.markdown(f"### 🌉 {_t('Kde vznikají rozdíly? (Rozpad kategorií pro vybrané období)', 'Where do differences come from? (Category Breakdown)')}")
 
     cat_a = to_agg[(to_agg['Is_FU_Any']) & (to_agg['Is_Untouched']) & (to_agg['Is_Voll_Billed'])].copy()
     cat_b = to_agg[(to_agg['Is_FU_Any']) & (~to_agg['Is_Untouched']) & (to_agg['Is_Voll_Billed'])].copy()
@@ -109,10 +199,10 @@ def render_fu_compare(df_pick, billing_df, voll_set, queue_count_col):
         st.markdown(_t("Ideální proces: Skladník dostal úkol jít pro celou paletu, potvrdil původní štítek a v SAPu to bezpečně prošlo fakturací jako Vollpalette.", "Ideal process: Worker picked a full pallet, kept the label, and it was billed successfully."))
         col1, col2 = st.columns(2)
         with col1:
-            st.markdown("#### PI_PL_FU ")
+            st.markdown("#### PI_PL_FU (Tuzemsko)")
             st.dataframe(cat_a[cat_a['Queue_UPPER'] == 'PI_PL_FU'].drop(columns=cols_to_drop, errors='ignore'), use_container_width=True, hide_index=True)
         with col2:
-            st.markdown("#### PI_PL_FUOE ")
+            st.markdown("#### PI_PL_FUOE (Export)")
             st.dataframe(cat_a[cat_a['Queue_UPPER'] == 'PI_PL_FUOE'].drop(columns=cols_to_drop, errors='ignore'), use_container_width=True, hide_index=True)
 
     with t2:
