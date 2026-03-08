@@ -130,3 +130,87 @@ def fast_compute_moves(qty_list, queue_list, su_list, box_list, w_list, d_list, 
             
         res_total.append(pb + pok + pmiss); res_exact.append(pb + pok); res_miss.append(pmiss)
     return res_total, res_exact, res_miss
+
+
+# ==========================================
+# NOVÝ CENTRÁLNÍ MOZEK PRO DETEKCI VOLLPALET
+# ==========================================
+
+def safe_hu(val):
+    """Základní ošetření čísla, ZÁKAZ lstrip('0') dle pravidel analýzy."""
+    v = str(val).strip()
+    if v.lower() in ['nan', 'none', '']: return ''
+    if v.endswith('.0'): v = v[:-2]
+    return v
+
+def safe_del(val):
+    """Delivery číslo může mít umazané nuly, protože to je jiný typ datového objektu."""
+    v = str(val).strip()
+    if v.lower() in ['nan', 'none', '']: return ''
+    if v.endswith('.0'): v = v[:-2]
+    return v.lstrip('0')
+
+def is_box(v):
+    """Zakázané obaly (Pravidlo 2 & 5)"""
+    v = str(v).upper().strip()
+    if v == 'CARTON-16': return False # VIP Výjimka
+    if v in ['K1','K2','K3','K4','KLT','KLT1','KLT2']: return True
+    if v.startswith('K') and len(v) <= 2: return True
+    if 'CARTON' in v or 'BOX' in v or v in ['CT', 'CD3', 'CD', 'CR']: return True
+    return False
+
+def detect_vollpalettes(df_pick, df_vekp, df_vepo):
+    """
+    Hledá Vollpalety na základě striktních 6 pravidel z forenzní analýzy.
+    Vrací set s tuplem (Delivery, External_HU_Number)
+    """
+    voll_set = set()
+    if any(df is None or df.empty for df in [df_pick, df_vekp, df_vepo]):
+        return voll_set
+        
+    # Pravidlo 5: VEPO - Získáme všechny interní HU, které fyzicky obsahují materiál
+    vepo_hu_col = next((c for c in df_vepo.columns if "Internal HU" in str(c) or "HU-Nummer intern" in str(c)), df_vepo.columns[0])
+    valid_vepo_hus = set(df_vepo[vepo_hu_col].dropna().apply(safe_hu))
+    
+    # Pravidlo 4: VEKP - Najdeme všechny "Root" HU (nemají nadřazený obal)
+    vekp_hu_col = next((c for c in df_vekp.columns if "Internal HU" in str(c) or "HU-Nummer intern" in str(c)), df_vekp.columns[0])
+    vekp_ext_col = df_vekp.columns[1]
+    parent_col = next((c for c in df_vekp.columns if "higher-level" in str(c).lower() or "übergeordn" in str(c).lower() or "superordinate" in str(c).lower()), None)
+    c_gen = next((c for c in df_vekp.columns if "Generated delivery" in str(c) or "generierte" in str(c).lower()), None)
+    c_pm = next((c for c in df_vekp.columns if "Packmittel" in str(c) or "Packaging" in str(c) or "Pack. mat" in str(c)), None)
+    
+    valid_roots = {}
+    for _, r in df_vekp.iterrows():
+        deliv = safe_del(r[c_gen]) if c_gen else ""
+        parent = safe_hu(r[parent_col]) if parent_col else ""
+        pm = str(r.get(c_pm, '')).upper().strip() if c_pm else ""
+        
+        if parent == "" and not is_box(pm):
+            ext_hu = safe_hu(r[vekp_ext_col])
+            int_hu = safe_hu(r[vekp_hu_col])
+            if int_hu in valid_vepo_hus:
+                valid_roots[(deliv, ext_hu)] = int_hu
+                
+    # Pick Report
+    c_su = 'Storage Unit Type' if 'Storage Unit Type' in df_pick.columns else ('Type' if 'Type' in df_pick.columns else None)
+    
+    for _, r in df_pick.iterrows():
+        if str(r.get('Removal of total SU', '')).strip().upper() != 'X': continue # Pravidlo 1
+        
+        su_type = str(r.get(c_su, '')) if c_su else ''
+        if is_box(su_type): continue # Pravidlo 2
+        
+        if 'PI_PA' in str(r.get('Queue', '')).upper(): continue # Ochrana Parcel front
+        
+        ssu = safe_hu(r.get('Source storage unit', ''))
+        hu = safe_hu(r.get('Handling Unit', ''))
+        if ssu == '' or hu == '': continue
+        if ssu != hu: continue # Pravidlo 3: SSU == HU
+        
+        deliv = safe_del(r.get('Delivery', ''))
+        
+        # Pravidlo 6: Ext. číslo palety a číslo zakázky se musí shodovat s ověřenou Root paletou z VEKP
+        if (deliv, ssu) in valid_roots:
+            voll_set.add((deliv, ssu))
+            
+    return voll_set
