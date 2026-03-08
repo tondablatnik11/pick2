@@ -7,7 +7,8 @@ import re
 from streamlit_option_menu import option_menu
 
 from database import save_to_db, load_from_db
-from modules.utils import t, fast_compute_moves, get_match_key_vectorized, get_match_key, parse_packing_time, BOX_UNITS
+# PŘIDANÉ IMPORTY PRO CENTRÁLNÍ MOZEK
+from modules.utils import t, fast_compute_moves, get_match_key_vectorized, get_match_key, parse_packing_time, BOX_UNITS, detect_vollpalettes, safe_hu, safe_del
 
 from modules.tab_dashboard import render_dashboard
 from modules.tab_pallets import render_pallets
@@ -193,10 +194,14 @@ def fetch_and_prep_data(use_marm=True):
     df_pick['Piece_Weight_KG'] = df_pick['Match_Key'].map(weight_dict).fillna(0.0)
     df_pick['Piece_Max_Dim_CM'] = df_pick['Match_Key'].map(dim_dict).fillna(0.0)
 
-    auto_voll_hus = set()
-    mask_x = df_pick['Removal of total SU'] == 'X'
-    if 'Handling Unit' in df_pick.columns: auto_voll_hus.update(df_pick.loc[mask_x, 'Handling Unit'].dropna().astype(str).str.strip())
-    auto_voll_hus = {h for h in auto_voll_hus if h not in ["", "nan", "None"]}
+    # -------------------------------------------------------------
+    # ZRUŠENÝ STARÝ VÝPOČET AUTO_VOLL_HUS - NYNÍ PŘEBÍRÁ CENTRÁLNÍ MOZEK
+    # -------------------------------------------------------------
+    df_vekp_raw = load_from_db('raw_vekp')
+    df_vepo_raw = load_from_db('raw_vepo')
+    
+    # NOVÉ: Jednorázový přesný výpočet Vollpalet
+    voll_set = detect_vollpalettes(df_pick, df_vekp_raw, df_vepo_raw)
 
     df_oe = load_from_db('raw_oe')
     if df_oe is not None and not df_oe.empty:
@@ -238,11 +243,17 @@ def fetch_and_prep_data(use_marm=True):
         if 'Kategorie' in df_cats.columns and 'Art' in df_cats.columns: df_cats['Category_Full'] = df_cats['Kategorie'].astype(str).str.strip() + " " + df_cats['Art'].astype(str).str.strip()
         df_cats = df_cats.drop_duplicates('Lieferung')
 
+    aus_data = {}
+    for sheet in ["LIKP", "SDSHP_AM2", "T031", "VEKP", "VEPO", "LIPS", "T023"]:
+        aus_df = load_from_db(f'aus_{sheet.lower()}')
+        if aus_df is not None: aus_data[sheet] = aus_df
+
     return {
-        'df_pick': df_pick, 'queue_count_col': queue_count_col, 'auto_voll_hus': auto_voll_hus,
-        'df_vekp': load_from_db('raw_vekp'), 'df_vepo': load_from_db('raw_vepo'),
-        'df_cats': df_cats, 'df_oe': df_oe, 'num_removed_admins': num_removed_admins, 
-        'manual_boxes': manual_boxes, 'weight_dict': weight_dict, 'dim_dict': dim_dict, 'box_dict': box_dict
+        'df_pick': df_pick, 'queue_count_col': queue_count_col, 'voll_set': voll_set,
+        'df_vekp': df_vekp_raw, 'df_vepo': df_vepo_raw,
+        'df_cats': df_cats, 'df_oe': df_oe, 'aus_data': aus_data,
+        'num_removed_admins': num_removed_admins, 'manual_boxes': manual_boxes,
+        'weight_dict': weight_dict, 'dim_dict': dim_dict, 'box_dict': box_dict
     }
 
 
@@ -305,6 +316,13 @@ def main():
                         for file in uploaded_files:
                             try:
                                 fname = file.name.lower()
+                                if fname.endswith('.xlsx') and 'auswertung' in fname:
+                                    aus_xl = pd.ExcelFile(file)
+                                    for sn in aus_xl.sheet_names: 
+                                        save_to_db(aus_xl.parse(sn, dtype=str), f"aus_{sn.lower()}")
+                                    st.success(f"✅ {_t('Uloženo', 'Saved')} (Auswertung): {file.name}")
+                                    continue
+
                                 temp_df = pd.read_csv(file, dtype=str, sep=None, engine='python') if fname.endswith('.csv') else pd.read_excel(file, dtype=str)
                                 temp_df.columns = temp_df.columns.str.strip()
                                 cols = temp_df.columns.tolist()
@@ -329,7 +347,6 @@ def main():
                                     save_to_db(temp_df, 'raw_queue')
                                     st.success(f"✅ {_t('Uloženo jako Queue', 'Saved as Queue')}: {file.name}")
                                     
-                                # ROZPOZNÁNÍ LIKP SOUBORU PRO ROZDĚLENÍ O a N ZAKÁZEK
                                 elif 'likp' in fname or any('SHIPPING POINT' in c for c in cols_up) or any('VERSANDSTELLE' in c for c in cols_up):
                                     save_to_db(temp_df, 'raw_likp')
                                     st.success(f"✅ {_t('Uloženo jako LIKP Report (O vs N)', 'Saved as LIKP Report')}: {file.name}")
@@ -388,7 +405,8 @@ def main():
                 st.warning(_t("⚠️ Po vyloučení těchto materiálů nezbyla v Pick reportu žádná data.", "⚠️ No data left after excluding these materials."))
                 st.stop()
 
-    st.session_state['auto_voll_hus'] = data_dict['auto_voll_hus']
+    # ULOŽENÍ MOZKU DO SESSION STATE PRO VŠECHNY ZÁLOŽKY
+    st.session_state['voll_set'] = data_dict['voll_set']
 
     df_pick['Month'] = df_pick['Date'].dt.to_period('M').astype(str).replace('NaT', _t('Neznámé', 'Unknown'))
     st.sidebar.divider()
