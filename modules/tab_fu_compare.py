@@ -143,12 +143,12 @@ def render_fu_compare(df_pick, billing_df, voll_set, queue_count_col):
         st.markdown(f"### 📈 {_t('Trend v čase (Všechny měsíce)', 'Trend Over Time (All Months)')}")
         fig = go.Figure()
         
-        # PI_PL_FU (Tuzemsko)
+        # PI_PL_FU 
         fig.add_trace(go.Scatter(x=df_chart['Month'], y=df_chart['FU_Tasks'], name='PI_PL_FU (Celkem úkolů na skeneru)', mode='lines+markers', line=dict(color='#3b82f6')))
         fig.add_trace(go.Scatter(x=df_chart['Month'], y=df_chart['FU_Untouched'], name='PI_PL_FU (Nepřebalováno)', mode='lines+markers', line=dict(color='#93c5fd', dash='dash')))
         fig.add_trace(go.Scatter(x=df_chart['Month'], y=df_chart['Billed_N'], name='Fakturace: N Vollpalette', mode='lines+markers', line=dict(color='#10b981', width=3)))
         
-        # PI_PL_FUOE (Export)
+        # PI_PL_FUOE 
         fig.add_trace(go.Scatter(x=df_chart['Month'], y=df_chart['FUOE_Tasks'], name='PI_PL_FUOE (Celkem úkolů na skeneru)', mode='lines+markers', line=dict(color='#f97316')))
         fig.add_trace(go.Scatter(x=df_chart['Month'], y=df_chart['FUOE_Untouched'], name='PI_PL_FUOE (Nepřebalováno)', mode='lines+markers', line=dict(color='#fdba74', dash='dash')))
         fig.add_trace(go.Scatter(x=df_chart['Month'], y=df_chart['Billed_O'], name='Fakturace: O/OE Vollpalette', mode='lines+markers', line=dict(color='#eab308', width=3)))
@@ -199,30 +199,30 @@ def render_fu_compare(df_pick, billing_df, voll_set, queue_count_col):
         st.markdown(_t("Ideální proces: Skladník dostal úkol jít pro celou paletu, potvrdil původní štítek a v SAPu to bezpečně prošlo fakturací jako Vollpalette.", "Ideal process: Worker picked a full pallet, kept the label, and it was billed successfully."))
         col1, col2 = st.columns(2)
         with col1:
-            st.markdown("#### PI_PL_FU (Tuzemsko)")
+            st.markdown("#### PI_PL_FU ")
             st.dataframe(cat_a[cat_a['Queue_UPPER'] == 'PI_PL_FU'].drop(columns=cols_to_drop, errors='ignore'), use_container_width=True, hide_index=True)
         with col2:
-            st.markdown("#### PI_PL_FUOE (Export)")
+            st.markdown("#### PI_PL_FUOE")
             st.dataframe(cat_a[cat_a['Queue_UPPER'] == 'PI_PL_FUOE'].drop(columns=cols_to_drop, errors='ignore'), use_container_width=True, hide_index=True)
 
     with t2:
         st.markdown(_t("Skladník vytvořil u balení nové číslo palety (Dest HU se neshoduje se Source HU). Záložka 'Celé palety' by si myslela, že je to přebalené. **Fakturační mozek ale ve VEKP zjistil, že se obsah nezměnil a zachránil ji!**", "Worker relabeled the pallet. Basic tracking thinks it was unpacked, but the Billing engine confirmed unchanged content and saved it!"))
         col1, col2 = st.columns(2)
         with col1:
-            st.markdown("#### PI_PL_FU (Tuzemsko)")
+            st.markdown("#### PI_PL_FU ")
             st.dataframe(cat_b[cat_b['Queue_UPPER'] == 'PI_PL_FU'].drop(columns=cols_to_drop, errors='ignore'), use_container_width=True, hide_index=True)
         with col2:
-            st.markdown("#### PI_PL_FUOE (Export)")
+            st.markdown("#### PI_PL_FUOE")
             st.dataframe(cat_b[cat_b['Queue_UPPER'] == 'PI_PL_FUOE'].drop(columns=cols_to_drop, errors='ignore'), use_container_width=True, hide_index=True)
 
     with t3:
         st.markdown(_t("Skener hlásil **PI_PL_FU / PI_PL_FUOE**, ale v systému VEKP chybí jako Vollpalette. Důvody: Zakázka byla stornována, odjela v jiný den, nebo ji balírna fyzicky rozbalila a smíchala s něčím jiným.", "Scanner reported FU, but it is missing in VEKP as Vollpalette. Cancelled, moved to another day, or physically unpacked."))
         col1, col2 = st.columns(2)
         with col1:
-            st.markdown("#### PI_PL_FU (Tuzemsko)")
+            st.markdown("#### PI_PL_FU ")
             st.dataframe(cat_c[cat_c['Queue_UPPER'] == 'PI_PL_FU'].drop(columns=cols_to_drop, errors='ignore'), use_container_width=True, hide_index=True)
         with col2:
-            st.markdown("#### PI_PL_FUOE (Export)")
+            st.markdown("#### PI_PL_FUOE ")
             st.dataframe(cat_c[cat_c['Queue_UPPER'] == 'PI_PL_FUOE'].drop(columns=cols_to_drop, errors='ignore'), use_container_width=True, hide_index=True)
 
     with t4:
