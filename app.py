@@ -13,7 +13,7 @@ from modules.tab_dashboard import render_dashboard
 from modules.tab_pallets import render_pallets
 from modules.tab_fu import render_fu
 from modules.tab_top import render_top
-from modules.tab_billing import render_billing, cached_billing_logic_v26 # IMPORTUJE NOVOU BEZPEČNOU VERZI V26
+from modules.tab_billing import render_billing, cached_billing_logic_v27  # OPRAVA: v27 místo v26
 from modules.tab_packing import render_packing
 from modules.tab_audit import render_audit
 
@@ -293,28 +293,31 @@ def main():
                 my_bar.progress(55, text="⚙️ Fáze 2/4: Rekonstrukce stromových struktur obalů a detekce Vollpalet... (55%)")
                 
                 # ------ OPRAVA KEY ERRORU --------
-                # Před samotnou Fakturací musíme provést nanečisto "Výpočet pohybů rukou" (fast_compute_moves), 
-                # aby aplikace nevyhodila KeyError, když se je v dalším kroku pokusí sečíst.
                 df_pick_pre = data_dict['df_pick'].copy()
                 tt, te, tm = fast_compute_moves(
                     df_pick_pre['Qty'].values, df_pick_pre['Queue'].values, 
                     df_pick_pre['Removal of total SU'].values, df_pick_pre['Box_Sizes_List'].values, 
                     df_pick_pre['Piece_Weight_KG'].values, df_pick_pre['Piece_Max_Dim_CM'].values, 
-                    2.0, 15.0, 1 # Standardní výchozí parametry
+                    2.0, 15.0, 1
                 )
                 df_pick_pre['Pohyby_Rukou'] = tt
                 # ---------------------------------
                 
                 my_bar.progress(80, text="🧠 Fáze 3/4: Aplikuji komplexní byznys logiku (T031, KEP Override, SSCC pravidla)... (80%)")
                 
-                # Voláme novou, bezpečnou verzi v26
-                billing_df, df_hu_details = cached_billing_logic_v26(
+                # =============================================
+                # OPRAVA: Načtení LIKP PŘED voláním cache funkce
+                # =============================================
+                df_likp_pre = load_from_db('raw_likp')
+                
+                billing_df, df_hu_details = cached_billing_logic_v27(
                     df_pick_pre, 
                     data_dict['df_vekp'], 
                     data_dict['df_vepo'], 
                     data_dict['df_cats'], 
                     data_dict['queue_count_col'], 
-                    data_dict['voll_set']
+                    data_dict['voll_set'],
+                    df_likp_pre  # NOVÝ PARAMETR — žádné load_from_db uvnitř cache!
                 )
                 st.session_state['billing_df'] = billing_df
                 st.session_state['debug_hu_details'] = df_hu_details
@@ -450,7 +453,6 @@ def main():
                                 st.error(f"❌ {_t('Chyba u souboru', 'Error processing file')} {file.name}: {e}")
                                 
                         st.cache_data.clear()
-                        # Zresetuje paměť aplikace, aby se znovu spustil pre-loader s novými daty!
                         if 'app_loaded' in st.session_state:
                             del st.session_state['app_loaded']
                         time.sleep(2.0)
@@ -493,7 +495,6 @@ def main():
     elif selected_page == _t("Materiály (TOP)", "Top Materials"): 
         render_top(df_pick)
     elif selected_page == _t("Fakturace", "Billing"): 
-        # Zde už jen zavoláme renderovací funkci a podstrčíme jí předem vypočtená data
         render_billing(df_pick, data_dict['df_vekp'], data_dict['df_vepo'], data_dict['df_cats'], data_dict['queue_count_col'])
     elif selected_page == _t("Balení (Packing)", "Packing"): 
         render_packing(st.session_state.get('billing_df', pd.DataFrame()), data_dict['df_oe'])
