@@ -11,7 +11,7 @@ except AttributeError:
 def render_fu_compare(df_pick, billing_df, voll_set, queue_count_col):
     def _t(cs, en): return en if st.session_state.get('lang', 'cs') == 'en' else cs
 
-    st.markdown(f"<div class='section-header'><h3>⚖️ {_t('Detailní porovnání: Fyzický proces (Skener) vs Fakturace (SAP)', 'Detailed Comparison: Physical Process vs Billing')}</h3><p>{_t('Tato záložka podrobně vysvětluje, proč nesedí čísla ze skeneru (fronty PI_PL_FU) s konečnou fakturací, a jak Fakturační mozek zachraňuje přelepené palety.', 'This tab explains the differences between Scanner Data and Billing Data, and how the algorithm saves relabeled pallets.')}</p></div>", unsafe_allow_html=True)
+    st.markdown(f"<div class='section-header'><h3>⚖️ {_t('Detailní porovnání: Fyzický proces (Skener) vs Fakturace (SAP)', 'Detailed Comparison: Physical Process vs Billing')}</h3><p>{_t('Tato záložka podrobně vysvětluje, proč nesedí čísla ze skeneru (fronty PI_PL_FU a PI_PL_FUOE) s konečnou fakturací, a jak Fakturační mozek zachraňuje přelepené palety.', 'This tab explains the differences between Scanner Data and Billing Data, and how the algorithm saves relabeled pallets.')}</p></div>", unsafe_allow_html=True)
 
     if billing_df is None or billing_df.empty or not voll_set:
         st.warning(_t("⚠️ Nejdříve navštivte záložku **Fakturace**, aby se provedly výpočty.", "⚠️ Please visit the **Billing** tab first to perform calculations."))
@@ -22,8 +22,16 @@ def render_fu_compare(df_pick, billing_df, voll_set, queue_count_col):
     df_p['Source_HU'] = df_p['Source storage unit'].apply(safe_hu)
     df_p['Dest_HU'] = df_p['Handling Unit'].apply(safe_hu)
 
-    # Identifikace podle Skeneru
-    df_p['Is_FU_Queue'] = df_p['Queue'].astype(str).str.upper().isin(['PI_PL_FU', 'PI_PL_FUOE'])
+    # Identifikace KLT obalů, které se nemají počítat jako celé palety
+    c_su = 'Storage Unit Type' if 'Storage Unit Type' in df_p.columns else ('Type' if 'Type' in df_p.columns else None)
+    if c_su:
+        # Přidání filtrace na KLT/K1 (a další podobné menší boxy)
+        df_p['Is_KLT'] = df_p[c_su].astype(str).str.upper().isin(['K1', 'K2', 'K3', 'K4', 'KLT', 'KLT1', 'KLT2'])
+    else:
+        df_p['Is_KLT'] = False
+
+    # Identifikace podle Skeneru - zahrnuto PI_PL_FUOE a odebrány KLT
+    df_p['Is_FU_Queue'] = df_p['Queue'].astype(str).str.upper().isin(['PI_PL_FU', 'PI_PL_FUOE']) & (~df_p['Is_KLT'])
     df_p['Is_Untouched'] = (df_p['Source_HU'] == df_p['Dest_HU']) & (df_p['Source_HU'] != '')
 
     # Identifikace podle Fakturace (Zda to mozek zařadil do Vollpalet)
@@ -38,6 +46,7 @@ def render_fu_compare(df_pick, billing_df, voll_set, queue_count_col):
     to_agg = df_p.groupby(queue_count_col).agg(
         Delivery=('Clean_Del', 'first'),
         Queue=('Queue', 'first'),
+        Storage_Unit_Type=(c_su, 'first') if c_su else ('Queue', 'first'),
         Is_FU_Queue=('Is_FU_Queue', 'max'),
         Is_Untouched=('Is_Untouched', 'min'),
         Is_Voll_Billed=('Is_Voll_Billed', 'max'),
@@ -54,7 +63,7 @@ def render_fu_compare(df_pick, billing_df, voll_set, queue_count_col):
 
     c1, c2, c3 = st.columns(3)
     with c1:
-        st.metric(_t("1. Skener: Úkoly PI_PL_FU", "1. Scanner: PI_PL_FU Tasks"), int(fu_scanner), help=_t("Skladník dostal úkol 'běž pro celou paletu'.", "Worker got task to pick full pallet."))
+        st.metric(_t("1. Skener: Úkoly FU / FUOE", "1. Scanner: FU / FUOE Tasks"), int(fu_scanner), help=_t("Skladník dostal úkol 'běž pro celou paletu' (bez KLT/K1).", "Worker got task to pick full pallet (excluding KLT)."))
     with c2:
         st.metric(_t("2. Skener: Nepřebalováno", "2. Scanner: Untouched"), int(fu_untouched), help=_t("Skladník pípnul na chlup stejný štítek.", "Worker scanned exactly the same HU label."))
     with c3:
@@ -69,9 +78,9 @@ def render_fu_compare(df_pick, billing_df, voll_set, queue_count_col):
     cat_d = to_agg[(~to_agg['Is_FU_Queue']) & (to_agg['Is_Voll_Billed'])].copy()
 
     cc1, cc2, cc3, cc4 = st.columns(4)
-    cc1.info(f"**A. {_t('Ideální palety', 'Ideal Pallets')} ({len(cat_a)})**\n\n{_t('Fronta FU + Nepřelepeno + Vyfakturováno.', 'FU Queue + Unchanged + Billed.')}")
-    cc2.success(f"**B. {_t('Zachráněné palety', 'Saved Pallets')} ({len(cat_b)})**\n\n{_t('Fronta FU + PŘELEPENO + Vyfakturováno.', 'FU Queue + RELABELED + Billed.')}")
-    cc3.error(f"**C. {_t('Ztracené palety', 'Lost Pallets')} ({len(cat_c)})**\n\n{_t('Fronta FU + Nevyfakturováno.', 'FU Queue + Not Billed.')}")
+    cc1.info(f"**A. {_t('Ideální palety', 'Ideal Pallets')} ({len(cat_a)})**\n\n{_t('Fronta FU/FUOE + Nepřelepeno + Vyfakturováno.', 'FU/FUOE Queue + Unchanged + Billed.')}")
+    cc2.success(f"**B. {_t('Zachráněné palety', 'Saved Pallets')} ({len(cat_b)})**\n\n{_t('Fronta FU/FUOE + PŘELEPENO + Vyfakturováno.', 'FU/FUOE Queue + RELABELED + Billed.')}")
+    cc3.error(f"**C. {_t('Ztracené palety', 'Lost Pallets')} ({len(cat_c)})**\n\n{_t('Fronta FU/FUOE + Nevyfakturováno.', 'FU/FUOE Queue + Not Billed.')}")
     cc4.warning(f"**D. {_t('Bonusové palety', 'Bonus Pallets')} ({len(cat_d)})**\n\n{_t('Obyčejná fronta + Vyfakturováno.', 'Normal Queue + Billed.')}")
 
     st.divider()
@@ -83,10 +92,10 @@ def render_fu_compare(df_pick, billing_df, voll_set, queue_count_col):
     ])
 
     with t1:
-        st.markdown(_t("Tyto úkoly poslal skener jako **PI_PL_FU**, ale skladník vytvořil nové číslo palety (Dest HU se neshoduje se Source HU). Záložka 'Celé palety' je proto vyřadila. **Ale Fakturační mozek je ve VEKP našel a zachránil je pro fakturaci!**", "These tasks were PI_PL_FU, but the worker created a new HU. The Billing engine found them in VEKP and saved them!"))
+        st.markdown(_t("Tyto úkoly poslal skener jako **PI_PL_FU / PI_PL_FUOE**, ale skladník vytvořil nové číslo palety (Dest HU se neshoduje se Source HU). Záložka 'Celé palety' je proto vyřadila. **Ale Fakturační mozek je ve VEKP našel a zachránil je pro fakturaci!**", "These tasks were PI_PL_FU / PI_PL_FUOE, but the worker created a new HU. The Billing engine found them in VEKP and saved them!"))
         st.dataframe(cat_b, use_container_width=True, hide_index=True)
     with t2:
-        st.markdown(_t("Skener hlásil **PI_PL_FU**, ale v systému VEKP chybí jako Vollpalette. Zakázka byla stornována, odjela v jiný den, nebo ji balírna fyzicky rozbalila.", "Scanner reported PI_PL_FU, but it is missing in VEKP as Vollpalette. Cancelled, moved, or unpacked."))
+        st.markdown(_t("Skener hlásil **PI_PL_FU / PI_PL_FUOE**, ale v systému VEKP chybí jako Vollpalette. Zakázka byla stornována, odjela v jiný den, nebo ji balírna fyzicky rozbalila.", "Scanner reported PI_PL_FU / PI_PL_FUOE, but it is missing in VEKP as Vollpalette. Cancelled, moved, or unpacked."))
         st.dataframe(cat_c, use_container_width=True, hide_index=True)
     with t3:
         st.markdown(_t("Tyto úkoly byly normální pickování (např. **PI_PL**), ale aplikace zjistila, že jste do balení (VEKP) už nic nepřidali a expedovalo se to jako jeden kus. Zákazník to zaplatí jako Vollpaletu.", "These tasks were normal picking (e.g. PI_PL), but the app detected it shipped as one piece. Customer pays for Vollpalette."))
