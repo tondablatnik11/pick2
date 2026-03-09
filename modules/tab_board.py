@@ -22,11 +22,11 @@ def render_board(df_pick, billing_df):
     # ---------------------------------------------------------
     # 1. ŘADA: OBJEM VYCHYSTÁVÁNÍ (PICKY A KUSY)
     # ---------------------------------------------------------
-    st.markdown("### 📦 Celkový objem vychystávání")
+    st.markdown("###  Celkový objem vychystávání")
     c1, c2 = st.columns(2)
     
     with c1:
-        st.markdown("#### 🛒 Počet Picků v měsících")
+        st.markdown("#### Počet picků v měsících")
         # Pokud je k dispozici Transfer Order Number, spočítáme unikátní úkoly, jinak řádky
         if 'Transfer Order Number' in df_pick.columns:
             pick_trend = df_pick.groupby('Month')['Transfer Order Number'].nunique().reset_index(name='Počet Picků')
@@ -40,7 +40,7 @@ def render_board(df_pick, billing_df):
         st.plotly_chart(fig_pick, use_container_width=True)
 
     with c2:
-        st.markdown("#### 🧩 Počet vychystaných Kusů v měsících")
+        st.markdown("#### Počet vypickovaných Kusů v měsících")
         qty_trend = df_pick.groupby('Month')['Qty'].sum().reset_index(name='Počet Kusů')
         
         # Formátování čísel pro lepší čitelnost (např. 100 000 místo 100000)
@@ -57,7 +57,7 @@ def render_board(df_pick, billing_df):
     # ---------------------------------------------------------
     # 2. ŘADA: VÝKON BALÍRNY (ZAKÁZKY A HU)
     # ---------------------------------------------------------
-    st.markdown("### 🎁 Výkon balírny (Vyfakturováno)")
+    st.markdown("###  Balení")
     
     if billing_df is not None and not billing_df.empty:
         # Agregace dat za měsíc (ignorujeme kategorie)
