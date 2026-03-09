@@ -17,6 +17,7 @@ from modules.tab_top import render_top
 from modules.tab_billing import render_billing
 from modules.tab_packing import render_packing
 from modules.tab_audit import render_audit
+from modules.tab_board import render_board
 
 # ==========================================
 # 1. NASTAVENÍ STRÁNKY A UNIVERZÁLNÍ SAAS DESIGN
@@ -283,6 +284,7 @@ def main():
                 _t("Fakturace", "Billing"), 
                 _t("Balení (Packing)", "Packing"), 
                 _t("Audit & Rentgen", "Audit & X-Ray")
+                _t("Nástěnka (Tisk grafů)", "Notice Board (Print)")
             ],
             icons=["bar-chart-line", "box-seam", "boxes", "arrow-left-right", "list-ol", "currency-dollar", "box", "clipboard2-check"],
             menu_icon="cast", 
@@ -441,7 +443,9 @@ def main():
         render_packing(st.session_state.get('billing_df', pd.DataFrame()), data_dict['df_oe'])
     elif selected_page == _t("Audit & Rentgen", "Audit & X-Ray"): 
         render_audit(df_pick, data_dict['df_vekp'], data_dict['df_vepo'], data_dict['df_oe'], data_dict['queue_count_col'], st.session_state.get('billing_df', pd.DataFrame()), data_dict['manual_boxes'], data_dict['weight_dict'], data_dict['dim_dict'], data_dict['box_dict'], limit_vahy, limit_rozmeru, kusy_na_hmat)
-
+    elif selected_page == _t("Nástěnka (Tisk grafů)", "Notice Board (Print)"):  # PŘIDÁNO SEM
+        render_board(df_pick, st.session_state.get('billing_df'))
+        
     st.divider()
     buffer = io.BytesIO()
     with pd.ExcelWriter(buffer, engine='openpyxl') as writer:
