@@ -283,7 +283,7 @@ def main():
                 _t("Materiály (TOP)", "Top Materials"), 
                 _t("Fakturace", "Billing"), 
                 _t("Balení (Packing)", "Packing"), 
-                _t("Audit & Rentgen", "Audit & X-Ray")
+                _t("Audit & Rentgen", "Audit & X-Ray"),
                 _t("Nástěnka (Tisk grafů)", "Notice Board (Print)")
             ],
             icons=["bar-chart-line", "box-seam", "boxes", "arrow-left-right", "list-ol", "currency-dollar", "box", "clipboard2-check"],
