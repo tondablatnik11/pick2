@@ -7,3 +7,5 @@ SQLAlchemy
 plotly
 matplotlib
 streamlit-option-menu
+pyarrow==15.0.0
+supabase==2.3.4
