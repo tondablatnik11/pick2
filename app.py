@@ -12,7 +12,7 @@ from modules.utils import t, fast_compute_moves, get_match_key_vectorized, get_m
 from modules.tab_dashboard import render_dashboard
 from modules.tab_pallets import render_pallets
 from modules.tab_fu import render_fu
-from modules.tab_fu_compare import render_fu_compare # PŘIDÁNO
+from modules.tab_fu_compare import render_fu_compare
 from modules.tab_top import render_top
 from modules.tab_billing import render_billing
 from modules.tab_packing import render_packing
@@ -111,7 +111,8 @@ def _t(cs, en):
 # ==========================================
 # 2. LOGIKA NAČÍTÁNÍ A PŘÍPRAVY DAT
 # ==========================================
-@st.cache_data(show_spinner=False, ttl=3600)
+# ZDE BYLO ODSTRANĚNO ttl=3600, ABY SE UŠETŘILA DATA NA SUPABASE
+@st.cache_data(show_spinner=False)
 def fetch_and_prep_data(use_marm=True):
     df_pick_raw = load_from_db('raw_pick')
     if df_pick_raw is None or df_pick_raw.empty: return None
@@ -279,14 +280,14 @@ def main():
                 _t("Přehled a Fronty", "Dashboard & Queue"), 
                 _t("Paletové zakázky", "Pallet Orders"), 
                 _t("Celé palety (FU)", "Full Pallets (FU)"),
-                _t("Porovnání (FU vs SAP)", "Compare (FU vs SAP)"), # ZDE JE PŘIDANÁ ZÁLOŽKA
+                _t("Porovnání (FU vs SAP)", "Compare (FU vs SAP)"),
                 _t("Materiály (TOP)", "Top Materials"), 
                 _t("Fakturace", "Billing"), 
                 _t("Balení (Packing)", "Packing"), 
                 _t("Audit & Rentgen", "Audit & X-Ray"),
                 _t("Nástěnka (Tisk grafů)", "Notice Board (Print)")
             ],
-            icons=["bar-chart-line", "box-seam", "boxes", "arrow-left-right", "list-ol", "currency-dollar", "box", "clipboard2-check"],
+            icons=["bar-chart-line", "box-seam", "boxes", "arrow-left-right", "list-ol", "currency-dollar", "box", "clipboard2-check", "printer"],
             menu_icon="cast", 
             default_index=0,
             styles={
@@ -432,7 +433,7 @@ def main():
         render_pallets(df_pick)
     elif selected_page == _t("Celé palety (FU)", "Full Pallets (FU)"): 
         render_fu(df_pick, data_dict['queue_count_col'])
-    elif selected_page == _t("Porovnání (FU vs SAP)", "Compare (FU vs SAP)"): # NAČTENÍ NOVÉ ZÁLOŽKY
+    elif selected_page == _t("Porovnání (FU vs SAP)", "Compare (FU vs SAP)"):
         render_fu_compare(df_pick, st.session_state.get('billing_df'), st.session_state.get('voll_set'), data_dict['queue_count_col'])
     elif selected_page == _t("Materiály (TOP)", "Top Materials"): 
         render_top(df_pick)
@@ -443,9 +444,9 @@ def main():
         render_packing(st.session_state.get('billing_df', pd.DataFrame()), data_dict['df_oe'])
     elif selected_page == _t("Audit & Rentgen", "Audit & X-Ray"): 
         render_audit(df_pick, data_dict['df_vekp'], data_dict['df_vepo'], data_dict['df_oe'], data_dict['queue_count_col'], st.session_state.get('billing_df', pd.DataFrame()), data_dict['manual_boxes'], data_dict['weight_dict'], data_dict['dim_dict'], data_dict['box_dict'], limit_vahy, limit_rozmeru, kusy_na_hmat)
-    elif selected_page == _t("Nástěnka (Tisk grafů)", "Notice Board (Print)"):  # PŘIDÁNO SEM
-        render_board(df_pick, st.session_state.get('billing_df'))
-        
+    elif selected_page == _t("Nástěnka (Tisk grafů)", "Notice Board (Print)"):
+        render_board(df_pick, st.session_state.get('billing_df', pd.DataFrame()))
+
     st.divider()
     buffer = io.BytesIO()
     with pd.ExcelWriter(buffer, engine='openpyxl') as writer:
