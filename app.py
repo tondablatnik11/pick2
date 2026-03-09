@@ -111,7 +111,6 @@ def _t(cs, en):
 # ==========================================
 # 2. LOGIKA NAČÍTÁNÍ A PŘÍPRAVY DAT
 # ==========================================
-# ZDE BYLO ODSTRANĚNO ttl=3600, ABY SE UŠETŘILA DATA NA SUPABASE
 @st.cache_data(show_spinner=False)
 def fetch_and_prep_data(use_marm=True):
     df_pick_raw = load_from_db('raw_pick')
@@ -412,11 +411,37 @@ def main():
 
     st.session_state['voll_set'] = data_dict['voll_set']
 
+    # ==========================================
+    # NOVÁ LOGIKA PRO FILTROVÁNÍ MĚSÍCŮ
+    # ==========================================
     df_pick['Month'] = df_pick['Date'].dt.to_period('M').astype(str).replace('NaT', _t('Neznámé', 'Unknown'))
     st.sidebar.divider()
-    date_mode = st.sidebar.radio(_t("Filtr období:", "Date Filter:"), [_t('Celé období', 'All Time'), _t('Podle měsíce', 'By Month')], label_visibility="collapsed")
+    
+    date_options = [
+        _t('Celé období', 'All Time'), 
+        _t('Podle měsíce', 'By Month'),
+        _t('Porovnání měsíců', 'Compare Months')
+    ]
+    date_mode = st.sidebar.radio(_t("Filtr období:", "Date Filter:"), date_options, label_visibility="collapsed")
+    
+    available_months = sorted(df_pick['Month'].unique())
+    
     if date_mode == _t('Podle měsíce', 'By Month'):
-        df_pick = df_pick[df_pick['Month'] == st.sidebar.selectbox(_t("Vyberte měsíc:", "Select Month:"), options=sorted(df_pick['Month'].unique()))].copy()
+        sel_month = st.sidebar.selectbox(_t("Vyberte měsíc:", "Select Month:"), options=available_months)
+        df_pick = df_pick[df_pick['Month'] == sel_month].copy()
+        
+    elif date_mode == _t('Porovnání měsíců', 'Compare Months'):
+        # Výchozí hodnota jsou poslední dva dostupné měsíce (pokud jsou)
+        default_months = available_months[-2:] if len(available_months) >= 2 else available_months
+        sel_months = st.sidebar.multiselect(_t("Vyberte měsíce k porovnání:", "Select Months to compare:"), options=available_months, default=default_months)
+        
+        if sel_months:
+            df_pick = df_pick[df_pick['Month'].isin(sel_months)].copy()
+        else:
+            st.sidebar.info(_t("Vyberte alespoň jeden měsíc.", "Select at least one month."))
+            df_pick = df_pick.iloc[0:0].copy() # Zabrání vypsání všech dat při prázdném výběru
+
+    # ==========================================
 
     tt, te, tm = fast_compute_moves(df_pick['Qty'].values, df_pick['Queue'].values, df_pick['Removal of total SU'].values, df_pick['Box_Sizes_List'].values, df_pick['Piece_Weight_KG'].values, df_pick['Piece_Max_Dim_CM'].values, limit_vahy, limit_rozmeru, kusy_na_hmat)
     df_pick['Pohyby_Rukou'], df_pick['Pohyby_Exact'], df_pick['Pohyby_Loose_Miss'] = tt, te, tm
