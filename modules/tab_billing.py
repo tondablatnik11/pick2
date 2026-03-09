@@ -381,7 +381,7 @@ def render_reliability_report(df_pick, df_vekp, df_vepo):
 def render_billing(df_pick, df_vekp, df_vepo, df_cats, queue_count_col, aus_data=None):
     def _t(cs, en): return en if st.session_state.get('lang', 'cs') == 'en' else cs
 
-    st.markdown(f"<div class='section-header'><h3>💰 {_t('Korelace mezi Pickováním a Účtováním', 'Correlation Between Picking and Billing')}</h3><p>{_t('Zákazník platí podle počtu výsledných balících jednotek (HU). Zde vidíte náročnost vytvoření těchto zpoplatněných jednotek napříč fakturačními kategoriemi.', 'The customer pays based on the number of billed HUs. Here you can see the effort required to create these billed units across categories.')}</p></div>", unsafe_allow_html=True)
+    st.markdown(f"<div class='section-header'><h3>💰 {_t('Korelace mezi Pickováním a Účtováním', 'Correlation Between Picking and Billing')}</h3></div>", unsafe_allow_html=True)
 
     with st.spinner("🧠 Analyzuji SAP data (VEKP, VEPO)..."):
         render_reliability_report(df_pick, df_vekp, df_vepo)
