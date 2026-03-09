@@ -381,7 +381,7 @@ def render_reliability_report(df_pick, df_vekp, df_vepo):
 def render_billing(df_pick, df_vekp, df_vepo, df_cats, queue_count_col, aus_data=None):
     def _t(cs, en): return en if st.session_state.get('lang', 'cs') == 'en' else cs
 
-    st.markdown(f"<div class='section-header'><h3>💰 {_t('Korelace mezi Pickováním a Účtováním', 'Correlation Between Picking and Billing')}</h3></div>", unsafe_allow_html=True)
+    st.markdown(f"<div class='section-header'><h3>💰 {_t('Korelace mezi Pickováním a Účtováním', 'Correlation Between Picking and Billing')}</h3><p>{_t('Zákazník platí podle počtu výsledných balících jednotek (HU). Zde vidíte náročnost vytvoření těchto zpoplatněných jednotek napříč fakturačními kategoriemi.', 'The customer pays based on the number of billed HUs. Here you can see the effort required to create these billed units across categories.')}</p></div>", unsafe_allow_html=True)
 
     with st.spinner("🧠 Analyzuji SAP data (VEKP, VEPO)..."):
         render_reliability_report(df_pick, df_vekp, df_vepo)
@@ -396,13 +396,12 @@ def render_billing(df_pick, df_vekp, df_vepo, df_cats, queue_count_col, aus_data
         # ===============================================
         if 'Month' in df_pick.columns:
             pick_months = [m for m in df_pick['Month'].unique() if m != 'Neznámé']
-            # Pokud uživatel vybral jeden specifický měsíc v levém panelu
-            if len(pick_months) == 1:
-                sel_month = pick_months[0]
-                valid_dels = set(df_pick['Clean_Del'].unique())
+            if len(pick_months) >= 1:
+                # OPRAVA: Očištění 'Delivery' na 'Clean_Del' přímo zde, aby nedošlo ke KeyError
+                valid_dels = set(df_pick['Delivery'].apply(safe_del).dropna().unique())
                 
-                # Zobrazíme zakázky s tímto měsícem + všechny zakázky, co se v tomto měsíci pickovaly
-                billing_df = billing_df[(billing_df['Month'] == sel_month) | (billing_df['Clean_Del'].isin(valid_dels))].copy()
+                # Zobrazíme zakázky z vybraných měsíců + zakázky spárované s Pick reportem
+                billing_df = billing_df[(billing_df['Month'].isin(pick_months)) | (billing_df['Clean_Del'].isin(valid_dels))].copy()
                 df_hu_details = df_hu_details[df_hu_details['Clean_Del'].isin(billing_df['Clean_Del'])].copy()
 
         st.session_state['billing_df'] = billing_df 
@@ -563,7 +562,7 @@ def render_billing(df_pick, df_vekp, df_vepo, df_cats, queue_count_col, aus_data
             * **Fyzické pohyby na 1 Billed HU:** Kolik reálných pohybů rukou (přeložení kusů) stojí firmu vytvoření 1 vyfakturované jednotky.
             * **1:1 (Ideál):** Počet zakázek, kde se 1 vychystané TO rovná přesně 1 vyfakturované HU (žádná ztráta z konsolidace).
             * **Více TO (Prodělaly) / Ztráta (ks TO):** Zakázky, u kterých se více picků spojilo do menšího počtu palet/krabic. Sloupec Ztráta ukazuje *přesný počet TO*, které jste fyzicky odchodili, ale zákazník je nezaplatil.
-            * **Více HU (Vydělaly) / Zisk (ks HU):** Zakázky, u kterých se 1 pick rozpadl do více menších balení. Sloupec Zisk ukazuje, kolik HU jste vyfakturovali *navíc*.
+            * **Více HU (Vydělaly) / Zisk (ks HU):** Zakázky, u kterých se 1 pick rozpadl do multiple menších balení. Sloupec Zisk ukazuje, kolik HU jste vyfakturovali *navíc*.
             * **Čistá bilance (HU - TO):** Celkový výsledek kategorie v kusech. Zelená = zisk. Červená = ztráta.
             """, """
             * **Consolidation Index (TO/HU):** How many pick tasks (TO) a worker averages to create 1 billed unit (HU). Ideal is 1.0. Higher = more TOs are consolidated and "lost".
