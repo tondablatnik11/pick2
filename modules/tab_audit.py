@@ -2,6 +2,7 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 import io
+import re
 from modules.utils import t, get_match_key, safe_del, safe_hu
 
 try:
@@ -348,3 +349,71 @@ def render_audit(df_pick, df_vekp, df_vepo, df_oe, queue_count_col, billing_df, 
                 else: st.info("K této zakázce nebyl v souboru OE-Times nalezen žádný záznam.")
 
     render_audit_interactive()
+
+    st.divider()
+
+    # ==========================================
+    # 4. SEKCE: HROMADNÁ ANALÝZA OBALOVÉHO MATERIÁLU
+    # ==========================================
+    st.markdown("<div class='section-header'><h3>📦 Hromadná analýza obalového materiálu</h3></div>", unsafe_allow_html=True)
+    st.markdown("Vložte seznam zakázek (Delivery) a zjistěte, kolik a jakých obalů (palet, krabic) na ně bylo celkem použito.")
+
+    order_input = st.text_area("Seznam zakázek (můžete zkopírovat sloupec z Excelu):", height=150, placeholder="Příklad:\n4941120299\n4941123347\n4941129519")
+
+    if st.button("Analyzovat použité obaly", type="primary"):
+        if not order_input.strip():
+            st.warning("⚠️ Nezadali jste žádné zakázky.")
+        elif df_vekp is None or df_vekp.empty:
+            st.error("❌ Chybí data z VEKP. Nahrajte prosím report VEKP v Admin Zóně.")
+        else:
+            # 1. Zpracování zadání
+            raw_orders = re.split(r'[,\s\n]+', order_input.strip())
+            clean_orders = [safe_del(o) for o in raw_orders if o]
+
+            # 2. Očištění VEKP a vyhledání sloupců
+            vekp_pack = df_vekp.copy()
+            cols_lower = [str(c).lower().strip() for c in vekp_pack.columns]
+
+            c_del = next((c for c, l in zip(vekp_pack.columns, cols_lower) if "delivery" in l or "lieferung" in l or "dodávka" in l or "zakázka" in l), None)
+            c_pack = next((c for c, l in zip(vekp_pack.columns, cols_lower) if "packaging materials" in l or "packmittel" in l or "obalový materiál" in l or "obal" in l), None)
+            c_hu = next((c for c, l in zip(vekp_pack.columns, cols_lower) if "internal hu" in l or "hu-nummer intern" in l or "handling unit" == l or "manipul" in l), None)
+
+            if not c_del or not c_pack:
+                st.error(f"🚨 Nepodařilo se najít sloupec pro Zakázku nebo Obalový materiál ve VEKP. \nNalezené sloupce: {list(vekp_pack.columns)}")
+            else:
+                # 3. Filtrace dat
+                vekp_pack['Clean_Del'] = vekp_pack[c_del].apply(safe_del)
+                filtered_vekp = vekp_pack[vekp_pack['Clean_Del'].isin(clean_orders)].copy()
+
+                if filtered_vekp.empty:
+                    st.warning("❌ Pro zadané zakázky nebyly ve VEKP nalezeny žádné systémové obaly.")
+                else:
+                    # 4. Agregace obalů
+                    if c_hu:
+                        pack_summary = filtered_vekp.groupby(c_pack)[c_hu].nunique().reset_index()
+                        pack_summary.columns = ['Obalový materiál / Materiálové číslo', 'Počet použitých kusů']
+                    else:
+                        pack_summary = filtered_vekp.groupby(c_pack).size().reset_index(name='Počet použitých kusů')
+                        pack_summary.rename(columns={c_pack: 'Obalový materiál / Materiálové číslo'}, inplace=True)
+
+                    pack_summary = pack_summary.sort_values(by='Počet použitých kusů', ascending=False)
+
+                    # 5. Zobrazení výsledků
+                    found_orders = filtered_vekp['Clean_Del'].nunique()
+                    missing_orders = len(set(clean_orders)) - found_orders
+
+                    c1, c2, c3 = st.columns(3)
+                    c1.metric("Hledaných zakázek celkem", len(set(clean_orders)))
+                    c2.metric("Nalezených zakázek ve VEKP", found_orders)
+                    c3.metric("Celkem použitých obalů (HU)", pack_summary['Počet použitých kusů'].sum())
+
+                    if missing_orders > 0:
+                        st.info(f"ℹ️ {missing_orders} zakázek nebylo v reportu VEKP nalezeno (mohou to být starší zakázky, které nejsou v databázi, nebo překlepy).")
+
+                    st.markdown("#### 📊 Souhrn použitých obalových materiálů:")
+                    st.dataframe(pack_summary, hide_index=True, use_container_width=True)
+
+                    st.markdown("#### 📋 Detailní rozpad obalů podle zakázek:")
+                    detail_df = filtered_vekp[['Clean_Del', c_pack, c_hu] if c_hu else ['Clean_Del', c_pack]].copy()
+                    detail_df.columns = ['Zakázka', 'Obalový materiál', 'Manipulační jednotka (HU)'] if c_hu else ['Zakázka', 'Obalový materiál']
+                    st.dataframe(detail_df, hide_index=True, use_container_width=True)
